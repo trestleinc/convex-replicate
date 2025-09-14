@@ -539,13 +539,13 @@ export function convexCollectionOptions<TItem extends object>(
       console.log("Persisted", newItems.length, "items to localStorage");
     }
     
-    // Handle server sync (skip if offline, queue for later)
-    const shouldSync = isConnected();
-    
-    if (!shouldSync) {
-      console.log("Offline mode: Adding insert mutations to offline queue");
+    try {
+      // Handle server sync (skip if offline, queue for later)
+      const shouldSync = isConnected();
       
-      try {
+      if (!shouldSync) {
+        console.log("Offline mode: Adding insert mutations to offline queue");
+        
         // Add mutations to offline queue when disconnected (synchronous operation)
         for (const mutation of transaction.mutations) {
           if (mutation.type === "insert") {
@@ -560,30 +560,39 @@ export function convexCollectionOptions<TItem extends object>(
           }
         }
         console.log("Offline mutations queued successfully");
-      } catch (error) {
-        console.error("Failed to queue offline mutations:", error);
-        // Don't throw - still allow optimistic updates
-      }
-      
-      // Return success immediately - don't block optimistic updates
-      console.log("onInsert returning success for offline mode");
-      return { refetch: false };
-    }
-    
-    try {
-      // Process all insert mutations in the transaction
-      for (const mutation of transaction.mutations) {
-        if (mutation.type === "insert") {
-          // Pass all data including the client-side ID to Convex
-          await currentClient.mutation(config.createMutation, mutation.modified);
+        
+        // CRITICAL: Update the TanStack DB collection when offline
+        // This ensures the UI sees the changes immediately
+        if (syncParams && syncParams.begin && syncParams.write && syncParams.commit) {
+          console.log("Updating TanStack DB collection for offline UI updates");
+          syncParams.begin();
+          
+          for (const mutation of transaction.mutations) {
+            if (mutation.type === "insert") {
+              // Insert the new item into the collection
+              syncParams.write({ type: 'insert', value: mutation.modified });
+            }
+          }
+          
+          syncParams.commit();
+          console.log("TanStack DB collection updated successfully");
+        }
+      } else {
+        // Process all insert mutations in the transaction  
+        for (const mutation of transaction.mutations) {
+          if (mutation.type === "insert") {
+            // Pass all data including the client-side ID to Convex
+            await currentClient.mutation(config.createMutation, mutation.modified);
+          }
         }
       }
       
-      // Wait for the data to sync back
-      if (config.syncTracking === "timestamp") {
+      // Wait for the data to sync back (only when online)
+      if (shouldSync && config.syncTracking === "timestamp") {
         await awaitSync(mutationTime);
       }
       
+      console.log("onInsert completed successfully, online:", shouldSync);
       return { refetch: false };
     } catch (error) {
       console.error("Failed to sync insert to Convex, adding to offline queue:", error);
@@ -623,13 +632,13 @@ export function convexCollectionOptions<TItem extends object>(
       console.log("Persisted", updates.length, "updates to localStorage");
     }
     
-    // Handle server sync (skip if offline, queue for later)
-    const shouldSync = isConnected();
-    
-    if (!shouldSync) {
-      console.log("Offline mode: Adding update mutations to offline queue");
+    try {
+      // Handle server sync (skip if offline, queue for later)
+      const shouldSync = isConnected();
       
-      try {
+      if (!shouldSync) {
+        console.log("Offline mode: Adding update mutations to offline queue");
+        
         // Add mutations to offline queue when disconnected (synchronous operation)
         for (const mutation of transaction.mutations) {
           if (mutation.type === "update") {
@@ -648,35 +657,45 @@ export function convexCollectionOptions<TItem extends object>(
           }
         }
         console.log("Offline mutations queued successfully");
-      } catch (error) {
-        console.error("Failed to queue offline mutations:", error);
-        // Don't throw - still allow optimistic updates
-      }
-      
-      // Return success immediately - don't block optimistic updates
-      console.log("onUpdate returning success for offline mode");
-      return { refetch: false };
-    }
-    
-    try {
-      // Process all update mutations in the transaction
-      for (const mutation of transaction.mutations) {
-        if (mutation.type === "update") {
-          // For updates, we need to use the local ID since Convex tracks by local ID
-          const localId = config.getKey(mutation.original);
+        
+        // CRITICAL: Update the TanStack DB collection when offline
+        // This ensures the UI sees the changes immediately
+        if (syncParams && syncParams.begin && syncParams.write && syncParams.commit) {
+          console.log("Updating TanStack DB collection for offline UI updates");
+          syncParams.begin();
           
-          await currentClient.mutation(config.updateMutation, {
-            id: localId,
-            ...mutation.changes,
-          });
+          for (const mutation of transaction.mutations) {
+            if (mutation.type === "update") {
+              // Apply the update to the collection
+              const updatedItem = { ...mutation.original, ...mutation.changes };
+              syncParams.write({ type: 'update', value: updatedItem });
+            }
+          }
+          
+          syncParams.commit();
+          console.log("TanStack DB collection updated successfully");
+        }
+      } else {
+        // Process all update mutations in the transaction
+        for (const mutation of transaction.mutations) {
+          if (mutation.type === "update") {
+            // For updates, we need to use the local ID since Convex tracks by local ID
+            const localId = config.getKey(mutation.original);
+            
+            await currentClient.mutation(config.updateMutation, {
+              id: localId,
+              ...mutation.changes,
+            });
+          }
         }
       }
       
-      // Wait for the data to sync back
-      if (config.syncTracking === "timestamp") {
+      // Wait for the data to sync back (only when online)
+      if (shouldSync && config.syncTracking === "timestamp") {
         await awaitSync(mutationTime);
       }
       
+      console.log("onUpdate completed successfully, online:", shouldSync);
       return { refetch: false };
     } catch (error) {
       console.error("Failed to sync update to Convex, adding to offline queue:", error);
