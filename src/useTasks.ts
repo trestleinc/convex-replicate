@@ -1,6 +1,5 @@
 import React from "react";
 import { createCollection } from "@tanstack/react-db";
-import { useLiveQuery } from "@tanstack/react-db";
 import { rxdbCollectionOptions } from "@tanstack/rxdb-db-collection";
 import { initializeDatabase, type Task } from "./database";
 
