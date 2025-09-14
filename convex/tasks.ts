@@ -9,19 +9,45 @@ export const get = query({
 });
 
 export const create = mutation({
-  args: { text: v.string() },
-  handler: async (ctx, { text }) => {
-    return await ctx.db.insert("tasks", { text, isCompleted: false });
+  args: { 
+    id: v.string(), // Client-side generated ID
+    text: v.string(),
+    isCompleted: v.optional(v.boolean()),
+    updatedTime: v.optional(v.number()),
+  },
+  handler: async (ctx, { id, text, isCompleted = false, updatedTime }) => {
+    return await ctx.db.insert("tasks", { 
+      id, 
+      text, 
+      isCompleted,
+      updatedTime: updatedTime || Date.now()
+    });
   },
 });
 
 export const update = mutation({
   args: {
-    id: v.id("tasks"),
+    id: v.string(), // Client-side ID (always string)
     text: v.optional(v.string()),
     isCompleted: v.optional(v.boolean()),
+    updatedTime: v.optional(v.number()),
   },
   handler: async (ctx, { id, ...updates }) => {
-    return await ctx.db.patch(id, updates);
+    // Find the task by client-side id field (not Convex _id)
+    const existingTask = await ctx.db
+      .query("tasks")
+      .filter((q) => q.eq(q.field("id"), id))
+      .first();
+    
+    if (existingTask) {
+      return await ctx.db.patch(existingTask._id, {
+        ...updates,
+        updatedTime: updates.updatedTime || Date.now()
+      });
+    } else {
+      // Task doesn't exist in Convex yet
+      console.warn("Task not found for update:", id);
+      return null;
+    }
   },
 });

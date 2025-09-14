@@ -1,8 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useSuspenseQuery } from "@tanstack/react-query";
-import { convexQuery, useConvexMutation } from "@convex-dev/react-query";
-import { api } from "../../convex/_generated/api";
-import { Id } from "../../convex/_generated/dataModel";
+import { useTasks, useCreateTask, useUpdateTask } from "../useTasks";
 import { useState } from "react";
 
 export const Route = createFileRoute('/')({
@@ -14,10 +11,10 @@ function HomeComponent() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
 
-  const { data } = useSuspenseQuery(convexQuery(api.tasks.get, {}));
+  const { data } = useTasks();
   
-  const createTask = useConvexMutation(api.tasks.create);
-  const updateTask = useConvexMutation(api.tasks.update);
+  const createTask = useCreateTask();
+  const updateTask = useUpdateTask();
 
   const handleCreateTask = (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,7 +25,7 @@ function HomeComponent() {
   };
 
   const handleToggleComplete = (id: string, isCompleted: boolean) => {
-    updateTask({ id: id as Id<"tasks">, isCompleted: !isCompleted });
+    updateTask(id, { isCompleted: !isCompleted });
   };
 
   const handleEditStart = (id: string, text: string) => {
@@ -38,7 +35,7 @@ function HomeComponent() {
 
   const handleEditSave = (id: string) => {
     if (editText.trim()) {
-      updateTask({ id: id as Id<"tasks">, text: editText.trim() });
+      updateTask(id, { text: editText.trim() });
       setEditingId(null);
     }
   };
@@ -75,34 +72,34 @@ function HomeComponent() {
       {/* Task List */}
       <div className="space-y-2">
         {data.map((task) => (
-          <div key={task._id} className="flex items-center gap-3 p-3 border border-gray-200 rounded-md">
+          <div key={task.id} className="flex items-center gap-3 p-3 border border-gray-200 rounded-md">
             {/* Toggle Completion Checkbox */}
             <input
               type="checkbox"
               checked={task.isCompleted}
-              onChange={() => handleToggleComplete(task._id, task.isCompleted)}
+              onChange={() => handleToggleComplete(task.id, task.isCompleted)}
               className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
             />
             
             {/* Task Text */}
-            {editingId === task._id ? (
+            {editingId === task.id ? (
               <div className="flex-1 flex gap-2">
                 <input
                   type="text"
                   value={editText}
                   onChange={(e) => setEditText(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") handleEditSave(task._id);
+                    if (e.key === "Enter") handleEditSave(task.id);
                     if (e.key === "Escape") handleEditCancel();
                   }}
-                  onBlur={() => handleEditSave(task._id)}
+                  onBlur={() => handleEditSave(task.id)}
                   className="flex-1 px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                   autoFocus
                 />
               </div>
             ) : (
               <span
-                onClick={() => handleEditStart(task._id, task.text)}
+                onClick={() => handleEditStart(task.id, task.text)}
                 className={`flex-1 cursor-pointer hover:bg-pink-700 px-2 py-1 rounded ${
                   task.isCompleted ? "line-through text-gray-500" : ""
                 }`}

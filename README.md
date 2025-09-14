@@ -1,6 +1,6 @@
-# Example
-
-To run this example:
-
+# Setup
 - `bun install` 
-- `bun start`
+- `bunx  convex import --table tasks sampleData.jsonl`
+
+- `bun run dev`
+
