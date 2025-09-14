@@ -94,62 +94,33 @@ export async function setupReplication(db: any) {
   // Create a Subject for the pull stream (WebSocket-based real-time updates)
   const pullStream$ = new Subject<any>();
   
-  // Set up watchQuery for real-time updates via WebSocket
+  // Simple WebSocket change detection
   let unsubscribeWatchQuery: (() => void) | null = null;
-  let lastKnownTasksData: any = null;
-  let replicationState: any = null; // Will store reference for reSync() method
+  let replicationState: any = null;
+  let lastKnownState = { timestamp: 0, count: 0 };
   
   function setupWatchQuery() {
     if (unsubscribeWatchQuery) {
-      console.log('[WebSocket] Cleaning up previous watch query');
       unsubscribeWatchQuery();
     }
     
-    console.log('[WebSocket] Setting up change stream watch for database updates');
+    console.log('[WebSocket] Setting up change stream watch');
     
-    // Watch the dedicated change stream instead of query results
-    // This will detect ALL database changes regardless of source
-    const changeWatch = convexClient.watchQuery(api.tasks.changeStream, {
-      lastSeenTime: 0 // Start from beginning
-    });
-    
-    let lastKnownChangeId = '';
+    const changeWatch = convexClient.watchQuery(api.tasks.changeStream);
     
     const unsubscribeFn = changeWatch.onUpdate(() => {
-      console.log('[WebSocket] Change stream updated via WebSocket');
+      const data = changeWatch.localQueryResult();
       
-      // Get the current change stream data
-      const changeData = changeWatch.localQueryResult();
-      console.log('[WebSocket] Change stream data:', changeData);
-      
-      if (changeData && typeof changeData === 'object') {
-        const currentChangeId = changeData.changeId || '';
+      if (data && (data.timestamp !== lastKnownState.timestamp || data.count !== lastKnownState.count)) {
+        console.log(`[WebSocket] Change detected: ${lastKnownState.timestamp},${lastKnownState.count} → ${data.timestamp},${data.count}`);
+        lastKnownState = { timestamp: data.timestamp, count: data.count };
         
-        // Only trigger sync if we have a new change ID (indicating actual database changes)
-        if (currentChangeId && currentChangeId !== lastKnownChangeId) {
-          console.log(`[WebSocket] Database change detected: ${lastKnownChangeId} → ${currentChangeId}`);
-          lastKnownChangeId = currentChangeId;
-          
-          // Immediately trigger sync - no debouncing for real-time updates
-          console.log('[WebSocket] Immediately triggering RESYNC due to database change');
-          // Use the official RESYNC signal as documented in RxDB
-          pullStream$.next('RESYNC');
-          
-          // Alternative approach: also call reSync() method as fallback
-          if (replicationState && typeof replicationState.reSync === 'function') {
-            console.log('[WebSocket] Also triggering reSync() method');
-            replicationState.reSync();
-          }
-        } else {
-          console.log('[WebSocket] No new changes detected in change stream');
-        }
-      } else {
-        console.warn('[WebSocket] Invalid change stream data received:', changeData);
+        // Trigger RxDB sync
+        pullStream$.next('RESYNC');
       }
     });
     
     unsubscribeWatchQuery = unsubscribeFn;
-    console.log('[WebSocket] Database change stream monitoring established');
   }
   
   // Start WebSocket connection with retry logic
@@ -178,95 +149,34 @@ export async function setupReplication(db: any) {
     
     pull: {
       async handler(checkpointOrNull, batchSize) {
-        const checkpoint = checkpointOrNull as { id: string; updatedTime: number } || { id: '', updatedTime: 0 };
+        const checkpointTime = (checkpointOrNull as { updatedTime: number })?.updatedTime || 0;
         
-        console.log(`[RxDB] Pull handler called with checkpoint: {id: "${checkpoint.id}", time: ${checkpoint.updatedTime}}, batchSize: ${batchSize}`);
+        console.log(`[RxDB] Pull: checkpoint=${checkpointTime}, batch=${batchSize}`);
         
         try {
-          // Validate inputs
-          if (!convexClient) {
-            console.error('[RxDB] Convex client is not available');
-            return {
-              documents: [],
-              checkpoint: checkpoint
-            };
-          }
-          
-          // Use Convex client query instead of HTTP fetch
-          console.log('[RxDB] Calling Convex pullDocuments...');
           const documents = await convexClient.query(api.tasks.pullDocuments, {
-            checkpointId: checkpoint.id || '',
-            checkpointTime: checkpoint.updatedTime || 0,
+            checkpointTime,
             limit: batchSize
           });
           
-          console.log(`[RxDB] Convex returned:`, documents);
-          
-          // Comprehensive validation of response
-          if (!documents) {
-            console.warn('[RxDB] Convex returned null/undefined documents, using empty array');
-            return {
-              documents: [],
-              checkpoint: checkpoint
-            };
-          }
-          
           if (!Array.isArray(documents)) {
-            console.error('[RxDB] Convex returned non-array documents:', typeof documents, documents);
-            return {
-              documents: [],
-              checkpoint: checkpoint
-            };
+            return { documents: [], checkpoint: { updatedTime: checkpointTime } };
           }
           
-          // Ensure documents is always an array and has _deleted property
-          const documentsWithDeleted = documents
-            .filter(doc => doc && typeof doc === 'object') // Filter out invalid documents
-            .map((doc: any) => {
-              // Validate document structure
-              if (!doc.id || typeof doc.id !== 'string') {
-                console.warn('[RxDB] Document missing or invalid id:', doc);
-                return null;
-              }
-              
-              return {
-                id: doc.id,
-                text: typeof doc.text === 'string' ? doc.text : '',
-                isCompleted: typeof doc.isCompleted === 'boolean' ? doc.isCompleted : false,
-                updatedTime: typeof doc.updatedTime === 'number' ? doc.updatedTime : Date.now(),
-                _deleted: doc._deleted || false
-              };
-            })
-            .filter(doc => doc !== null); // Remove invalid documents
+          // Add _deleted field and create checkpoint
+          const processedDocs = documents.map(doc => ({ ...doc, _deleted: false }));
+          const newCheckpoint = processedDocs.length > 0 
+            ? { updatedTime: processedDocs[0].updatedTime } // Most recent (desc order)
+            : { updatedTime: checkpointTime };
           
-          // Calculate new checkpoint from returned documents
-          const newCheckpoint = documentsWithDeleted.length === 0 
-            ? checkpoint 
-            : {
-                id: documentsWithDeleted[documentsWithDeleted.length - 1].id,
-                updatedTime: documentsWithDeleted[documentsWithDeleted.length - 1].updatedTime
-              };
-          
-          console.log(`[RxDB] Successfully processed ${documentsWithDeleted.length} documents, new checkpoint:`, newCheckpoint);
-          
+          console.log(`[RxDB] Pulled ${processedDocs.length} documents`);
           return {
-            documents: documentsWithDeleted,
+            documents: processedDocs,
             checkpoint: newCheckpoint
           };
         } catch (error) {
-          console.error('[RxDB] Pull handler error:', error);
-          console.error('[RxDB] Error details:', {
-            message: error instanceof Error ? error.message : String(error),
-            stack: error instanceof Error ? error.stack : undefined,
-            checkpoint,
-            batchSize
-          });
-          
-          // Return empty result instead of throwing to prevent replication crashes
-          return {
-            documents: [],
-            checkpoint: checkpoint
-          };
+          console.error('[RxDB] Pull error:', error);
+          return { documents: [], checkpoint: { updatedTime: checkpointTime } };
         }
       },
       batchSize: 100,

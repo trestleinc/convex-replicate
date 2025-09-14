@@ -8,50 +8,18 @@ export const get = query({
   },
 });
 
-// Database change stream for real-time updates
-// This query provides a change stream that all clients can subscribe to
-// It returns all tasks with a timestamp, allowing clients to detect any database changes
+// Simple change stream for WebSocket real-time updates
 export const changeStream = query({
-  args: {
-    lastSeenTime: v.optional(v.number()), // Last change timestamp the client has seen
-  },
-  handler: async (ctx, { lastSeenTime = 0 }) => {
-    console.log(`[Convex] changeStream called with lastSeenTime: ${lastSeenTime}`);
+  args: {},
+  handler: async (ctx) => {
+    // Get count and latest timestamp - simple and reliable
+    const allTasks = await ctx.db.query("tasks").order("desc").collect();
+    const latestTime = allTasks.length > 0 ? allTasks[0].updatedTime : Date.now();
     
-    try {
-      // Get all tasks ordered by updatedTime to create a consistent change stream
-      const allTasks = await ctx.db
-        .query("tasks")
-        .order("desc") // Most recent first
-        .collect();
-      
-      // Find the most recent change time
-      const latestChangeTime = allTasks.length > 0 ? allTasks[0].updatedTime : Date.now();
-      
-      // Determine if there are changes since the client's last seen time
-      const hasChanges = latestChangeTime > lastSeenTime;
-      
-      console.log(`[Convex] changeStream: ${allTasks.length} tasks, latestChangeTime: ${latestChangeTime}, hasChanges: ${hasChanges}`);
-      
-      return {
-        // Always return the current timestamp so clients can track the latest state
-        timestamp: latestChangeTime,
-        // Include change indicator to help clients optimize polling
-        hasChanges,
-        // Optionally include task count for change detection
-        taskCount: allTasks.length,
-        // Include a changeId based on latest timestamp for more reliable change detection
-        changeId: `change-${latestChangeTime}-${allTasks.length}`
-      };
-    } catch (error) {
-      console.error('[Convex] changeStream error:', error);
-      return {
-        timestamp: Date.now(),
-        hasChanges: false,
-        taskCount: 0,
-        changeId: `error-${Date.now()}`
-      };
-    }
+    return {
+      timestamp: latestTime,
+      count: allTasks.length
+    };
   },
 });
 
@@ -113,59 +81,26 @@ export const update = mutation({
 // RxDB Replication: Pull documents since checkpoint
 export const pullDocuments = query({
   args: {
-    checkpointId: v.string(),
     checkpointTime: v.number(),
     limit: v.number(),
   },
-  handler: async (ctx, { checkpointId, checkpointTime, limit }) => {
-    try {
-      console.log(`[Convex] pullDocuments called with checkpoint: {id: "${checkpointId}", time: ${checkpointTime}}, limit: ${limit}`);
-      
-      // Query documents that have been updated since the checkpoint
-      // We need to compare both updatedTime AND id for deterministic ordering
-      const tasks = await ctx.db
-        .query("tasks")
-        .filter((q) => 
-          q.or(
-            q.gt(q.field("updatedTime"), checkpointTime),
-            q.and(
-              q.eq(q.field("updatedTime"), checkpointTime),
-              q.gt(q.field("id"), checkpointId)
-            )
-          )
-        )
-        .order("asc")
-        .take(limit);
-      
-      // Comprehensive null/undefined safety
-      const safeTasks = Array.isArray(tasks) ? tasks : [];
-      console.log(`[Convex] Found ${safeTasks.length} tasks to replicate`);
-      
-      // Return only client-side fields (exclude Convex _id, _creationTime)
-      // Each task must be a valid object with all required fields
-      const processedTasks = safeTasks
-        .filter(task => task && typeof task === 'object') // Filter out null/undefined tasks
-        .map(task => {
-          // Ensure all required fields exist with proper types
-          const processedTask = {
-            id: typeof task.id === 'string' ? task.id : '',
-            text: typeof task.text === 'string' ? task.text : '',
-            isCompleted: typeof task.isCompleted === 'boolean' ? task.isCompleted : false,
-            updatedTime: typeof task.updatedTime === 'number' ? task.updatedTime : Date.now()
-          };
-          
-          console.log(`[Convex] Processing task: ${processedTask.id}`);
-          return processedTask;
-        });
-      
-      console.log(`[Convex] Returning ${processedTasks.length} processed tasks`);
-      return processedTasks;
-      
-    } catch (error) {
-      console.error(`[Convex] pullDocuments error:`, error);
-      // Always return an empty array on error to prevent RxDB crashes
-      return [];
-    }
+  handler: async (ctx, { checkpointTime, limit }) => {
+    console.log(`[Convex] pullDocuments: checkpoint=${checkpointTime}, limit=${limit}`);
+    
+    // Simple query: get all tasks newer than checkpoint, ordered by time
+    const tasks = await ctx.db
+      .query("tasks")
+      .filter((q) => q.gt(q.field("updatedTime"), checkpointTime))
+      .order("desc") // Most recent first for consistency with changeStream
+      .take(limit);
+    
+    // Return clean task objects
+    return tasks.map(task => ({
+      id: task.id,
+      text: task.text,
+      isCompleted: task.isCompleted,
+      updatedTime: task.updatedTime
+    }));
   },
 });
 
