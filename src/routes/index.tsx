@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useTasks, useCreateTask, useUpdateTask } from "../useTasks";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export const Route = createFileRoute('/')({
   component: HomeComponent,
@@ -10,11 +10,38 @@ function HomeComponent() {
   const [newTaskText, setNewTaskText] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
+  const [isOffline, setIsOffline] = useState(false);
 
-  const { data } = useTasks();
+  const { data, collection } = useTasks();
   
   const createTask = useCreateTask();
   const updateTask = useUpdateTask();
+  
+  // Check connection status on component mount and when offline state changes
+  useEffect(() => {
+    if (collection?.utils?.isConnected) {
+      const connected = collection.utils.isConnected();
+      setIsOffline(!connected);
+    }
+  }, [collection]);
+  
+  const handleToggleOffline = async () => {
+    if (!collection?.utils) return;
+    
+    try {
+      if (isOffline) {
+        // Go online
+        await collection.utils.goOnline();
+        setIsOffline(false);
+      } else {
+        // Go offline
+        await collection.utils.goOffline();
+        setIsOffline(true);
+      }
+    } catch (error) {
+      console.error("Failed to toggle connection:", error);
+    }
+  };
 
   const handleCreateTask = (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,6 +92,19 @@ function HomeComponent() {
             className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Add
+          </button>
+          
+          {/* Offline/Online Toggle */}
+          <button
+            type="button"
+            onClick={handleToggleOffline}
+            className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+              isOffline 
+                ? "bg-red-500 text-white hover:bg-red-600" 
+                : "bg-green-500 text-white hover:bg-green-600"
+            }`}
+          >
+            {isOffline ? "Offline" : "Online"}
           </button>
         </div>
       </form>

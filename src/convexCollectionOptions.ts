@@ -15,6 +15,10 @@ interface ConvexCollectionConfig<TItem extends object>
   // Convex client instance
   convexClient: ConvexReactClient;
   
+  // Client configuration for reconnection
+  convexUrl?: string;
+  onClientReplaced?: (newClient: ConvexReactClient) => void;
+  
   // Convex query function to subscribe to
   query: FunctionReference<"query">;
   queryArgs?: Record<string, any>;
@@ -43,7 +47,21 @@ interface ConvexCollectionConfig<TItem extends object>
 interface ConvexCollectionUtils extends UtilsRecord {
   getLastSyncTime: () => number;
   awaitSync: (afterTime: number) => Promise<void>;
+  getOfflineQueue: () => OfflineMutation[];
+  clearOfflineQueue: () => void;
+  goOffline: () => Promise<void>;
+  goOnline: () => Promise<void>;
+  isConnected: () => boolean;
+  refreshFromServer: () => Promise<void>;
 }
+
+type OfflineMutation = {
+  id: string;
+  type: 'insert' | 'update' | 'delete';
+  data: any;
+  timestamp: number;
+  retries: number;
+};
 
 type ConvexItem = {
   _id: string;
@@ -67,43 +85,33 @@ export function convexCollectionOptions<TItem extends object>(
   let syncWatchers: Array<() => void> = [];
   let unsubscribe: (() => void) | null = null;
   
-  // Track pending mutations for acknowledgment
-  const pendingMutations = new Map<string, {
-    resolve: () => void;
-    reject: (error: Error) => void;
-    timeout: ReturnType<typeof setTimeout>;
-    timestamp: number;
-  }>();
+  // Connection state tracking for reconnection detection
+  let lastConnectionCount = 0;
+  let connectionStateUnsubscribe: (() => void) | null = null;
   
-  // Buffer for events during initial sync
-  const eventBuffer: Array<{ type: "insert" | "update" | "delete"; value: TItem }> = [];
-  let isInitialSyncComplete = false;
+  // Track current client for replacement
+  let currentClient = config.convexClient;
+  let isManuallyOffline = false;
   
-  const sync: SyncConfig<TItem>["sync"] = (params) => {
-    const { begin, write, commit, markReady, collection } = params;
+  // Store sync parameters for watchQuery setup
+  let syncParams: any = null;
+  
+  // Helper function to setup watchQuery subscription (reusable for reconnection)
+  const setupWatchQuery = () => {
+    if (!syncParams) {
+      console.error("Cannot setup watchQuery: sync parameters not available");
+      return;
+    }
     
-    // Helper to determine operation type using TanStack DB Collection API
-    const getOperationType = (item: TItem): "insert" | "update" => {
-      const key = config.getKey(item);
-      return collection.has(key) ? "update" : "insert";
-    };
+    if (unsubscribe) {
+      // Clean up existing subscription
+      unsubscribe();
+      unsubscribe = null;
+    }
     
-    // Helper to process buffered events
-    const processBufferedEvents = () => {
-      if (eventBuffer.length > 0) {
-        begin();
-        for (const event of eventBuffer) {
-          // Re-determine operation type since collection state may have changed
-          const operationType = getOperationType(event.value);
-          write({ type: operationType, value: event.value });
-        }
-        commit();
-        eventBuffer.length = 0;
-      }
-    };
-    
-    // Subscribe to real-time updates FIRST (prevents race conditions)
-    const watch = config.convexClient.watchQuery(config.query, config.queryArgs || {});
+    console.log("Setting up real-time subscription to Convex");
+    const { begin, write, commit, getOperationType, eventBuffer } = syncParams;
+    const watch = currentClient.watchQuery(config.query, config.queryArgs || {});
     
     const unsubscribeFn = watch.onUpdate(() => {
       const data = watch.localQueryResult();
@@ -112,8 +120,8 @@ export function convexCollectionOptions<TItem extends object>(
       // Buffer events during initial sync
       if (!isInitialSyncComplete) {
         // Store as buffer to process after initial sync
-        const existingIds = new Set(eventBuffer.map(e => 
-          (e.value as any)[config.getKey(e.value as TItem)]
+        const existingIds = new Set(eventBuffer.map((e: { type: "insert" | "update" | "delete"; value: TItem }) => 
+          config.getKey(e.value)
         ));
         
         for (const item of data) {
@@ -155,6 +163,81 @@ export function convexCollectionOptions<TItem extends object>(
     
     // Set up unsubscribe function
     unsubscribe = unsubscribeFn;
+  };
+  
+  // Offline queue management  
+  const OFFLINE_QUEUE_KEY = `offline_mutations_${config.id || 'default'}`;
+  
+  const offlineQueue = {
+    load(): OfflineMutation[] {
+      try {
+        const stored = localStorage.getItem(OFFLINE_QUEUE_KEY);
+        return stored ? JSON.parse(stored) : [];
+      } catch (error) {
+        console.error("Failed to load offline queue:", error);
+        return [];
+      }
+    },
+    
+    save(mutations: OfflineMutation[]): void {
+      try {
+        localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(mutations));
+      } catch (error) {
+        console.error("Failed to save offline queue:", error);
+      }
+    },
+    
+    add(mutation: OfflineMutation): void {
+      const existing = this.load();
+      existing.push(mutation);
+      this.save(existing);
+    },
+    
+    clear(): void {
+      localStorage.removeItem(OFFLINE_QUEUE_KEY);
+    }
+  };
+  
+  // Track pending mutations for acknowledgment
+  const pendingMutations = new Map<string, {
+    resolve: () => void;
+    reject: (error: Error) => void;
+    timeout: ReturnType<typeof setTimeout>;
+    timestamp: number;
+  }>();
+  
+  // Buffer for events during initial sync
+  const eventBuffer: Array<{ type: "insert" | "update" | "delete"; value: TItem }> = [];
+  let isInitialSyncComplete = false;
+  
+  const sync: SyncConfig<TItem>["sync"] = (params) => {
+    const { begin, write, commit, markReady, collection } = params;
+    
+    // Helper to determine operation type using TanStack DB Collection API
+    const getOperationType = (item: TItem): "insert" | "update" => {
+      const key = config.getKey(item);
+      return collection.has(key) ? "update" : "insert";
+    };
+    
+    // Store sync parameters for watchQuery setup
+    syncParams = { begin, write, commit, collection, getOperationType, eventBuffer };
+    
+    // Helper to process buffered events
+    const processBufferedEvents = () => {
+      if (eventBuffer.length > 0) {
+        begin();
+        for (const event of eventBuffer) {
+          // Re-determine operation type since collection state may have changed
+          const operationType = getOperationType(event.value);
+          write({ type: operationType, value: event.value });
+        }
+        commit();
+        eventBuffer.length = 0;
+      }
+    };
+    
+    // Subscribe to real-time updates FIRST (prevents race conditions)
+    setupWatchQuery();
     
     // Perform initial data fetch
     async function initialSync() {
@@ -172,7 +255,7 @@ export function convexCollectionOptions<TItem extends object>(
         }
         
         // Then fetch from Convex to get the latest data
-        const initialData = await config.convexClient.query(
+        const initialData = await currentClient.query(
           config.query,
           config.queryArgs || {}
         );
@@ -217,6 +300,22 @@ export function convexCollectionOptions<TItem extends object>(
     // Start initial sync
     initialSync();
     
+    // Set up connection state monitoring for reconnection detection
+    connectionStateUnsubscribe = currentClient.subscribeToConnectionState((connState) => {
+      const currentConnectionCount = connState.connectionCount;
+      
+      // Detect reconnection (connectionCount increased)
+      if (currentConnectionCount > lastConnectionCount && lastConnectionCount > 0) {
+        console.log("Reconnection detected, processing offline queue...");
+        void processOfflineQueue();
+      }
+      
+      lastConnectionCount = currentConnectionCount;
+    });
+    
+    // Process any existing offline queue on startup
+    void processOfflineQueue();
+    
     // Return cleanup function
     return () => {
       if (unsubscribe) {
@@ -230,7 +329,175 @@ export function convexCollectionOptions<TItem extends object>(
         reject(new Error("Collection sync stopped"));
       });
       pendingMutations.clear();
+      
+      // Cleanup connection state monitoring
+      if (connectionStateUnsubscribe) {
+        connectionStateUnsubscribe();
+        connectionStateUnsubscribe = null;
+      }
     };
+  };
+  
+  // Process offline queue - retry failed mutations when connection is restored
+  const processOfflineQueue = async (): Promise<void> => {
+    const queuedMutations = offlineQueue.load();
+    if (queuedMutations.length === 0) {
+      return;
+    }
+    
+    console.log(`Processing ${queuedMutations.length} offline mutations...`);
+    const successfulMutations: string[] = [];
+    
+    for (const mutation of queuedMutations) {
+      try {
+        // Retry the mutation based on its type
+        switch (mutation.type) {
+          case 'insert':
+            await currentClient.mutation(config.createMutation, mutation.data);
+            break;
+          case 'update':
+            await currentClient.mutation(config.updateMutation, mutation.data);
+            break;
+          case 'delete':
+            if (config.deleteMutation) {
+              await currentClient.mutation(config.deleteMutation, { id: mutation.data.id });
+            }
+            break;
+        }
+        
+        successfulMutations.push(mutation.id);
+        console.log(`Successfully synced offline ${mutation.type} mutation:`, mutation.id);
+        
+      } catch (error) {
+        console.error(`Failed to sync offline ${mutation.type} mutation:`, mutation.id, error);
+        
+        // Increment retry count and remove if too many failures
+        mutation.retries++;
+        if (mutation.retries >= 3) {
+          console.warn(`Giving up on offline mutation after 3 retries:`, mutation.id);
+          successfulMutations.push(mutation.id); // Remove from queue
+        }
+      }
+    }
+    
+    // Remove successful mutations from queue
+    if (successfulMutations.length > 0) {
+      const remainingMutations = queuedMutations.filter(m => !successfulMutations.includes(m.id));
+      offlineQueue.save(remainingMutations);
+      console.log(`Removed ${successfulMutations.length} processed mutations from offline queue`);
+      
+      // After successful sync, refresh collection from server to ensure server authority
+      try {
+        await refreshFromServer();
+        console.log("Collection refreshed from server after offline sync");
+      } catch (error) {
+        console.error("Failed to refresh collection after offline sync:", error);
+      }
+    }
+  };
+  
+  // Connection control methods
+  const goOffline = async (): Promise<void> => {
+    console.log("Going offline - closing WebSocket connection...");
+    isManuallyOffline = true;
+    
+    // Stop real-time subscription to prevent overriding local changes
+    if (unsubscribe) {
+      console.log("Stopping real-time subscription to allow local-only updates");
+      unsubscribe();
+      unsubscribe = null;
+    }
+    
+    // Close current client connection
+    await currentClient.close();
+    
+    // Clean up connection state subscription
+    if (connectionStateUnsubscribe) {
+      connectionStateUnsubscribe();
+      connectionStateUnsubscribe = null;
+    }
+  };
+  
+  const goOnline = async (): Promise<void> => {
+    console.log("Going online - establishing new WebSocket connection...");
+    isManuallyOffline = false;
+    
+    if (!config.convexUrl) {
+      console.error("Cannot reconnect: convexUrl not provided in config");
+      return;
+    }
+    
+    // Create new client instance
+    const newClient = new ConvexReactClient(config.convexUrl);
+    currentClient = newClient;
+    
+    // Notify parent component about client replacement
+    if (config.onClientReplaced) {
+      config.onClientReplaced(newClient);
+    }
+    
+    // Re-establish real-time subscription with new client
+    setupWatchQuery();
+    
+    // Re-establish connection state monitoring
+    connectionStateUnsubscribe = currentClient.subscribeToConnectionState((connState) => {
+      const currentConnectionCount = connState.connectionCount;
+      
+      // Detect reconnection (connectionCount increased) 
+      if (currentConnectionCount > lastConnectionCount && lastConnectionCount > 0) {
+        console.log("Reconnection detected, processing offline queue...");
+        void processOfflineQueue();
+      }
+      
+      lastConnectionCount = currentConnectionCount;
+    });
+    
+    // Process offline queue immediately after reconnection
+    void processOfflineQueue();
+  };
+  
+  const isConnected = (): boolean => {
+    if (isManuallyOffline) {
+      return false;
+    }
+    return currentClient.connectionState().isWebSocketConnected;
+  };
+  
+  // Collection refresh method to reload from server (ensures server authority)
+  const refreshFromServer = async (): Promise<void> => {
+    console.log("Refreshing collection from server to ensure authority...");
+    
+    try {
+      // Fetch latest data from server
+      const serverData = await currentClient.query(
+        config.query,
+        config.queryArgs || {}
+      );
+      
+      if (serverData && Array.isArray(serverData)) {
+        // Clear localStorage to remove any stale offline data
+        if (config.localStorageUtils) {
+          config.localStorageUtils.save([]);
+        }
+        
+        // TODO: We need access to the sync params to refresh the collection
+        // This will be called from processOfflineQueue after successful sync
+        // The collection will be refreshed via the real-time subscription
+        console.log(`Server refresh: Found ${serverData.length} items from server`);
+        
+        // Update localStorage with fresh server data
+        if (config.localStorageUtils) {
+          const clientData = serverData.map((item: ConvexItem) => stripConvexFields<TItem>(item));
+          config.localStorageUtils.save(clientData);
+        }
+        
+        // The real-time subscription will automatically update the collection
+        // when the server data changes, so we don't need to manually write to collection here
+      }
+    } catch (error) {
+      console.error("Failed to refresh collection from server:", error);
+      throw error;
+    }
   };
   
   // Helper to wait for sync after a specific time
@@ -261,6 +528,7 @@ export function convexCollectionOptions<TItem extends object>(
   // Mutation handlers that wait for sync acknowledgment
   const onInsert = async ({ transaction }: InsertMutationFnParams<TItem>) => {
     const mutationTime = Date.now();
+    console.log("onInsert called with", transaction.mutations.length, "mutations, connected:", isConnected());
     
     // First, persist locally if localStorage utils are provided
     if (config.localStorageUtils) {
@@ -268,6 +536,38 @@ export function convexCollectionOptions<TItem extends object>(
         .filter((m) => m.type === "insert")
         .map((m) => m.modified);
       config.localStorageUtils.insert(newItems);
+      console.log("Persisted", newItems.length, "items to localStorage");
+    }
+    
+    // Handle server sync (skip if offline, queue for later)
+    const shouldSync = isConnected();
+    
+    if (!shouldSync) {
+      console.log("Offline mode: Adding insert mutations to offline queue");
+      
+      try {
+        // Add mutations to offline queue when disconnected (synchronous operation)
+        for (const mutation of transaction.mutations) {
+          if (mutation.type === "insert") {
+            const offlineMutation: OfflineMutation = {
+              id: crypto.randomUUID(),
+              type: 'insert',
+              data: mutation.modified,
+              timestamp: mutationTime,
+              retries: 0
+            };
+            offlineQueue.add(offlineMutation);
+          }
+        }
+        console.log("Offline mutations queued successfully");
+      } catch (error) {
+        console.error("Failed to queue offline mutations:", error);
+        // Don't throw - still allow optimistic updates
+      }
+      
+      // Return success immediately - don't block optimistic updates
+      console.log("onInsert returning success for offline mode");
+      return { refetch: false };
     }
     
     try {
@@ -275,7 +575,7 @@ export function convexCollectionOptions<TItem extends object>(
       for (const mutation of transaction.mutations) {
         if (mutation.type === "insert") {
           // Pass all data including the client-side ID to Convex
-          await config.convexClient.mutation(config.createMutation, mutation.modified);
+          await currentClient.mutation(config.createMutation, mutation.modified);
         }
       }
       
@@ -286,13 +586,30 @@ export function convexCollectionOptions<TItem extends object>(
       
       return { refetch: false };
     } catch (error) {
-      console.error("Failed to sync insert to Convex:", error);
-      throw error;
+      console.error("Failed to sync insert to Convex, adding to offline queue:", error);
+      
+      // Add failed mutations to offline queue for retry on reconnection
+      for (const mutation of transaction.mutations) {
+        if (mutation.type === "insert") {
+          const offlineMutation: OfflineMutation = {
+            id: crypto.randomUUID(),
+            type: 'insert',
+            data: mutation.modified,
+            timestamp: mutationTime,
+            retries: 0
+          };
+          offlineQueue.add(offlineMutation);
+        }
+      }
+      
+      // Don't throw - allow optimistic update to persist locally
+      return { refetch: false };
     }
   };
   
   const onUpdate = async ({ transaction }: UpdateMutationFnParams<TItem>) => {
     const mutationTime = Date.now();
+    console.log("onUpdate called with", transaction.mutations.length, "mutations, connected:", isConnected());
     
     // First, persist locally if localStorage utils are provided
     if (config.localStorageUtils) {
@@ -303,6 +620,42 @@ export function convexCollectionOptions<TItem extends object>(
           changes: m.changes as Partial<TItem>,
         }));
       config.localStorageUtils.update(updates);
+      console.log("Persisted", updates.length, "updates to localStorage");
+    }
+    
+    // Handle server sync (skip if offline, queue for later)
+    const shouldSync = isConnected();
+    
+    if (!shouldSync) {
+      console.log("Offline mode: Adding update mutations to offline queue");
+      
+      try {
+        // Add mutations to offline queue when disconnected (synchronous operation)
+        for (const mutation of transaction.mutations) {
+          if (mutation.type === "update") {
+            const localId = config.getKey(mutation.original);
+            const offlineMutation: OfflineMutation = {
+              id: crypto.randomUUID(),
+              type: 'update',
+              data: {
+                id: localId,
+                ...mutation.changes,
+              },
+              timestamp: mutationTime,
+              retries: 0
+            };
+            offlineQueue.add(offlineMutation);
+          }
+        }
+        console.log("Offline mutations queued successfully");
+      } catch (error) {
+        console.error("Failed to queue offline mutations:", error);
+        // Don't throw - still allow optimistic updates
+      }
+      
+      // Return success immediately - don't block optimistic updates
+      console.log("onUpdate returning success for offline mode");
+      return { refetch: false };
     }
     
     try {
@@ -312,7 +665,7 @@ export function convexCollectionOptions<TItem extends object>(
           // For updates, we need to use the local ID since Convex tracks by local ID
           const localId = config.getKey(mutation.original);
           
-          await config.convexClient.mutation(config.updateMutation, {
+          await currentClient.mutation(config.updateMutation, {
             id: localId,
             ...mutation.changes,
           });
@@ -326,8 +679,28 @@ export function convexCollectionOptions<TItem extends object>(
       
       return { refetch: false };
     } catch (error) {
-      console.error("Failed to sync update to Convex:", error);
-      throw error;
+      console.error("Failed to sync update to Convex, adding to offline queue:", error);
+      
+      // Add failed mutations to offline queue for retry on reconnection
+      for (const mutation of transaction.mutations) {
+        if (mutation.type === "update") {
+          const localId = config.getKey(mutation.original);
+          const offlineMutation: OfflineMutation = {
+            id: crypto.randomUUID(),
+            type: 'update',
+            data: {
+              id: localId,
+              ...mutation.changes,
+            },
+            timestamp: mutationTime,
+            retries: 0
+          };
+          offlineQueue.add(offlineMutation);
+        }
+      }
+      
+      // Don't throw - allow optimistic update to persist locally
+      return { refetch: false };
     }
   };
   
@@ -373,6 +746,12 @@ export function convexCollectionOptions<TItem extends object>(
     utils: {
       getLastSyncTime: () => lastSyncTime,
       awaitSync,
+      getOfflineQueue: () => offlineQueue.load(),
+      clearOfflineQueue: () => offlineQueue.clear(),
+      goOffline,
+      goOnline,
+      isConnected,
+      refreshFromServer,
     },
   };
 }

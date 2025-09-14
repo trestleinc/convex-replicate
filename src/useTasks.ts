@@ -83,6 +83,7 @@ export function useTasks() {
     taskCollection = createCollection(
       convexCollectionOptions<Task>({
         convexClient,
+        convexUrl: import.meta.env.PUBLIC_CONVEX_URL,
         query: api.tasks.get,
         queryArgs: {},
         createMutation: api.tasks.create,
@@ -92,6 +93,10 @@ export function useTasks() {
         convexIdField: "_id",
         syncTracking: "timestamp", // Use timestamp tracking for sync acknowledgment
         localStorageUtils, // Include localStorage utils for offline support
+        onClientReplaced: (newClient) => {
+          // Update the client reference when connection is toggled
+          setConvexClient(newClient);
+        },
 
         // Note: onInsert, onUpdate, onDelete are handled by convexCollectionOptions
         // The collection will sync with Convex automatically
@@ -104,6 +109,7 @@ export function useTasks() {
   return {
     data: (data || []) as Task[],
     isLoading: data === undefined,
+    collection: taskCollection,
   };
 }
 
