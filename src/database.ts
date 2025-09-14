@@ -40,6 +40,8 @@ const taskSchema = {
     },
     updatedTime: {
       type: 'number',
+      minimum: 0, // Required for number fields used in indexes
+      maximum: 8640000000000000, // JavaScript Date max value
       multipleOf: 1 // Required for number fields used in indexes
     },
     _deleted: {

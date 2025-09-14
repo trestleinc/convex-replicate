@@ -45,19 +45,16 @@ export function useTasks() {
         
         setCollection(realCollection);
         
-        // Subscribe to collection state changes
-        const unsubscribe = realCollection.subscribe((state: Map<string, Task>) => {
+        // Subscribe to collection changes using proper TanStack API
+        const unsubscribe = realCollection.subscribeChanges(() => {
           if (mounted) {
-            const tasks = Array.from(state.values());
+            const tasks = realCollection.toArray as Task[];
             setData(tasks);
             setIsLoading(false);
           }
+        }, {
+          includeInitialState: true // Get initial state immediately
         });
-        
-        // Get initial data
-        const initialData = Array.from(realCollection.state.values()) as Task[];
-        setData(initialData);
-        setIsLoading(false);
         
         return unsubscribe;
       } catch (error) {
