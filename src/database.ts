@@ -98,7 +98,6 @@ export async function setupReplication(db: any) {
   let unsubscribeWatchQuery: (() => void) | null = null;
   let lastKnownTasksData: any = null;
   let replicationState: any = null; // Will store reference for reSync() method
-  let syncTimeout: NodeJS.Timeout | null = null; // For debouncing sync triggers
   
   function setupWatchQuery() {
     if (unsubscribeWatchQuery) {
@@ -106,31 +105,33 @@ export async function setupReplication(db: any) {
       unsubscribeWatchQuery();
     }
     
-    console.log('[WebSocket] Setting up watch query for tasks.get');
+    console.log('[WebSocket] Setting up change stream watch for database updates');
     
-    // Watch for changes in the actual tasks data (not the replication query)
-    const watch = convexClient.watchQuery(api.tasks.get, {});
+    // Watch the dedicated change stream instead of query results
+    // This will detect ALL database changes regardless of source
+    const changeWatch = convexClient.watchQuery(api.tasks.changeStream, {
+      lastSeenTime: 0 // Start from beginning
+    });
     
-    const unsubscribeFn = watch.onUpdate(() => {
-      console.log('[WebSocket] Convex tasks data updated via WebSocket');
+    let lastKnownChangeId = '';
+    
+    const unsubscribeFn = changeWatch.onUpdate(() => {
+      console.log('[WebSocket] Change stream updated via WebSocket');
       
-      // Get the current data to check if it actually changed
-      const currentTasksData = watch.localQueryResult();
-      console.log('[WebSocket] Current tasks data:', currentTasksData);
+      // Get the current change stream data
+      const changeData = changeWatch.localQueryResult();
+      console.log('[WebSocket] Change stream data:', changeData);
       
-      // Only trigger sync if data actually changed (avoid infinite loops)
-      if (JSON.stringify(currentTasksData) !== JSON.stringify(lastKnownTasksData)) {
-        console.log('[WebSocket] Data actually changed - scheduling debounced sync trigger');
-        lastKnownTasksData = currentTasksData;
+      if (changeData && typeof changeData === 'object') {
+        const currentChangeId = changeData.changeId || '';
         
-        // Clear any existing timeout to debounce rapid triggers
-        if (syncTimeout) {
-          clearTimeout(syncTimeout);
-        }
-        
-        // Debounce the sync trigger to prevent rapid-fire updates
-        syncTimeout = setTimeout(() => {
-          console.log('[WebSocket] Triggering RESYNC via pull stream');
+        // Only trigger sync if we have a new change ID (indicating actual database changes)
+        if (currentChangeId && currentChangeId !== lastKnownChangeId) {
+          console.log(`[WebSocket] Database change detected: ${lastKnownChangeId} → ${currentChangeId}`);
+          lastKnownChangeId = currentChangeId;
+          
+          // Immediately trigger sync - no debouncing for real-time updates
+          console.log('[WebSocket] Immediately triggering RESYNC due to database change');
           // Use the official RESYNC signal as documented in RxDB
           pullStream$.next('RESYNC');
           
@@ -139,21 +140,16 @@ export async function setupReplication(db: any) {
             console.log('[WebSocket] Also triggering reSync() method');
             replicationState.reSync();
           }
-          syncTimeout = null;
-        }, 150); // 150ms debounce
+        } else {
+          console.log('[WebSocket] No new changes detected in change stream');
+        }
       } else {
-        console.log('[WebSocket] Data unchanged - skipping sync trigger');
+        console.warn('[WebSocket] Invalid change stream data received:', changeData);
       }
     });
     
-    // Handle connection state changes
-    watch.onUpdate(() => {
-      // Note: watch.isLoading may not be available in all Convex client versions
-      console.log(`[WebSocket] Watch query updated`);
-    });
-    
     unsubscribeWatchQuery = unsubscribeFn;
-    console.log('[WebSocket] Real-time WebSocket connection established with Convex');
+    console.log('[WebSocket] Database change stream monitoring established');
   }
   
   // Start WebSocket connection with retry logic
@@ -372,9 +368,6 @@ export async function setupReplication(db: any) {
   window.addEventListener('beforeunload', () => {
     if (unsubscribeWatchQuery) {
       unsubscribeWatchQuery();
-    }
-    if (syncTimeout) {
-      clearTimeout(syncTimeout);
     }
     if (replicationState) {
       replicationState.cancel();
