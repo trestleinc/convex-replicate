@@ -1,121 +1,92 @@
+import React from "react";
 import { createCollection } from "@tanstack/react-db";
-import { api } from "../convex/_generated/api";
 import { useLiveQuery } from "@tanstack/react-db";
-import { convexCollectionOptions } from "./convexCollectionOptions";
+import { rxdbCollectionOptions } from "@tanstack/rxdb-db-collection";
+import { initializeDatabase, type Task } from "./database";
 
-// Task type - uses only client-side fields, ignores Convex _id
-type Task = {
-  id: string;
-  text: string;
-  isCompleted: boolean;
-  updatedTime: number;
-};
-
-// Local storage utilities
-const STORAGE_KEY = "tasks";
-
-const localStorageUtils = {
-  load(): Task[] {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      return stored ? JSON.parse(stored) : [];
-    } catch (error) {
-      console.error("Failed to load tasks from localStorage:", error);
-      return [];
-    }
-  },
-
-  save(tasks: Task[]): void {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
-    } catch (error) {
-      console.error("Failed to save tasks to localStorage:", error);
-    }
-  },
-
-  insert(newTasks: Task[]): void {
-    const existing = this.load();
-    const updated = [...existing, ...newTasks];
-    this.save(updated);
-  },
-
-  update(updates: { key: string; changes: Partial<Task> }[]): void {
-    const existing = this.load();
-    const existingMap = new Map(existing.map((task: Task) => [task.id, task]));
-
-    updates.forEach(({ key, changes }) => {
-      const task = existingMap.get(key);
-      if (task) {
-        Object.assign(task, changes);
-      }
-    });
-
-    this.save(Array.from(existingMap.values()));
-  },
-
-  delete(keysToDelete: string[]): void {
-    const existing = this.load();
-    const filtered = existing.filter((task: Task) => !keysToDelete.includes(task.id));
-    this.save(filtered);
-  },
-};
-
-// Get Convex client from the existing router setup
-let convexClient: any = null;
-
-// Simple convex client getter - will be set by the app
-export const getConvexClient = () => convexClient;
-export const setConvexClient = (client: any) => {
-  convexClient = client;
-};
-
-// Lazy-initialized collection
+// Database initialization state
+let dbPromise: Promise<{ db: any; replication: any }> | null = null;
 let taskCollection: any = null;
 
-// Hook that provides tasks
-export function useTasks() {
-  // Lazy initialize the collection
+// Initialize database and collection
+async function initializeTaskCollection() {
+  if (!dbPromise) {
+    dbPromise = initializeDatabase();
+  }
+  
   if (!taskCollection) {
-    if (!convexClient) {
-      throw new Error("Convex client not initialized");
-    }
+    const { db } = await dbPromise;
     
+    // Create TanStack collection with RxDB integration
     taskCollection = createCollection(
-      convexCollectionOptions<Task>({
-        convexClient,
-        convexUrl: import.meta.env.PUBLIC_CONVEX_URL,
-        query: api.tasks.get,
-        queryArgs: {},
-        createMutation: api.tasks.create,
-        updateMutation: api.tasks.update,
-        // Note: no delete mutation in Convex yet
-        getKey: (item) => item.id,
-        convexIdField: "_id",
-        syncTracking: "timestamp", // Use timestamp tracking for sync acknowledgment
-        localStorageUtils, // Include localStorage utils for offline support
-        onClientReplaced: (newClient) => {
-          // Update the client reference when connection is toggled
-          setConvexClient(newClient);
-        },
-
-        // Note: onInsert, onUpdate, onDelete are handled by convexCollectionOptions
-        // The collection will sync with Convex automatically
+      rxdbCollectionOptions({
+        rxCollection: db.tasks,
+        startSync: true // Start syncing immediately
       })
     );
   }
+  
+  return taskCollection;
+}
 
-  const { data } = useLiveQuery((q) => q.from({ task: taskCollection }));
+// Hook that provides tasks using TanStack RxDB integration  
+export function useTasks() {
+  const [collection, setCollection] = React.useState<any>(null);
+  const [data, setData] = React.useState<Task[]>([]);
+  const [isLoading, setIsLoading] = React.useState(true);
+  
+  React.useEffect(() => {
+    let mounted = true;
+    
+    const init = async () => {
+      try {
+        const realCollection = await initializeTaskCollection();
+        if (!mounted) return;
+        
+        setCollection(realCollection);
+        
+        // Subscribe to collection state changes
+        const unsubscribe = realCollection.subscribe((state: Map<string, Task>) => {
+          if (mounted) {
+            const tasks = Array.from(state.values());
+            setData(tasks);
+            setIsLoading(false);
+          }
+        });
+        
+        // Get initial data
+        const initialData = Array.from(realCollection.state.values()) as Task[];
+        setData(initialData);
+        setIsLoading(false);
+        
+        return unsubscribe;
+      } catch (error) {
+        console.error("Failed to initialize tasks collection:", error);
+        if (mounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+    
+    init();
+    
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   return {
-    data: (data || []) as Task[],
-    isLoading: data === undefined,
-    collection: taskCollection,
+    data,
+    isLoading,
+    error: undefined, // RxDB errors are handled internally
+    collection,
   };
 }
 
 // Hook for creating tasks
 export function useCreateTask() {
-  return (taskData: { text: string }) => {
+  return async (taskData: { text: string }) => {
+    const collection = await initializeTaskCollection();
     const taskId = crypto.randomUUID();
 
     const task: Task = {
@@ -126,7 +97,7 @@ export function useCreateTask() {
     };
 
     try {
-      taskCollection.insert(task);
+      await collection.insert(task);
       return taskId;
     } catch (error) {
       console.error("Failed to create task:", error);
@@ -137,14 +108,59 @@ export function useCreateTask() {
 
 // Hook for updating tasks
 export function useUpdateTask() {
-  return (id: string, updates: Partial<Task>) => {
+  return async (id: string, updates: Partial<Task>) => {
+    const collection = await initializeTaskCollection();
+    
     try {
-      taskCollection.update(id, (draft: Task) => {
-        Object.assign(draft, updates, { updatedTime: Date.now() });
+      await collection.update(id, (draft: Task) => {
+        Object.assign(draft, updates, { 
+          updatedTime: Date.now() 
+        });
       });
     } catch (error) {
       console.error("Failed to update task:", error);
       throw error;
     }
   };
+}
+
+// Hook for deleting tasks (soft delete)
+export function useDeleteTask() {
+  return async (id: string) => {
+    const collection = await initializeTaskCollection();
+    
+    try {
+      await collection.update(id, (draft: Task) => {
+        draft._deleted = true;
+        draft.updatedTime = Date.now();
+      });
+    } catch (error) {
+      console.error("Failed to delete task:", error);
+      throw error;
+    }
+  };
+}
+
+// Utility function to get database instance
+export async function getTasksDatabase() {
+  if (!dbPromise) {
+    dbPromise = initializeDatabase();
+  }
+  return dbPromise;
+}
+
+// Clean up function for development hot reloading
+if (typeof window !== 'undefined' && (import.meta as any).hot) {
+  (import.meta as any).hot.dispose(() => {
+    if (dbPromise) {
+      dbPromise.then(({ db, replication }) => {
+        if (replication) {
+          replication.cancel();
+        }
+        if (db) {
+          db.destroy();
+        }
+      });
+    }
+  });
 }

@@ -1,48 +1,36 @@
 import { createRouter as createTanStackRouter } from "@tanstack/react-router";
 import { QueryClient } from "@tanstack/react-query";
 import { routerWithQueryClient } from "@tanstack/react-router-with-query";
-import { ConvexQueryClient } from "@convex-dev/react-query";
-import { ConvexProvider, ConvexReactClient } from "convex/react";
 import { routeTree } from "./routeTree.gen";
-import { setConvexClient } from "./useTasks";
+import { ConvexReactClient } from "convex/react";
 
-// Export the queryClient so other modules can use it
+// Export the queryClient and convexClient so other modules can use them
 export let queryClient: QueryClient;
+export let convexClient: ConvexReactClient;
 
 export function createRouter() {
-  const CONVEX_URL = import.meta.env.PUBLIC_CONVEX_URL;
-
-  if (!CONVEX_URL) {
-    console.error("missing envar CONVEX_URL");
-  }
-  
-  // Create both ConvexQueryClient (for TanStack Query) and ConvexReactClient (for React/subscriptions)
-  const convexQueryClient = new ConvexQueryClient(CONVEX_URL);
-  const convexReactClient = new ConvexReactClient(CONVEX_URL);
-
+  // Create QueryClient for TanStack Router
   queryClient = new QueryClient({
     defaultOptions: {
       queries: {
-        queryKeyHashFn: convexQueryClient.hashFn(),
-        queryFn: convexQueryClient.queryFn(),
+        staleTime: 5 * 60 * 1000, // 5 minutes
+        retry: 1,
       },
     },
   });
-  convexQueryClient.connect(queryClient);
 
-  // Set up the ConvexReactClient for local-first sync (this one has onUpdate)
-  setConvexClient(convexReactClient);
+  // Create Convex client for RxDB replication (WebSocket-based)
+  const convexUrl = import.meta.env.PUBLIC_CONVEX_URL;
+  if (!convexUrl) {
+    throw new Error("PUBLIC_CONVEX_URL environment variable is required");
+  }
+  convexClient = new ConvexReactClient(convexUrl);
 
   const router = routerWithQueryClient(
     createTanStackRouter({
       routeTree,
       defaultPreload: "intent",
       context: { queryClient },
-      Wrap: ({ children }) => (
-        <ConvexProvider client={convexReactClient}>
-          {children}
-        </ConvexProvider>
-      ),
     }),
     queryClient,
   );

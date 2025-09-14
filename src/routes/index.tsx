@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useTasks, useCreateTask, useUpdateTask } from "../useTasks";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
 export const Route = createFileRoute('/')({
   component: HomeComponent,
@@ -10,49 +10,30 @@ function HomeComponent() {
   const [newTaskText, setNewTaskText] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
-  const [isOffline, setIsOffline] = useState(false);
 
-  const { data, collection } = useTasks();
+  const { data, isLoading, error } = useTasks();
   
   const createTask = useCreateTask();
   const updateTask = useUpdateTask();
-  
-  // Check connection status on component mount and when offline state changes
-  useEffect(() => {
-    if (collection?.utils?.isConnected) {
-      const connected = collection.utils.isConnected();
-      setIsOffline(!connected);
-    }
-  }, [collection]);
-  
-  const handleToggleOffline = async () => {
-    if (!collection?.utils) return;
-    
-    try {
-      if (isOffline) {
-        // Go online
-        await collection.utils.goOnline();
-        setIsOffline(false);
-      } else {
-        // Go offline
-        await collection.utils.goOffline();
-        setIsOffline(true);
-      }
-    } catch (error) {
-      console.error("Failed to toggle connection:", error);
-    }
-  };
 
-  const handleCreateTask = (e: React.FormEvent) => {
+  const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (newTaskText.trim()) {
-      createTask({ text: newTaskText.trim() });
-      setNewTaskText("");
+      try {
+        await createTask({ text: newTaskText.trim() });
+        setNewTaskText("");
+      } catch (error) {
+        console.error("Failed to create task:", error);
+      }
     }
   };
 
-  const handleToggleComplete = (id: string, isCompleted: boolean) => {
-    updateTask(id, { isCompleted: !isCompleted });
+  const handleToggleComplete = async (id: string, isCompleted: boolean) => {
+    try {
+      await updateTask(id, { isCompleted: !isCompleted });
+    } catch (error) {
+      console.error("Failed to toggle task:", error);
+    }
   };
 
   const handleEditStart = (id: string, text: string) => {
@@ -60,10 +41,14 @@ function HomeComponent() {
     setEditText(text);
   };
 
-  const handleEditSave = (id: string) => {
+  const handleEditSave = async (id: string) => {
     if (editText.trim()) {
-      updateTask(id, { text: editText.trim() });
-      setEditingId(null);
+      try {
+        await updateTask(id, { text: editText.trim() });
+        setEditingId(null);
+      } catch (error) {
+        console.error("Failed to update task:", error);
+      }
     }
   };
 
@@ -72,9 +57,26 @@ function HomeComponent() {
     setEditText("");
   };
 
+  if (error) {
+    return (
+      <div className="p-6 max-w-md mx-auto">
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+          Error loading tasks: {String(error)}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 max-w-md mx-auto">
-      <h3 className="text-2xl font-bold mb-6">Task Manager</h3>
+      <h3 className="text-2xl font-bold mb-6">Task Manager (RxDB)</h3>
+      
+      {isLoading && (
+        <div className="mb-4 text-center">
+          <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+          <span className="ml-2 text-gray-600">Loading...</span>
+        </div>
+      )}
       
       {/* Create Task Form */}
       <form onSubmit={handleCreateTask} className="mb-6">
@@ -88,30 +90,17 @@ function HomeComponent() {
           />
           <button
             type="submit"
-            disabled={!newTaskText.trim()}
+            disabled={!newTaskText.trim() || isLoading}
             className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Add
-          </button>
-          
-          {/* Offline/Online Toggle */}
-          <button
-            type="button"
-            onClick={handleToggleOffline}
-            className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-              isOffline 
-                ? "bg-red-500 text-white hover:bg-red-600" 
-                : "bg-green-500 text-white hover:bg-green-600"
-            }`}
-          >
-            {isOffline ? "Offline" : "Online"}
           </button>
         </div>
       </form>
 
       {/* Task List */}
       <div className="space-y-2">
-        {data.map((task) => (
+        {data.filter(task => !task._deleted).map((task) => (
           <div key={task.id} className="flex items-center gap-3 p-3 border border-gray-200 rounded-md">
             {/* Toggle Completion Checkbox */}
             <input
@@ -119,6 +108,7 @@ function HomeComponent() {
               checked={task.isCompleted}
               onChange={() => handleToggleComplete(task.id, task.isCompleted)}
               className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+              disabled={isLoading}
             />
             
             {/* Task Text */}
@@ -140,7 +130,7 @@ function HomeComponent() {
             ) : (
               <span
                 onClick={() => handleEditStart(task.id, task.text)}
-                className={`flex-1 cursor-pointer hover:bg-pink-700 px-2 py-1 rounded ${
+                className={`flex-1 cursor-pointer hover:bg-gray-100 px-2 py-1 rounded ${
                   task.isCompleted ? "line-through text-gray-500" : ""
                 }`}
               >
@@ -151,7 +141,7 @@ function HomeComponent() {
         ))}
       </div>
 
-      {data.length === 0 && (
+      {data.filter(task => !task._deleted).length === 0 && !isLoading && (
         <p className="text-gray-500 text-center py-8">No tasks yet. Create one above!</p>
       )}
     </div>

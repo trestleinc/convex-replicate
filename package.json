@@ -15,11 +15,14 @@
     "@tanstack/react-router": "^1.131.41",
     "@tanstack/react-router-devtools": "^1.131.42",
     "@tanstack/react-router-with-query": "^1.130.17",
+    "@tanstack/rxdb-db-collection": "^0.1.6",
     "autoprefixer": "^10.4.21",
     "convex": "^1.27.0",
     "postcss": "^8.5.6",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "rxdb": "^16.19.0",
+    "rxjs": "^7.8.2",
     "tailwindcss": "^4.1.13"
   },
   "devDependencies": {
