@@ -378,8 +378,7 @@ if (typeof window !== 'undefined' && (import.meta as any).hot) {
 ## 📋 Examples
 
 See the following files for complete examples:
-- `src/useTasks.ts` - Simple task management
-- `src/useNotes.ts` - Complex notes with tags and search
+- `src/useTasks.ts` - Complete task management implementation with CRUD operations
 
 ## 🔄 Migration from Direct RxDB
 
