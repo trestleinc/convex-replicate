@@ -1,6 +1,7 @@
 import { createConvexReactSync, type RxJsonSchema, useConvexSync } from '@convex-rx/react';
 import React from 'react';
 import { api } from '../convex/_generated/api';
+import { convexClient } from './router';
 
 // ========================================
 // TASK TYPE AND SCHEMA
@@ -53,6 +54,7 @@ let tasksSyncInstance: Promise<any> | null = null;
 async function getTasksSync() {
   if (!tasksSyncInstance) {
     tasksSyncInstance = createConvexReactSync<Task>({
+      convexClient,
       tableName: 'tasks',
       schema: taskSchema,
       convexApi: {

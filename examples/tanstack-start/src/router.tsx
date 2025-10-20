@@ -29,17 +29,14 @@ export const getRouter = () => {
   }
   convexClient = new ConvexReactClient(convexUrl);
 
-  const router = routerWithQueryClient(
-    createRouter({
-      routeTree,
-      scrollRestoration: true,
-      defaultPreloadStaleTime: 0,
-      context: { queryClient },
-    }),
-    queryClient
-  );
+  const router = createRouter({
+    routeTree,
+    scrollRestoration: true,
+    defaultPreloadStaleTime: 0,
+    context: { queryClient },
+  });
 
-  return router;
+  return routerWithQueryClient(router, queryClient);
 };
 
 declare module '@tanstack/react-router' {
