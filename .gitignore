@@ -8,6 +8,7 @@ node_modules
 dist/
 packages/*/dist
 examples/*/dist
+examples/*/.env
 examples/*/.env.local
 
 # IDE

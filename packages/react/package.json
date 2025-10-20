@@ -1,0 +1,35 @@
+{
+  "name": "@convex-rx/react",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@convex-rx/core": "workspace:*",
+    "@tanstack/react-db": "^0.1.17",
+    "@tanstack/rxdb-db-collection": "^0.1.6"
+  },
+  "peerDependencies": {
+    "convex": "^1.0.0",
+    "react": "^18.0.0 || ^19.0.0",
+    "rxdb": "^16.0.0",
+    "rxjs": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "typescript": "latest"
+  }
+}

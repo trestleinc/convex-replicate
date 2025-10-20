@@ -1,16 +1,33 @@
-# TanStack DB + RxDB + Convex Sync Engine
+# Convex RX - Offline-First Sync for React
 
-A complete offline-first sync solution that combines the power of **Convex** (real-time backend), **RxDB** (local database), and **TanStack DB** (reactive state management) into a clean, type-safe, and composable API.
+A complete offline-first sync solution that combines **Convex** (real-time backend), **RxDB** (local database), and **TanStack DB** (reactive state management) into clean, type-safe, composable packages.
 
 ## 🚀 Features
 
 - ✅ **Offline-first** - Works without internet, syncs when reconnected
 - ✅ **Real-time sync** - Convex stream-based bidirectional synchronization
-- ✅ **Type-safe** - Full TypeScript support throughout the pipeline  
+- ✅ **Type-safe** - Full TypeScript support throughout the pipeline
 - ✅ **Composable** - One API works with any Convex table
 - ✅ **Conflict resolution** - Server-wins strategy with automatic handling
 - ✅ **Cross-tab sync** - Changes sync across browser tabs
-- ✅ **Hot reload safe** - Proper cleanup during development
+- ✅ **Framework agnostic core** - Use with React, or extend for other frameworks
+
+## 📦 Packages
+
+This is a monorepo containing:
+
+### `@convex-rx/core`
+Framework-agnostic sync engine combining RxDB + Convex replication.
+- No React dependencies
+- Works with any JavaScript framework
+- Handles bidirectional sync, conflict resolution, offline queueing
+
+### `@convex-rx/react`
+React-specific bindings with TanStack DB integration.
+- React hooks for data subscriptions
+- Optimistic UI updates
+- CRUD actions with type safety
+- Built on TanStack DB for reactive state
 
 ## 🏗️ Architecture
 
@@ -22,8 +39,8 @@ A complete offline-first sync solution that combines the power of **Convex** (re
                                 │                        │
                                 ▼                        ▼
                        ┌─────────────────┐    ┌─────────────────┐
-                       │  Sync Engine    │◄──►│  Replication    │
-                       │  (Our API)      │    │  State Machine  │
+                       │ @convex-rx/react│◄──►│ @convex-rx/core │
+                       │  (React Hooks)  │    │  (Sync Engine)  │
                        └─────────────────┘    └─────────────────┘
                                 │                        │
                                 ▼                        ▼
@@ -39,29 +56,35 @@ A complete offline-first sync solution that combines the power of **Convex** (re
                        └─────────────────┘
 ```
 
-## 📦 Quick Setup
+## 📦 Quick Start
 
 ### 1. Install Dependencies
 
 ```bash
 bun install
-# The following packages are required:
-# - @tanstack/react-db
-# - @tanstack/rxdb-db-collection  
-# - rxdb
-# - convex
 ```
 
-### 2. Import Sample Data
+### 2. Build Packages
 
 ```bash
+bun run build
+```
+
+### 3. Run Example
+
+```bash
+# Set up Convex backend
+cd examples/tanstack-start
+cp .env.example .env
+# Edit .env and add your VITE_CONVEX_URL
+
+# Import sample data (convex dev must be running first)
 bunx convex import --table tasks sampleData.jsonl
-```
 
-### 3. Start Development
-
-```bash
-bun run dev
+# Start both development server and Convex backend
+cd ../..
+bun run dev:example
+# This runs both Vite dev server (port 3000) and Convex dev environment
 ```
 
 ## 🔧 How to Use
@@ -141,8 +164,7 @@ export const pushDocuments = mutation({
 ```typescript
 // src/useYourTable.ts
 import React from "react";
-import { createConvexSync, type RxJsonSchema } from "./sync/createConvexSync";
-import { useConvexSync } from "./sync/useConvexSync";
+import { createConvexReactSync, useConvexSync, type RxJsonSchema } from "@convex-rx/react";
 import { api } from "../convex/_generated/api";
 
 // Define your data type
@@ -180,7 +202,7 @@ let syncInstance: Promise<any> | null = null;
 
 async function getYourSync() {
   if (!syncInstance) {
-    syncInstance = createConvexSync<YourItem>({
+    syncInstance = createConvexReactSync<YourItem>({
       tableName: 'yourTable',
       schema: yourSchema,
       convexApi: {
@@ -294,9 +316,9 @@ export function YourComponent() {
 
 ## 📋 API Reference
 
-### `createConvexSync<T>(config)`
+### `createConvexReactSync<T>(config)` (from `@convex-rx/react`)
 
-Creates a sync instance for any Convex table.
+Creates a React sync instance with TanStack DB integration for any Convex table.
 
 ```typescript
 interface ConvexSyncConfig<T> {
@@ -395,8 +417,8 @@ const replication = replicateRxCollection(/* complex replication setup */);
 
 **After:**
 ```typescript
-// Simple one-line setup  
-const syncInstance = await createConvexSync({
+// Simple one-line setup
+const syncInstance = await createConvexReactSync({
   tableName: 'yourTable',
   schema: yourSchema,
   convexApi: api.yourTable
@@ -413,12 +435,40 @@ The sync engine provides a complete replacement for:
 
 ## 📚 Examples
 
+See **`examples/tanstack-start/`** for a complete working example:
 - **`src/useTasks.ts`** - Complete task management implementation with CRUD operations
-- **`src/sync/README.md`** - Detailed API documentation with advanced examples
+- **`convex/tasks.ts`** - Convex backend functions (changeStream, pullDocuments, pushDocuments)
+- **`src/routes/index.tsx`** - React component using the sync hook
+
+## 🛠️ Development
+
+### Building Packages
+
+```bash
+# Build all packages
+bun run build
+
+# Build individual packages
+bun run build:core
+bun run build:react
+```
+
+### Running Tests
+
+```bash
+bun run typecheck
+```
+
+### Code Quality
+
+```bash
+bun run check        # Check formatting and linting
+bun run check:fix    # Auto-fix issues
+```
 
 ## 🤝 Contributing
 
-This sync engine demonstrates a complete offline-first architecture. Feel free to extend it for your specific use cases or contribute improvements to the core sync logic.
+This project demonstrates a complete offline-first architecture with a clean separation between framework-agnostic core and React-specific bindings. Feel free to extend it for other frameworks or contribute improvements to the core sync logic.
 
 ## 📄 License
 

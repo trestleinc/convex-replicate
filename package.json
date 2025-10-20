@@ -3,12 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "examples/*"
   ],
   "scripts": {
-    "build": "cd packages/core && bun run build",
+    "build": "bun run build:core && bun run build:react",
+    "build:core": "cd packages/core && bun run build",
+    "build:react": "cd packages/react && bun run build",
     "clean": "rm -rf packages/*/dist",
-    "typecheck": "cd packages/core && tsc --noEmit",
+    "typecheck": "bun run typecheck:core && bun run typecheck:react",
+    "typecheck:core": "cd packages/core && tsc --noEmit",
+    "typecheck:react": "cd packages/react && tsc --noEmit",
+    "dev:example": "cd examples/tanstack-start && bun run dev",
+    "build:example": "cd examples/tanstack-start && bun run build",
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
     "format": "biome format --write .",

@@ -63,7 +63,7 @@
   },
   "overrides": [
     {
-      "includes": ["convex/_generated/**", "**/*.d.ts", "src/routeTree.gen.ts"],
+      "includes": ["convex/_generated/**", "**/*.d.ts", "**/routeTree.gen.ts"],
       "linter": {
         "enabled": false
       },
@@ -72,7 +72,7 @@
       }
     },
     {
-      "includes": ["src/styles.css"],
+      "includes": ["src/styles.css", "**/styles.css"],
       "css": {
         "linter": {
           "enabled": true

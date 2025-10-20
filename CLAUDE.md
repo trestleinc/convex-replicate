@@ -7,16 +7,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is a **monorepo** containing reusable packages for offline-first sync architecture using:
 - **RxDB** - Local database with offline storage
 - **Convex** - Real-time cloud database with WebSocket streaming
+- **TanStack DB** - Reactive state management for React
 - **RxJS** - Reactive programming primitives
 
-The main package `@convex-rx/core` provides a sync engine that bridges RxDB and Convex for bidirectional real-time synchronization.
+The packages provide a complete sync solution:
+- `@convex-rx/core` - Framework-agnostic sync engine bridging RxDB and Convex
+- `@convex-rx/react` - React hooks with TanStack DB integration
 
 ## Monorepo Structure
 
 ```
 convex-rx/
 ├── packages/
-│   └── core/          # @convex-rx/core - Core sync engine
+│   ├── core/          # @convex-rx/core - Core RxDB + Convex sync engine (framework-agnostic)
+│   └── react/         # @convex-rx/react - React hooks + TanStack DB wrapper
+├── examples/
+│   └── tanstack-start/  # Example TanStack Start app demonstrating usage
+│       ├── src/         # Application source code
+│       ├── convex/      # Convex backend functions
+│       └── package.json # Example app dependencies
 ├── biome.json         # Root Biome configuration
 ├── tsconfig.base.json # Shared TypeScript configuration
 └── bunfig.toml        # Bun workspace configuration
@@ -25,9 +34,23 @@ convex-rx/
 ## Commands
 
 ### Build & Development
-- `bun run build` - Build all packages (currently just core)
+- `bun run build` - Build all packages (core + react)
+- `bun run build:core` - Build only @convex-rx/core
+- `bun run build:react` - Build only @convex-rx/react
 - `bun run typecheck` - Type check all packages
 - `bun run clean` - Remove all build artifacts
+
+### Example App
+- `bun run dev:example` - Start both the TanStack Start app AND Convex dev environment (runs concurrently)
+- `bun run build:example` - Build the example app for production
+
+**Note**: The dev:example script automatically starts both:
+  - Vite dev server on port 3000
+  - Convex dev environment with WebSocket sync
+
+Within `examples/tanstack-start/`, you can also run:
+  - `bun run dev:app` - Run only the Vite dev server
+  - `bun run dev:convex` - Run only Convex dev environment
 
 ### Code Quality (Biome)
 - `bun run lint` - Lint all files
@@ -55,17 +78,25 @@ React Components ↔ TanStack DB ↔ RxDB ↔ Convex (via WebSocket streams)
 2. **TanStack DB → RxDB**: Automatic persistence to local database
 3. **RxDB ↔ Convex**: Bidirectional sync via WebSocket change streams
 
-### Sync Engine Pattern (`src/sync/`)
+### Sync Engine Pattern
 
-The sync engine uses a **factory + hook pattern**:
+The packages use a **factory + hook pattern**:
 
-#### Core Files
-- `createConvexSync.ts` - Factory that creates table-specific sync instances
-- `useConvexSync.ts` - Generic React hook providing CRUD operations for any synced table
+#### Core Package (`@convex-rx/core`)
+- `createConvexRxSync()` - Creates framework-agnostic sync instances
+- Returns: `{ database, rxCollection, replicationState }`
 
-#### Usage Pattern (see `src/useTasks.ts` for complete example)
+#### React Package (`@convex-rx/react`)
+- `createConvexReactSync()` - Wraps core with TanStack DB collection
+- `useConvexSync()` - React hook providing reactive data + CRUD actions
+- Returns: `{ data, isLoading, error, collection, actions }`
+
+#### Usage Pattern (see `examples/tanstack-start/src/useTasks.ts`)
 
 ```typescript
+import { createConvexReactSync, useConvexSync, type RxJsonSchema } from '@convex-rx/react';
+import { api } from '../convex/_generated/api';
+
 // 1. Define schema
 const schema: RxJsonSchema<YourType> = { /* ... */ };
 
@@ -73,7 +104,7 @@ const schema: RxJsonSchema<YourType> = { /* ... */ };
 let syncInstance: Promise<any> | null = null;
 async function getSyncInstance() {
   if (!syncInstance) {
-    syncInstance = createConvexSync({
+    syncInstance = createConvexReactSync({
       tableName: 'yourTable',
       schema,
       convexApi: {
@@ -102,7 +133,7 @@ export function useYourTable() {
 
 ### Required Convex Functions (per synced table)
 
-Each synced table needs three functions (see `convex/tasks.ts`):
+Each synced table needs three functions (see `examples/tanstack-start/convex/tasks.ts`):
 
 1. **`changeStream`** (query)
    - Returns `{ timestamp, count }` of latest changes
@@ -144,18 +175,36 @@ All synced types must include:
 
 ### Core Package (`packages/core/`)
 - `src/index.ts` - Main package exports
-- `src/sync.ts` - Sync factory implementation (createConvexSync)
+- `src/sync.ts` - Core sync engine (createConvexRxSync)
 - `src/types.ts` - TypeScript type definitions
-- `package.json` - Package configuration with peer dependencies
+- `package.json` - Package configuration with RxDB/RxJS dependencies
 - `tsconfig.json` - TypeScript configuration extending base
+
+### React Package (`packages/react/`)
+- `src/index.ts` - Main package exports
+- `src/createConvexReactSync.ts` - Wrapper adding TanStack DB to core sync
+- `src/useConvexSync.ts` - React hook for reactive data + CRUD actions
+- `package.json` - Package configuration with @convex-rx/core + TanStack DB
+- `tsconfig.json` - TypeScript configuration with JSX support
+
+### Example App (`examples/tanstack-start/`)
+- `src/useTasks.ts` - Example usage of @convex-rx/react
+- `src/routes/` - TanStack Start file-based routes
+- `src/router.tsx` - Router configuration with QueryClient + ConvexReactClient
+- `convex/tasks.ts` - Convex backend functions (changeStream, pull, push)
+- `vite.config.ts` - Vite + TanStack Start configuration
+- `package.json` - Example app dependencies
 
 ## Technology Stack
 
 - **Language**: TypeScript (strict mode)
 - **Runtime**: Bun
+- **Build Tool**: tsup (packages), Vite (example app)
 - **Code Quality**: Biome v2 (linting + formatting)
 - **Database**: RxDB (local) + Convex (cloud)
-- **Reactivity**: RxJS
+- **Reactivity**: RxJS (core), TanStack DB (React)
+- **Framework**: TanStack Start (example app)
+- **Monorepo**: Bun workspaces
 
 ## Adding New Packages to the Monorepo
 
@@ -223,7 +272,9 @@ To add a new package (e.g., `@convex-rx/react`):
 
 ## Development Notes
 
+- **Do not run dev servers** - The development server is manually handled by another process
 - Use `bun run check:fix` before committing to ensure code quality
 - All packages share the same Biome and TypeScript configuration from the root
 - Workspace dependencies use `workspace:*` protocol in package.json
 - Type checking runs against all packages simultaneously
+- Example apps each have their own Convex backend in their respective directories
