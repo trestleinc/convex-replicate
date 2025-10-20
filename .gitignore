@@ -6,6 +6,14 @@
 # Dist
 node_modules
 dist/
+packages/*/dist
+examples/*/dist
+examples/*/.env.local
 
 # IDE
 .idea
+
+# Build artifacts
+.rsbuild
+.vite
+.svelte-kit
