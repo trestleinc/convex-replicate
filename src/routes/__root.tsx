@@ -1,29 +1,27 @@
-import { Link, Outlet} from '@tanstack/react-router'
-import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
-import { QueryClient } from "@tanstack/react-query";
-import { createRootRouteWithContext } from "@tanstack/react-router"
-
+import type { QueryClient } from '@tanstack/react-query';
+import { createRootRouteWithContext, Link, Outlet } from '@tanstack/react-router';
+import { TanStackRouterDevtools } from '@tanstack/react-router-devtools';
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
 }>()({
- head: () => ({
+  head: () => ({
     meta: [
       {
-        charSet: "utf-8",
+        charSet: 'utf-8',
       },
       {
-        name: "viewport",
-        content: "width=device-width, initial-scale=1",
+        name: 'viewport',
+        content: 'width=device-width, initial-scale=1',
       },
       {
-        title: "Convex Tanstack",
+        title: 'Convex Tanstack',
       },
     ],
   }),
-// export const Route = createRootRoute({
+  // export const Route = createRootRoute({
   component: RootComponent,
-})
+});
 
 function RootComponent() {
   return (
@@ -43,5 +41,5 @@ function RootComponent() {
       <Outlet />
       <TanStackRouterDevtools position="bottom-right" />
     </>
-  )
+  );
 }

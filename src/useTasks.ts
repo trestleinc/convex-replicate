@@ -1,7 +1,7 @@
-import React from "react";
-import { createConvexSync, type RxJsonSchema } from "./sync/createConvexSync";
-import { useConvexSync } from "./sync/useConvexSync";
-import { api } from "../convex/_generated/api";
+import React from 'react';
+import { api } from '../convex/_generated/api';
+import { createConvexSync, type RxJsonSchema } from './sync/createConvexSync';
+import { useConvexSync } from './sync/useConvexSync';
 
 // ========================================
 // TASK TYPE AND SCHEMA
@@ -24,25 +24,25 @@ const taskSchema: RxJsonSchema<Task> = {
   properties: {
     id: {
       type: 'string',
-      maxLength: 100
+      maxLength: 100,
     },
     text: {
-      type: 'string'
+      type: 'string',
     },
     isCompleted: {
-      type: 'boolean'
+      type: 'boolean',
     },
     updatedTime: {
       type: 'number',
       minimum: 0, // Required for number fields used in indexes
       maximum: 8640000000000000, // JavaScript Date max value
-      multipleOf: 1 // Required for number fields used in indexes
-    }
+      multipleOf: 1, // Required for number fields used in indexes
+    },
   },
   required: ['id', 'text', 'isCompleted', 'updatedTime'],
   indexes: [
-    ['updatedTime', 'id'] // Composite index for replication checkpoints
-  ]
+    ['updatedTime', 'id'], // Composite index for replication checkpoints
+  ],
 };
 
 // ========================================
@@ -59,12 +59,12 @@ async function getTasksSync() {
       convexApi: {
         changeStream: api.tasks.changeStream,
         pullDocuments: api.tasks.pullDocuments,
-        pushDocuments: api.tasks.pushDocuments
+        pushDocuments: api.tasks.pushDocuments,
       },
       databaseName: 'tasksdb',
       batchSize: 100,
       retryTime: 5000,
-      enableLogging: true
+      enableLogging: true,
     });
   }
   return tasksSyncInstance;
@@ -81,7 +81,7 @@ export function useTasks() {
   // Initialize sync instance
   React.useEffect(() => {
     let mounted = true;
-    
+
     const init = async () => {
       try {
         const instance = await getTasksSync();
@@ -89,7 +89,6 @@ export function useTasks() {
           setSyncInstance(instance);
         }
       } catch (error) {
-        console.error('Failed to initialize tasks sync:', error);
         if (mounted) {
           setInitError(String(error));
         }
@@ -114,10 +113,16 @@ export function useTasks() {
       error: initError || 'Initializing...',
       collection: null,
       actions: {
-        insert: async () => { throw new Error('Not initialized'); },
-        update: async () => { throw new Error('Not initialized'); },
-        delete: async () => { throw new Error('Not initialized'); }
-      }
+        insert: async () => {
+          throw new Error('Not initialized');
+        },
+        update: async () => {
+          throw new Error('Not initialized');
+        },
+        delete: async () => {
+          throw new Error('Not initialized');
+        },
+      },
     };
   }
 
@@ -125,9 +130,10 @@ export function useTasks() {
     ...syncResult,
     // Add task-specific helper methods if needed
     createTask: (text: string) => syncResult.actions.insert({ text, isCompleted: false }),
-    toggleTask: (id: string, isCompleted: boolean) => syncResult.actions.update(id, { isCompleted: !isCompleted }),
+    toggleTask: (id: string, isCompleted: boolean) =>
+      syncResult.actions.update(id, { isCompleted: !isCompleted }),
     updateTaskText: (id: string, text: string) => syncResult.actions.update(id, { text }),
-    deleteTask: (id: string) => syncResult.actions.delete(id)
+    deleteTask: (id: string) => syncResult.actions.delete(id),
   };
 }
 
@@ -137,10 +143,11 @@ export function useTasks() {
 
 export function useCreateTask() {
   const { actions } = useTasks();
-  return (taskData: { text: string }) => actions.insert({ 
-    text: taskData.text, 
-    isCompleted: false 
-  });
+  return (taskData: { text: string }) =>
+    actions.insert({
+      text: taskData.text,
+      isCompleted: false,
+    });
 }
 
 export function useUpdateTask() {

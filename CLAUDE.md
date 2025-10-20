@@ -4,28 +4,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is an **example/template project** demonstrating offline-first sync architecture using:
-- **TanStack Router** - File-based routing
-- **TanStack DB** - Reactive state management with collections
+This is a **monorepo** containing reusable packages for offline-first sync architecture using:
 - **RxDB** - Local database with offline storage
 - **Convex** - Real-time cloud database with WebSocket streaming
+- **RxJS** - Reactive programming primitives
 
-**Note**: This is not a published library/adapter. The sync engine code in `src/sync/` is example implementation meant to be copied and adapted for your own projects.
+The main package `@convex-rx/core` provides a sync engine that bridges RxDB and Convex for bidirectional real-time synchronization.
+
+## Monorepo Structure
+
+```
+convex-rx/
+├── packages/
+│   └── core/          # @convex-rx/core - Core sync engine
+├── biome.json         # Root Biome configuration
+├── tsconfig.base.json # Shared TypeScript configuration
+└── bunfig.toml        # Bun workspace configuration
+```
 
 ## Commands
 
-### Development
-- `bun run dev` - Start development server (port 3000)
-- `bun run build` - Build for production with TypeScript checks
-- `bun run preview` - Preview production build
+### Build & Development
+- `bun run build` - Build all packages (currently just core)
+- `bun run typecheck` - Type check all packages
+- `bun run clean` - Remove all build artifacts
 
-### Convex Backend
-- `bunx convex dev` - Start Convex development backend (run in separate terminal)
-- `bunx convex import --table tasks sampleData.jsonl` - Import sample data
+### Code Quality (Biome)
+- `bun run lint` - Lint all files
+- `bun run lint:fix` - Lint and auto-fix issues
+- `bun run format` - Format all files
+- `bun run format:check` - Check formatting without modifying
+- `bun run check` - Combined lint + format check (useful for CI)
+- `bun run check:fix` - Combined lint + format with auto-fixes
 
-### Code Quality
-- Code formatting and linting via Biome (`@biomejs/biome`)
-- TypeScript checking included in build process
+### Biome Configuration
+- Root `biome.json` contains shared configuration for all packages
+- Biome v2 supports monorepos with VCS integration enabled
+- File ignores configured for common build artifacts and dependencies
+- Override rules for config files and test files
 
 ## Architecture
 
@@ -126,35 +142,88 @@ All synced types must include:
 
 ## File Structure
 
-### Core Application
-- `src/router.tsx` - TanStack Router setup with Convex client initialization
-- `src/routes/` - File-based routing (TanStack Router convention)
-- `rsbuild.config.ts` - Build configuration with TanStack Router plugin
-
-### Example Implementation
-- `src/useTasks.ts` - Complete example of sync hook with CRUD helpers
-- `convex/tasks.ts` - Example Convex backend functions for tasks table
-- `src/database.ts` - Legacy direct RxDB implementation (prior to abstraction)
-
-### Sync Engine
-- `src/sync/createConvexSync.ts` - Sync factory with RxDB + Convex setup
-- `src/sync/useConvexSync.ts` - Generic React hook for any synced table
+### Core Package (`packages/core/`)
+- `src/index.ts` - Main package exports
+- `src/sync.ts` - Sync factory implementation (createConvexSync)
+- `src/types.ts` - TypeScript type definitions
+- `package.json` - Package configuration with peer dependencies
+- `tsconfig.json` - TypeScript configuration extending base
 
 ## Technology Stack
 
-- **Build**: Rsbuild with React plugin and Rspack
-- **Framework**: React 19
-- **Routing**: TanStack Router (file-based)
-- **State**: TanStack DB (reactive collections)
-- **Local DB**: RxDB (LocalStorage storage)
-- **Backend**: Convex (WebSocket + HTTP)
-- **Styling**: Tailwind CSS 4.x
 - **Language**: TypeScript (strict mode)
 - **Runtime**: Bun
+- **Code Quality**: Biome v2 (linting + formatting)
+- **Database**: RxDB (local) + Convex (cloud)
+- **Reactivity**: RxJS
+
+## Adding New Packages to the Monorepo
+
+To add a new package (e.g., `@convex-rx/react`):
+
+1. **Create package directory**:
+   ```bash
+   mkdir -p packages/react/src
+   ```
+
+2. **Create `packages/react/package.json`**:
+   ```json
+   {
+     "name": "@convex-rx/react",
+     "version": "0.1.0",
+     "type": "module",
+     "main": "./dist/index.js",
+     "types": "./dist/index.d.ts",
+     "dependencies": {
+       "@convex-rx/core": "workspace:*"
+     },
+     "peerDependencies": {
+       "react": "^18.0.0 || ^19.0.0"
+     }
+   }
+   ```
+
+3. **Create `packages/react/tsconfig.json`**:
+   ```json
+   {
+     "extends": "../../tsconfig.base.json",
+     "compilerOptions": {
+       "outDir": "./dist",
+       "rootDir": "./src"
+     },
+     "include": ["src"]
+   }
+   ```
+
+4. **(Optional) Create `packages/react/biome.json`** for package-specific rules:
+   ```json
+   {
+     "extends": "//",
+     "linter": {
+       "rules": {
+         "suspicious": {
+           "noConsoleLog": "off"
+         }
+       }
+     }
+   }
+   ```
+
+   The `"extends": "//"` microsyntax inherits from the root `biome.json`.
+
+5. **Update root `package.json` scripts** to include the new package:
+   ```json
+   {
+     "scripts": {
+       "build": "bun run build:core && bun run build:react",
+       "build:react": "cd packages/react && bun run build"
+     }
+   }
+   ```
 
 ## Development Notes
 
-- Dev server is manually managed - do not start via automated tools
-- The sync engine is example code, not a published package
-- All CRUD operations are optimistic with automatic background sync
-- Logging can be controlled via `enableLogging` option in `createConvexSync`
+- Use `bun run check:fix` before committing to ensure code quality
+- All packages share the same Biome and TypeScript configuration from the root
+- Workspace dependencies use `workspace:*` protocol in package.json
+- Type checking runs against all packages simultaneously

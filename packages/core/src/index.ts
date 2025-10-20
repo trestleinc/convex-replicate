@@ -1,9 +1,9 @@
 // Main exports
-export { createConvexRxSync, createCleanupFunction } from './sync';
+export { createCleanupFunction, createConvexRxSync } from './sync';
 
 // Type exports
 export type {
-  RxJsonSchema,
+  ConvexRxSyncInstance,
   ConvexSyncConfig,
-  ConvexRxSyncInstance
+  RxJsonSchema,
 } from './types';

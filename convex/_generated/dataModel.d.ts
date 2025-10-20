@@ -8,8 +8,8 @@
  * @module
  */
 
-import { AnyDataModel } from "convex/server";
-import type { GenericId } from "convex/values";
+import { AnyDataModel } from 'convex/server';
+import type { GenericId } from 'convex/values';
 
 /**
  * No `schema.ts` file found!
@@ -43,8 +43,7 @@ export type Doc = any;
  * IDs are just strings at runtime, but this type can be used to distinguish them from other
  * strings when type checking.
  */
-export type Id<TableName extends TableNames = TableNames> =
-  GenericId<TableName>;
+export type Id<TableName extends TableNames = TableNames> = GenericId<TableName>;
 
 /**
  * A type describing your Convex data model.

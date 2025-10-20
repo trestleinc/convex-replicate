@@ -2,7 +2,7 @@
 // TYPE DEFINITIONS
 // ========================================
 
-export interface RxJsonSchema<T = any> {
+export interface RxJsonSchema<_T = any> {
   title: string;
   version: number;
   type: 'object';
@@ -27,7 +27,7 @@ export interface ConvexSyncConfig<T> {
   enableLogging?: boolean;
 }
 
-export interface ConvexRxSyncInstance<T = any> {
+export interface ConvexRxSyncInstance<_T = any> {
   rxDatabase: any;
   rxCollection: any;
   replicationState: any;

@@ -1,23 +1,46 @@
 {
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
-  "assist": {
-    "actions": {
-      "source": {
-        "organizeImports": "on"
-      }
-    }
-  },
   "vcs": {
     "enabled": true,
     "clientKind": "git",
     "useIgnoreFile": true
   },
+  "files": {
+    "ignoreUnknown": true
+  },
   "formatter": {
-    "indentStyle": "space"
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "suspicious": {
+        "noConsole": "warn",
+        "noExplicitAny": "off"
+      },
+      "style": {
+        "useImportType": "error",
+        "useNodejsImportProtocol": "error"
+      }
+    }
   },
   "javascript": {
     "formatter": {
-      "quoteStyle": "single"
+      "quoteStyle": "single",
+      "trailingCommas": "es5",
+      "semicolons": "always"
+    }
+  },
+  "json": {
+    "parser": {
+      "allowComments": true
+    },
+    "formatter": {
+      "enabled": true
     }
   },
   "css": {
@@ -27,19 +50,63 @@
     "formatter": {
       "enabled": false
     },
-    "lint": {
-      "unknownAtRule": {
-        "level": "error",
-        "options": {
-          "ignoreAtRules": ["apply", "tailwind", "layer", "config"]
-        }
+    "linter": {
+      "enabled": true
+    }
+  },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
       }
     }
   },
-  "linter": {
-    "enabled": true,
-    "rules": {
-      "recommended": true
+  "overrides": [
+    {
+      "includes": ["convex/_generated/**", "**/*.d.ts", "src/routeTree.gen.ts"],
+      "linter": {
+        "enabled": false
+      },
+      "formatter": {
+        "enabled": false
+      }
+    },
+    {
+      "includes": ["src/styles.css"],
+      "css": {
+        "linter": {
+          "enabled": true
+        }
+      },
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noUnknownAtRules": {
+              "level": "off"
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["*.config.js", "*.config.ts", "*.config.mjs"],
+      "linter": {
+        "rules": {
+          "style": {
+            "useNodejsImportProtocol": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          }
+        }
+      }
     }
-  }
+  ]
 }

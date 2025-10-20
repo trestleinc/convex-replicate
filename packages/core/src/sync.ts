@@ -1,11 +1,11 @@
-import { createRxDatabase, addRxPlugin } from 'rxdb';
-import { getRxStorageLocalstorage } from 'rxdb/plugins/storage-localstorage';
-import { wrappedValidateAjvStorage } from 'rxdb/plugins/validate-ajv';
+import { addRxPlugin, createRxDatabase } from 'rxdb';
 import { RxDBDevModePlugin } from 'rxdb/plugins/dev-mode';
-import { RxDBUpdatePlugin } from 'rxdb/plugins/update';
 import { replicateRxCollection } from 'rxdb/plugins/replication';
+import { getRxStorageLocalstorage } from 'rxdb/plugins/storage-localstorage';
+import { RxDBUpdatePlugin } from 'rxdb/plugins/update';
+import { wrappedValidateAjvStorage } from 'rxdb/plugins/validate-ajv';
 import { Subject } from 'rxjs';
-import type { ConvexSyncConfig, RxJsonSchema, ConvexRxSyncInstance } from './types';
+import type { ConvexRxSyncInstance, ConvexSyncConfig, RxJsonSchema } from './types';
 
 // Add required plugins
 addRxPlugin(RxDBUpdatePlugin);
@@ -15,7 +15,7 @@ try {
   if (process.env.NODE_ENV === 'development') {
     addRxPlugin(RxDBDevModePlugin);
   }
-} catch (error) {
+} catch (_error) {
   // process.env might not be available in all environments
 }
 
@@ -26,8 +26,9 @@ try {
 const databaseInstances = new Map<string, Promise<any>>();
 
 async function getOrCreateDatabase(name: string): Promise<any> {
-  if (databaseInstances.has(name)) {
-    return databaseInstances.get(name)!;
+  const existing = databaseInstances.get(name);
+  if (existing) {
+    return existing;
   }
 
   const isDev = process.env.NODE_ENV === 'development';
@@ -35,7 +36,7 @@ async function getOrCreateDatabase(name: string): Promise<any> {
   const dbPromise = createRxDatabase({
     name,
     storage: wrappedValidateAjvStorage({
-      storage: getRxStorageLocalstorage()
+      storage: getRxStorageLocalstorage(),
     }),
     multiInstance: true, // Enable cross-tab synchronization
     eventReduce: true, // Performance optimization
@@ -51,20 +52,23 @@ async function getOrCreateDatabase(name: string): Promise<any> {
 // SCHEMA UTILITIES
 // ========================================
 
-function createBaseSchema<T>(tableName: string, userSchema: RxJsonSchema<T>): RxJsonSchema<T & { _deleted?: boolean }> {
+function createBaseSchema<T>(
+  tableName: string,
+  userSchema: RxJsonSchema<T>
+): RxJsonSchema<T & { _deleted?: boolean }> {
   return {
     ...userSchema,
     title: `${tableName} Schema`,
     properties: {
       ...userSchema.properties,
       _deleted: {
-        type: 'boolean'
-      }
+        type: 'boolean',
+      },
     },
     indexes: [
       ['updatedTime', 'id'], // For efficient replication checkpoints
-      ...(userSchema.indexes || [])
-    ]
+      ...(userSchema.indexes || []),
+    ],
   };
 }
 
@@ -80,7 +84,6 @@ async function setupReplication<T>(
   const { convexClient } = config;
 
   if (!convexClient) {
-    console.error(`[${tableName}] Convex client not provided`);
     return null;
   }
 
@@ -99,7 +102,6 @@ async function setupReplication<T>(
     }
 
     if (enableLogging) {
-      console.log(`[${tableName}] Setting up change stream watch`);
     }
 
     try {
@@ -108,9 +110,11 @@ async function setupReplication<T>(
       const unsubscribeFn = changeWatch.onUpdate(() => {
         const data = changeWatch.localQueryResult();
 
-        if (data && (data.timestamp !== lastKnownState.timestamp || data.count !== lastKnownState.count)) {
+        if (
+          data &&
+          (data.timestamp !== lastKnownState.timestamp || data.count !== lastKnownState.count)
+        ) {
           if (enableLogging) {
-            console.log(`[${tableName}] Change detected: ${lastKnownState.timestamp},${lastKnownState.count} → ${data.timestamp},${data.count}`);
           }
           lastKnownState = { timestamp: data.timestamp, count: data.count };
 
@@ -120,20 +124,16 @@ async function setupReplication<T>(
       });
 
       unsubscribeWatchQuery = unsubscribeFn;
-    } catch (error) {
-      console.error(`[${tableName}] Failed to setup watch query:`, error);
-    }
+    } catch (_error) {}
   }
 
   // Start WebSocket connection with retry logic
   const startWebSocketWithRetry = (retryCount = 0) => {
     try {
       setupWatchQuery();
-    } catch (error) {
-      console.error(`[${tableName}] Failed to setup watch query:`, error);
+    } catch (_error) {
       if (retryCount < 3) {
         if (enableLogging) {
-          console.log(`[${tableName}] Retrying in 2s... (attempt ${retryCount + 1}/3)`);
         }
         setTimeout(() => startWebSocketWithRetry(retryCount + 1), 2000);
       }
@@ -156,13 +156,12 @@ async function setupReplication<T>(
         const checkpointTime = (checkpointOrNull as { updatedTime: number })?.updatedTime || 0;
 
         if (enableLogging) {
-          console.log(`[${tableName}] Pull: checkpoint=${checkpointTime}, batch=${batchSizeParam}`);
         }
 
         try {
           const documents = await convexClient.query(config.convexApi.pullDocuments, {
             checkpointTime,
-            limit: batchSizeParam
+            limit: batchSizeParam,
           });
 
           if (!Array.isArray(documents)) {
@@ -170,89 +169,72 @@ async function setupReplication<T>(
           }
 
           // Add _deleted field and create checkpoint
-          const processedDocs = documents.map(doc => ({ ...doc, _deleted: false }));
-          const newCheckpoint = processedDocs.length > 0
-            ? { updatedTime: processedDocs[0].updatedTime }
-            : { updatedTime: checkpointTime };
+          const processedDocs = documents.map((doc) => ({ ...doc, _deleted: false }));
+          const newCheckpoint =
+            processedDocs.length > 0
+              ? { updatedTime: processedDocs[0].updatedTime }
+              : { updatedTime: checkpointTime };
 
           if (enableLogging) {
-            console.log(`[${tableName}] Pulled ${processedDocs.length} documents`);
           }
 
           return {
             documents: processedDocs,
-            checkpoint: newCheckpoint
+            checkpoint: newCheckpoint,
           };
-        } catch (error) {
-          console.error(`[${tableName}] Pull error:`, error);
+        } catch (_error) {
           return { documents: [], checkpoint: { updatedTime: checkpointTime } };
         }
       },
       batchSize,
-      stream$: pullStream$.asObservable()
+      stream$: pullStream$.asObservable(),
     },
 
     push: {
       async handler(changeRows) {
         if (enableLogging) {
-          console.log(`[${tableName}] Push handler called with ${changeRows.length} change rows`);
+        }
+        const conflicts = await convexClient.mutation(config.convexApi.pushDocuments, {
+          changeRows,
+        });
+
+        if (enableLogging) {
         }
 
-        try {
-          const conflicts = await convexClient.mutation(config.convexApi.pushDocuments, {
-            changeRows
-          });
+        // Validate conflicts response
+        if (!Array.isArray(conflicts)) {
+          return [];
+        }
 
-          if (enableLogging) {
-            console.log(`[${tableName}] Push completed with ${Array.isArray(conflicts) ? conflicts.length : 'invalid'} conflicts`);
-          }
-
-          // Validate conflicts response
-          if (!Array.isArray(conflicts)) {
-            console.error(`[${tableName}] Convex returned non-array conflicts:`, typeof conflicts, conflicts);
-            return [];
-          }
-
-          // Ensure conflicts have _deleted property
-          const conflictsWithDeleted = conflicts.map((conflict: any) => {
+        // Ensure conflicts have _deleted property
+        const conflictsWithDeleted = conflicts
+          .map((conflict: any) => {
             if (!conflict || typeof conflict !== 'object') {
-              console.warn(`[${tableName}] Invalid conflict object:`, conflict);
               return null;
             }
 
             return {
               ...conflict,
-              _deleted: conflict._deleted || false
+              _deleted: conflict._deleted || false,
             };
-          }).filter(conflict => conflict !== null);
+          })
+          .filter((conflict) => conflict !== null);
 
-          return conflictsWithDeleted;
-        } catch (error) {
-          console.error(`[${tableName}] Push handler error:`, error);
-          throw error;
-        }
+        return conflictsWithDeleted;
       },
-      batchSize: 50
-    }
+      batchSize: 50,
+    },
   });
 
   // Monitor replication state with detailed logging
   if (enableLogging) {
-    replicationState.error$.subscribe((error: any) => {
-      console.error(`[${tableName}] Replication error:`, error);
-    });
+    replicationState.error$.subscribe((_error: any) => {});
 
-    replicationState.active$.subscribe((active: boolean) => {
-      console.log(`[${tableName}] Replication active: ${active}`);
-    });
+    replicationState.active$.subscribe((_active: boolean) => {});
 
-    replicationState.received$.subscribe((received: any) => {
-      console.log(`[${tableName}] Received batch:`, received);
-    });
+    replicationState.received$.subscribe((_received: any) => {});
 
-    replicationState.sent$.subscribe((sent: any) => {
-      console.log(`[${tableName}] Sent batch:`, sent);
-    });
+    replicationState.sent$.subscribe((_sent: any) => {});
   }
 
   // Clean up on window unload (browser environment only)
@@ -276,50 +258,42 @@ async function setupReplication<T>(
 // MAIN API: CREATE CONVEX RX SYNC
 // ========================================
 
-export async function createConvexRxSync<T>(config: ConvexSyncConfig<T>): Promise<ConvexRxSyncInstance<T>> {
+export async function createConvexRxSync<T>(
+  config: ConvexSyncConfig<T>
+): Promise<ConvexRxSyncInstance<T>> {
   const databaseName = config.databaseName || `${config.tableName}db`;
   const enableLogging = config.enableLogging !== false;
-
-  try {
-    if (enableLogging) {
-      console.log(`[${config.tableName}] Starting sync initialization...`);
-    }
-
-    // Get or create database
-    const database = await getOrCreateDatabase(databaseName);
-
-    // Create schema with base fields
-    const schema = createBaseSchema(config.tableName, config.schema);
-
-    // Add collection if it doesn't exist
-    const collections = await database.addCollections({
-      [config.tableName]: { schema }
-    });
-
-    const rxCollection = collections[config.tableName];
-
-    if (enableLogging) {
-      console.log(`[${config.tableName}] Database and collection created`);
-    }
-
-    // Setup replication
-    const replicationState = await setupReplication(rxCollection, config.tableName, config);
-
-    if (enableLogging) {
-      console.log(`[${config.tableName}] Sync initialization complete`);
-    }
-
-    return {
-      rxDatabase: database,
-      rxCollection,
-      replicationState,
-      tableName: config.tableName
-    };
-
-  } catch (error) {
-    console.error(`[${config.tableName}] Failed to initialize sync:`, error);
-    throw error;
+  if (enableLogging) {
   }
+
+  // Get or create database
+  const database = await getOrCreateDatabase(databaseName);
+
+  // Create schema with base fields
+  const schema = createBaseSchema(config.tableName, config.schema);
+
+  // Add collection if it doesn't exist
+  const collections = await database.addCollections({
+    [config.tableName]: { schema },
+  });
+
+  const rxCollection = collections[config.tableName];
+
+  if (enableLogging) {
+  }
+
+  // Setup replication
+  const replicationState = await setupReplication(rxCollection, config.tableName, config);
+
+  if (enableLogging) {
+  }
+
+  return {
+    rxDatabase: database,
+    rxCollection,
+    replicationState,
+    tableName: config.tableName,
+  };
 }
 
 // ========================================
@@ -329,14 +303,11 @@ export async function createConvexRxSync<T>(config: ConvexSyncConfig<T>): Promis
 export function createCleanupFunction() {
   return () => {
     // Clean up all database instances
-    databaseInstances.forEach(async (dbPromise, name) => {
+    databaseInstances.forEach(async (dbPromise, _name) => {
       try {
         const db = await dbPromise;
         await db.destroy();
-        console.log(`[Cleanup] Database ${name} destroyed`);
-      } catch (error) {
-        console.error(`[Cleanup] Failed to destroy database ${name}:`, error);
-      }
+      } catch (_error) {}
     });
     databaseInstances.clear();
   };
