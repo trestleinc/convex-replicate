@@ -1,0 +1,10 @@
+# Bun configuration
+[install]
+# Use exact versions from workspace packages
+exact = true
+
+# Peer dependencies behavior
+peer = true
+
+[install.scopes]
+# Configure private registry if needed in the future
