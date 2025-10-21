@@ -17,7 +17,7 @@ Refactor `convex-rx` from a single example project into a monorepo with:
 
 ### Current State
 - Single React app using Rsbuild + TanStack Router
-- Sync logic in `src/sync/` (370 lines in `createConvexSync.ts`, 217 lines in `useConvexSync.ts`)
+- Sync logic in `src/sync/` (370 lines in `createConvexSync.ts`, 217 lines in `useConvexRx.ts`)
 - Hardcoded for React + TanStack DB
 
 ### Target State
@@ -43,7 +43,7 @@ convex-rx/
 │   ├── react/                   # @convex-rx/react (private)
 │   │   ├── src/
 │   │   │   ├── index.ts
-│   │   │   └── useConvexSync.ts  # React hook (~200 lines)
+│   │   │   └── useConvexRx.ts  # React hook (~200 lines)
 │   │   ├── package.json
 │   │   └── tsconfig.json
 │   │
@@ -237,14 +237,14 @@ export type { ConvexSyncConfig, RxJsonSchema } from './types';
 - [ ] Create `packages/react/tsconfig.json`
 - [ ] Create `packages/react/src/` directory
 
-### 3.2 Port `src/sync/useConvexSync.ts` → `packages/react/src/useConvexSync.ts`
+### 3.2 Port `src/sync/useConvexRx.ts` → `packages/react/src/useConvexRx.ts`
 
 #### What to Keep:
 - [x] All React imports (`React.useState`, `React.useEffect`, etc.)
 - [x] `SyncInstance` interface
-- [x] `UseConvexSyncActions` interface
-- [x] `UseConvexSyncResult` interface
-- [x] `useConvexSync` hook implementation:
+- [x] `UseConvexRxActions` interface
+- [x] `UseConvexRxResult` interface
+- [x] `useConvexRx` hook implementation:
   - State management (data, isLoading, error)
   - Collection subscription logic
   - CRUD action methods (insert, update, delete)
@@ -260,7 +260,7 @@ export type { ConvexSyncConfig, RxJsonSchema } from './types';
   import { createCollection } from "@tanstack/react-db";
   import { rxdbCollectionOptions } from "@tanstack/rxdb-db-collection";
 
-  // Inside useConvexSync hook:
+  // Inside useConvexRx hook:
   const collection = createCollection(
     rxdbCollectionOptions({
       rxCollection: syncInstance.rxCollection,
@@ -271,11 +271,11 @@ export type { ConvexSyncConfig, RxJsonSchema } from './types';
 
 ### 3.3 Create `packages/react/src/index.ts`
 ```typescript
-export { useConvexSync } from './useConvexSync';
+export { useConvexRx } from './useConvexRx';
 export type {
-  UseConvexSyncResult,
-  UseConvexSyncActions
-} from './useConvexSync';
+  UseConvexRxResult,
+  UseConvexRxActions
+} from './useConvexRx';
 ```
 
 ### 3.4 Create `packages/react/package.json`
@@ -546,10 +546,10 @@ export default defineConfig({});
   ```typescript
   // OLD
   import { createConvexSync, type RxJsonSchema } from "./sync/createConvexSync";
-  import { useConvexSync } from "./sync/useConvexSync";
+  import { useConvexRx } from "./sync/useConvexRx";
 
   // NEW
-  import { useConvexSync } from '@convex-rx/react';
+  import { useConvexRx } from '@convex-rx/react';
   import type { RxJsonSchema } from '@convex-rx/core';
   ```
 

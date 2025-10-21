@@ -1,12 +1,12 @@
-import { type ConvexRxDBConfig, createConvexRxDB } from '@convex-rx/core';
-import { createCollection, type Collection } from '@tanstack/react-db';
+import { type ConvexRxDBConfig, type ConvexRxDocument, createConvexRxDB } from '@convex-rx/core';
+import { type Collection, createCollection } from '@tanstack/react-db';
 import { rxdbCollectionOptions } from '@tanstack/rxdb-db-collection';
 import type { RxCollection, RxDatabase } from 'rxdb';
 
 /**
  * Instance returned by createConvexReactSync containing TanStack DB collection and RxDB primitives
  */
-export interface ConvexReactSyncInstance<T extends object = any> {
+export interface ConvexReactSyncInstance<T extends ConvexRxDocument = any> {
   /** TanStack DB collection - reactive wrapper around RxDB */
   collection: Collection<T, string | number, any>;
   /** Underlying RxDB collection */
@@ -17,10 +17,6 @@ export interface ConvexReactSyncInstance<T extends object = any> {
   replicationState: any;
   /** Cleanup function to cancel replication and remove database */
   cleanup: () => Promise<void>;
-  /** Pause sync - stops replication and WebSocket connection (simulates offline) */
-  pauseSync: () => Promise<void>;
-  /** Resume sync - restarts replication and WebSocket connection (simulates going online) */
-  resumeSync: () => Promise<void>;
 }
 
 /**
@@ -30,12 +26,11 @@ export interface ConvexReactSyncInstance<T extends object = any> {
  * @param config - Convex RxDB configuration
  * @returns Promise resolving to sync instance with TanStack collection
  */
-export async function createConvexReactSync<T extends object>(
+export async function createConvexReactSync<T extends ConvexRxDocument>(
   config: ConvexRxDBConfig<T>
 ): Promise<ConvexReactSyncInstance<T>> {
   // 1. Create RxDB database with Convex replication
-  const { rxDatabase, rxCollection, replicationState, cleanup, pauseSync, resumeSync } =
-    await createConvexRxDB<T>(config);
+  const { rxDatabase, rxCollection, replicationState, cleanup } = await createConvexRxDB<T>(config);
 
   // 2. Wrap with TanStack DB using rxdbCollectionOptions
   // This is the magic that makes RxDB reactive in React!
@@ -53,7 +48,5 @@ export async function createConvexReactSync<T extends object>(
     rxDatabase,
     replicationState,
     cleanup,
-    pauseSync,
-    resumeSync,
   };
 }

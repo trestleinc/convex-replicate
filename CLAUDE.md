@@ -88,13 +88,13 @@ The packages use a **factory + hook pattern**:
 
 #### React Package (`@convex-rx/react`)
 - `createConvexReactSync()` - Wraps core with TanStack DB collection
-- `useConvexSync()` - React hook providing reactive data + CRUD actions
+- `useConvexRx()` - React hook providing reactive data + CRUD actions
 - Returns: `{ data, isLoading, error, collection, actions }`
 
 #### Usage Pattern (see `examples/tanstack-start/src/useTasks.ts`)
 
 ```typescript
-import { createConvexReactSync, useConvexSync, type RxJsonSchema } from '@convex-rx/react';
+import { createConvexReactSync, useConvexRx, type RxJsonSchema } from '@convex-rx/react';
 import { api } from '../convex/_generated/api';
 
 // 1. Define schema
@@ -117,7 +117,7 @@ async function getSyncInstance() {
   return syncInstance;
 }
 
-// 3. Create React hook using generic useConvexSync
+// 3. Create React hook using generic useConvexRx
 export function useYourTable() {
   const [syncInstance, setSyncInstance] = React.useState(null);
 
@@ -125,7 +125,7 @@ export function useYourTable() {
     getSyncInstance().then(setSyncInstance);
   }, []);
 
-  return useConvexSync<YourType>(syncInstance);
+  return useConvexRx<YourType>(syncInstance);
 }
 ```
 
@@ -183,7 +183,7 @@ All synced types must include:
 ### React Package (`packages/react/`)
 - `src/index.ts` - Main package exports
 - `src/createConvexReactSync.ts` - Wrapper adding TanStack DB to core sync
-- `src/useConvexSync.ts` - React hook for reactive data + CRUD actions
+- `src/useConvexRx.ts` - React hook for reactive data + CRUD actions
 - `package.json` - Package configuration with @convex-rx/core + TanStack DB
 - `tsconfig.json` - TypeScript configuration with JSX support
 

@@ -164,7 +164,7 @@ export const pushDocuments = mutation({
 ```typescript
 // src/useYourTable.ts
 import React from "react";
-import { createConvexReactSync, useConvexSync, type RxJsonSchema } from "@convex-rx/react";
+import { createConvexReactSync, useConvexRx, type RxJsonSchema } from "@convex-rx/react";
 import { api } from "../convex/_generated/api";
 
 // Define your data type
@@ -223,7 +223,7 @@ export function useYourTable() {
     getYourSync().then(setSyncInstance);
   }, []);
 
-  const syncResult = useConvexSync<YourItem>(syncInstance);
+  const syncResult = useConvexRx<YourItem>(syncInstance);
 
   if (!syncInstance) {
     return {
@@ -336,12 +336,12 @@ interface ConvexSyncConfig<T> {
 }
 ```
 
-### `useConvexSync<T>(syncInstance)`
+### `useConvexRx<T>(syncInstance)`
 
 Generic React hook for using any sync instance.
 
 ```typescript
-interface UseConvexSyncResult<T> {
+interface UseConvexRxResult<T> {
   data: T[]; // Reactive data array
   isLoading: boolean; // Loading state
   error?: string; // Error message if any

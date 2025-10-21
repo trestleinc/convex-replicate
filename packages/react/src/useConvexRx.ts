@@ -5,7 +5,7 @@ import type { ConvexReactSyncInstance } from './createConvexReactSync';
 // TYPE DEFINITIONS
 // ========================================
 
-export interface UseConvexSyncActions<T> {
+export interface UseConvexRxActions<T> {
   insert: (itemData: Omit<T, 'id' | 'updatedTime' | 'deleted'>) => Promise<string>;
   update: (
     id: string,
@@ -14,15 +14,13 @@ export interface UseConvexSyncActions<T> {
   delete: (id: string) => Promise<void>;
 }
 
-export interface UseConvexSyncResult<T> {
+export interface UseConvexRxResult<T> {
   data: T[];
   isLoading: boolean;
   error?: string;
   collection: any | null;
   rxCollection: any | null;
-  actions: UseConvexSyncActions<T>;
-  pauseSync: () => Promise<void>;
-  resumeSync: () => Promise<void>;
+  actions: UseConvexRxActions<T>;
 }
 
 // ========================================
@@ -36,9 +34,9 @@ export interface UseConvexSyncResult<T> {
  * @param syncInstance - Convex React sync instance (or null if not ready)
  * @returns Sync result with data, loading state, and action methods
  */
-export function useConvexSync<T extends { id: string; updatedTime: number; deleted?: boolean }>(
+export function useConvexRx<T extends { id: string; updatedTime: number; deleted?: boolean }>(
   syncInstance: ConvexReactSyncInstance<T> | null
-): UseConvexSyncResult<T> {
+): UseConvexRxResult<T> {
   const [data, setData] = React.useState<T[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [error, setError] = React.useState<string | undefined>(undefined);
@@ -64,14 +62,14 @@ export function useConvexSync<T extends { id: string; updatedTime: number; delet
                 // toArray is a getter (not a method) - access as property
                 const items: T[] = collection.toArray;
 
-                console.log('[useConvexSync] TanStack DB collection items:', items);
+                console.log('[useConvexRx] TanStack DB collection items:', items);
 
                 // Filter out soft-deleted items (_deleted: true)
                 const activeItems = items.filter((item: any) => !item._deleted);
 
-                console.log('[useConvexSync] Active items after filtering:', activeItems);
+                console.log('[useConvexRx] Active items after filtering:', activeItems);
                 console.log(
-                  '[useConvexSync] Filtered out deleted items:',
+                  '[useConvexRx] Filtered out deleted items:',
                   items.filter((item: any) => item._deleted)
                 );
 
@@ -107,7 +105,7 @@ export function useConvexSync<T extends { id: string; updatedTime: number; delet
   }, [syncInstance]);
 
   // Action methods
-  const actions: UseConvexSyncActions<T> = React.useMemo(() => {
+  const actions: UseConvexRxActions<T> = React.useMemo(() => {
     if (!syncInstance) {
       // Return disabled actions if no sync instance
       return {
@@ -157,13 +155,13 @@ export function useConvexSync<T extends { id: string; updatedTime: number; delet
 
       async delete(id: string) {
         try {
-          console.log(`[useConvexSync] Deleting item with id: ${id}`);
+          console.log(`[useConvexRx] Deleting item with id: ${id}`);
 
           // Use RxDB collection directly for soft delete
           // Explicitly set _deleted: true instead of using remove()
           const doc = await rxCollection.findOne(id).exec();
 
-          console.log(`[useConvexSync] Found document for deletion:`, doc?.toJSON());
+          console.log(`[useConvexRx] Found document for deletion:`, doc?.toJSON());
 
           if (doc) {
             // Explicitly set _deleted: true using update() to ensure it's synced
@@ -174,29 +172,16 @@ export function useConvexSync<T extends { id: string; updatedTime: number; delet
                 updatedTime: Date.now(),
               },
             });
-            console.log(`[useConvexSync] Document marked as deleted (_deleted: true)`);
+            console.log(`[useConvexRx] Document marked as deleted (_deleted: true)`);
           } else {
             throw new Error(`Item ${id} not found`);
           }
         } catch (error) {
-          console.error(`[useConvexSync] Delete error:`, error);
+          console.error(`[useConvexRx] Delete error:`, error);
           throw new Error(`Failed to delete item ${id}: ${String(error)}`);
         }
       },
     };
-  }, [syncInstance]);
-
-  // Pause/Resume methods
-  const pauseSync = React.useCallback(async () => {
-    if (syncInstance) {
-      await syncInstance.pauseSync();
-    }
-  }, [syncInstance]);
-
-  const resumeSync = React.useCallback(async () => {
-    if (syncInstance) {
-      await syncInstance.resumeSync();
-    }
   }, [syncInstance]);
 
   return {
@@ -206,8 +191,6 @@ export function useConvexSync<T extends { id: string; updatedTime: number; delet
     collection: syncInstance?.collection || null,
     rxCollection: syncInstance?.rxCollection || null,
     actions,
-    pauseSync,
-    resumeSync,
   };
 }
 
@@ -221,10 +204,10 @@ export function useConvexSync<T extends { id: string; updatedTime: number; delet
  * @param syncInstance - Convex React sync instance
  * @returns Object with insert, update, and delete methods
  */
-export function useConvexSyncActions<
+export function useConvexRxActions<
   T extends { id: string; updatedTime: number; deleted?: boolean },
 >(syncInstance: ConvexReactSyncInstance<T> | null) {
-  const { actions } = useConvexSync(syncInstance);
+  const { actions } = useConvexRx(syncInstance);
   return actions;
 }
 
@@ -234,9 +217,9 @@ export function useConvexSyncActions<
  * @param syncInstance - Convex React sync instance
  * @returns Object with data, isLoading, and error
  */
-export function useConvexSyncData<
-  T extends { id: string; updatedTime: number; deleted?: boolean },
->(syncInstance: ConvexReactSyncInstance<T> | null) {
-  const { data, isLoading, error } = useConvexSync(syncInstance);
+export function useConvexRxData<T extends { id: string; updatedTime: number; deleted?: boolean }>(
+  syncInstance: ConvexReactSyncInstance<T> | null
+) {
+  const { data, isLoading, error } = useConvexRx(syncInstance);
   return { data, isLoading, error };
 }
