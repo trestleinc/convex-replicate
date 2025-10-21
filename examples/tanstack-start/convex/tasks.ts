@@ -116,7 +116,7 @@ export const pullDocuments = query({
     }
 
     // Map to clean task objects (including deleted field)
-    const documents = tasks.map((task : any) => ({
+    const documents = tasks.map((task: any) => ({
       id: task.id,
       text: task.text,
       isCompleted: task.isCompleted,

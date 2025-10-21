@@ -1,4 +1,9 @@
-import { createConvexReactSync, type RxJsonSchema, useConvexSync } from '@convex-rx/react';
+import {
+  type ConvexReactSyncInstance,
+  createConvexReactSync,
+  type RxJsonSchema,
+  useConvexRx,
+} from '@convex-rx/react';
 import React from 'react';
 import { api } from '../convex/_generated/api';
 import { convexClient } from './router';
@@ -49,25 +54,32 @@ const taskSchema: RxJsonSchema<Task> = {
 // SYNC INSTANCE MANAGEMENT
 // ========================================
 
-let tasksSyncInstance: Promise<any> | null = null;
+let tasksSyncInstance: Promise<ConvexReactSyncInstance<Task>> | null = null;
+let tasksSyncInstanceResolved: ConvexReactSyncInstance<Task> | null = null;
 
-async function getTasksSync() {
-  if (!tasksSyncInstance) {
-    tasksSyncInstance = createConvexReactSync<Task>({
-      databaseName: 'taskdb',
-      collectionName: 'tasks',
-      schema: taskSchema,
-      convexClient,
-      convexApi: {
-        changeStream: api.tasks.changeStream,
-        pullDocuments: api.tasks.pullDocuments,
-        pushDocuments: api.tasks.pushDocuments,
-      },
-      batchSize: 100,
-      enableLogging: true,
-    });
+async function getTasksSync(): Promise<ConvexReactSyncInstance<Task>> {
+  if (tasksSyncInstanceResolved) {
+    return tasksSyncInstanceResolved;
   }
-  return tasksSyncInstance;
+  if (tasksSyncInstance) {
+    return tasksSyncInstance;
+  }
+
+  tasksSyncInstance = createConvexReactSync<Task>({
+    databaseName: 'taskdb',
+    collectionName: 'tasks',
+    schema: taskSchema,
+    convexClient,
+    convexApi: {
+      changeStream: api.tasks.changeStream,
+      pullDocuments: api.tasks.pullDocuments,
+      pushDocuments: api.tasks.pushDocuments,
+    },
+    batchSize: 100,
+    enableLogging: true,
+  });
+  tasksSyncInstanceResolved = await tasksSyncInstance;
+  return tasksSyncInstanceResolved;
 }
 
 // ========================================
@@ -103,7 +115,7 @@ export function useTasks() {
   }, []);
 
   // Use the generic sync hook
-  const syncResult = useConvexSync<Task>(syncInstance);
+  const syncResult = useConvexRx<Task>(syncInstance);
 
   // If we're still initializing or have an error
   if (!syncInstance) {
@@ -134,9 +146,6 @@ export function useTasks() {
       syncResult.actions.update(id, { isCompleted: !isCompleted }),
     updateTaskText: (id: string, text: string) => syncResult.actions.update(id, { text }),
     deleteTask: (id: string) => syncResult.actions.delete(id),
-    // Expose pause/resume for online/offline toggle
-    pauseSync: syncResult.pauseSync,
-    resumeSync: syncResult.resumeSync,
     purgeStorage: async () => {
       if (syncInstance) {
         try {
@@ -145,6 +154,7 @@ export function useTasks() {
           console.log('[useTasks] Cleanup complete, resetting singleton...');
           // Reset the singleton to allow re-initialization
           tasksSyncInstance = null;
+          tasksSyncInstanceResolved = null;
           // Reload the page to reinitialize everything
           console.log('[useTasks] Reloading page...');
           window.location.reload();
@@ -152,6 +162,7 @@ export function useTasks() {
           console.error('[useTasks] Failed to purge storage:', error);
           // Even if cleanup fails, try to reset and reload
           tasksSyncInstance = null;
+          tasksSyncInstanceResolved = null;
           window.location.reload();
         }
       } else {
@@ -159,29 +170,6 @@ export function useTasks() {
       }
     },
   };
-}
-
-// ========================================
-// SPECIFIC ACTION HOOKS (for granular usage)
-// ========================================
-
-export function useCreateTask() {
-  const { actions } = useTasks();
-  return (taskData: { text: string }) =>
-    actions.insert({
-      text: taskData.text,
-      isCompleted: false,
-    });
-}
-
-export function useUpdateTask() {
-  const { actions } = useTasks();
-  return actions.update;
-}
-
-export function useDeleteTask() {
-  const { actions } = useTasks();
-  return actions.delete;
 }
 
 // ========================================
@@ -197,15 +185,13 @@ export async function getTasksDatabase() {
 if (typeof window !== 'undefined' && (import.meta as any).hot) {
   (import.meta as any).hot.dispose(() => {
     if (tasksSyncInstance) {
-      tasksSyncInstance.then(({ database, replicationState }) => {
-        if (replicationState) {
-          replicationState.cancel();
-        }
-        if (database) {
-          database.destroy();
-        }
-      });
-      tasksSyncInstance = null;
+      tasksSyncInstance
+        .then((instance) => instance.cleanup())
+        .then(() => {
+          tasksSyncInstance = null;
+          tasksSyncInstanceResolved = null;
+        })
+        .catch((err) => console.error('[HMR] Cleanup failed:', err));
     }
   });
 }
