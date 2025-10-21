@@ -6,10 +6,10 @@ import type { ConvexReactSyncInstance } from './createConvexReactSync';
 // ========================================
 
 export interface UseConvexSyncActions<T> {
-  insert: (itemData: Omit<T, 'id' | 'updatedTime' | '_deleted'>) => Promise<string>;
+  insert: (itemData: Omit<T, 'id' | 'updatedTime' | 'deleted'>) => Promise<string>;
   update: (
     id: string,
-    updates: Partial<Omit<T, 'id' | 'updatedTime' | '_deleted'>>
+    updates: Partial<Omit<T, 'id' | 'updatedTime' | 'deleted'>>
   ) => Promise<void>;
   delete: (id: string) => Promise<void>;
 }
@@ -33,7 +33,7 @@ export interface UseConvexSyncResult<T> {
  * @param syncInstance - Convex React sync instance (or null if not ready)
  * @returns Sync result with data, loading state, and action methods
  */
-export function useConvexSync<T extends { id: string; updatedTime: number; _deleted?: boolean }>(
+export function useConvexSync<T extends { id: string; updatedTime: number; deleted?: boolean }>(
   syncInstance: ConvexReactSyncInstance<T> | null
 ): UseConvexSyncResult<T> {
   const [data, setData] = React.useState<T[]>([]);
@@ -45,7 +45,7 @@ export function useConvexSync<T extends { id: string; updatedTime: number; _dele
     if (!syncInstance) return;
 
     let mounted = true;
-    let unsubscribe: (() => void) | undefined;
+    let unsubscribe: any;
 
     const init = async () => {
       try {
@@ -53,28 +53,16 @@ export function useConvexSync<T extends { id: string; updatedTime: number; _dele
         if (!mounted) return;
 
         // Subscribe to collection changes using proper TanStack API
+        // subscribeChanges returns a CollectionSubscription object with an unsubscribe method
         unsubscribe = collection.subscribeChanges(
           () => {
             if (mounted) {
-              // Access the current collection data
-              let items: T[] = [];
               try {
-                // Try different ways to access the collection data
-                if (typeof collection.toArray === 'function') {
-                  items = collection.toArray();
-                } else if (Array.isArray(collection.toArray)) {
-                  items = collection.toArray;
-                } else if (collection.data && Array.isArray(collection.data)) {
-                  items = collection.data;
-                } else if (collection.items && Array.isArray(collection.items)) {
-                  items = collection.items;
-                } else {
-                  items = [];
-                }
+                // toArray is a getter (not a method) - access as property
+                const items: T[] = collection.toArray;
 
-                // Filter out deleted items for display
-                const activeItems = items.filter((item) => !item._deleted);
-
+                // Filter out soft-deleted items (_deleted: true)
+                const activeItems = items.filter((item: any) => !item._deleted);
                 setData(activeItems);
                 setIsLoading(false);
                 setError(undefined);
@@ -126,7 +114,7 @@ export function useConvexSync<T extends { id: string; updatedTime: number; _dele
     const { collection } = syncInstance;
 
     return {
-      async insert(itemData: Omit<T, 'id' | 'updatedTime' | '_deleted'>) {
+      async insert(itemData: Omit<T, 'id' | 'updatedTime' | 'deleted'>) {
         const itemId = crypto.randomUUID();
         const item = {
           id: itemId,
@@ -142,13 +130,14 @@ export function useConvexSync<T extends { id: string; updatedTime: number; _dele
         }
       },
 
-      async update(id: string, updates: Partial<Omit<T, 'id' | 'updatedTime' | '_deleted'>>) {
+      async update(id: string, updates: Partial<Omit<T, 'id' | 'updatedTime' | 'deleted'>>) {
         try {
-          await collection.update(id, (draft: T) => {
+          const tx = collection.update(id, (draft) => {
             Object.assign(draft, updates, {
               updatedTime: Date.now(),
             });
           });
+          await tx.isPersisted.promise;
         } catch (error) {
           throw new Error(`Failed to update item ${id}: ${String(error)}`);
         }
@@ -156,10 +145,13 @@ export function useConvexSync<T extends { id: string; updatedTime: number; _dele
 
       async delete(id: string) {
         try {
-          await collection.update(id, (draft: T) => {
+          // Soft delete: set _deleted flag instead of hard delete
+          // This ensures the delete propagates through RxDB replication to Convex
+          const tx = collection.update(id, (draft) => {
             (draft as any)._deleted = true;
             (draft as any).updatedTime = Date.now();
           });
+          await tx.isPersisted.promise;
         } catch (error) {
           throw new Error(`Failed to delete item ${id}: ${String(error)}`);
         }
@@ -187,7 +179,7 @@ export function useConvexSync<T extends { id: string; updatedTime: number; _dele
  * @returns Object with insert, update, and delete methods
  */
 export function useConvexSyncActions<
-  T extends { id: string; updatedTime: number; _deleted?: boolean },
+  T extends { id: string; updatedTime: number; deleted?: boolean },
 >(syncInstance: ConvexReactSyncInstance<T> | null) {
   const { actions } = useConvexSync(syncInstance);
   return actions;
@@ -200,7 +192,7 @@ export function useConvexSyncActions<
  * @returns Object with data, isLoading, and error
  */
 export function useConvexSyncData<
-  T extends { id: string; updatedTime: number; _deleted?: boolean },
+  T extends { id: string; updatedTime: number; deleted?: boolean },
 >(syncInstance: ConvexReactSyncInstance<T> | null) {
   const { data, isLoading, error } = useConvexSync(syncInstance);
   return { data, isLoading, error };

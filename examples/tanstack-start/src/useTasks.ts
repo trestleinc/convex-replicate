@@ -12,7 +12,7 @@ export type Task = {
   text: string;
   isCompleted: boolean;
   updatedTime: number;
-  _deleted?: boolean; // For soft deletes in RxDB
+  deleted?: boolean; // For soft deletes in RxDB
 };
 
 // RxDB schema for tasks
@@ -54,17 +54,16 @@ let tasksSyncInstance: Promise<any> | null = null;
 async function getTasksSync() {
   if (!tasksSyncInstance) {
     tasksSyncInstance = createConvexReactSync<Task>({
-      convexClient,
-      tableName: 'tasks',
+      databaseName: 'taskdb',
+      collectionName: 'tasks',
       schema: taskSchema,
+      convexClient,
       convexApi: {
         changeStream: api.tasks.changeStream,
         pullDocuments: api.tasks.pullDocuments,
         pushDocuments: api.tasks.pushDocuments,
       },
-      databaseName: 'tasksdb',
       batchSize: 100,
-      retryTime: 5000,
       enableLogging: true,
     });
   }
@@ -135,6 +134,15 @@ export function useTasks() {
       syncResult.actions.update(id, { isCompleted: !isCompleted }),
     updateTaskText: (id: string, text: string) => syncResult.actions.update(id, { text }),
     deleteTask: (id: string) => syncResult.actions.delete(id),
+    purgeStorage: async () => {
+      if (syncInstance) {
+        await syncInstance.cleanup();
+        // Reset the singleton to allow re-initialization
+        tasksSyncInstance = null;
+        // Reload the page to reinitialize everything
+        window.location.reload();
+      }
+    },
   };
 }
 
