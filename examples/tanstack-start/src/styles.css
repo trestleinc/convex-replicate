@@ -80,11 +80,7 @@ code {
   color: var(--color-rose-pine-base);
 }
 
-/* Focus styles */
-:focus-visible {
-  outline: 2px solid var(--color-rose-pine-rose);
-  outline-offset: 2px;
-}
+/* Focus styles - inputs handle their own focus via border color */
 
 /* Smooth transitions */
 * {

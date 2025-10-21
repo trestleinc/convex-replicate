@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useState } from 'react';
+import { Diamond, DiamondPlus } from 'lucide-react';
 import { useCreateTask, useTasks, useUpdateTask } from '../useTasks';
 
 export const Route = createFileRoute('/')({
@@ -63,7 +64,7 @@ function HomeComponent() {
 
   return (
     <div className="p-6 max-w-md mx-auto">
-      <h3 className="text-2xl font-bold mb-6">Task Manager (RxDB)</h3>
+      <h3 className="text-2xl font-bold mb-6">Convex-Rx</h3>
 
       {isLoading && (
         <div className="mb-4 text-center">
@@ -80,7 +81,7 @@ function HomeComponent() {
             value={newTaskText}
             onChange={(e) => setNewTaskText(e.target.value)}
             placeholder="Add a new task..."
-            className="flex-1 px-3 py-2 border border-rose-pine-muted rounded focus:outline-none focus:ring-1 focus:ring-rose-pine-rose"
+            className="flex-1 px-3 py-2 border border-rose-pine-muted rounded focus:outline-none focus:border-rose-pine-rose"
           />
           <button
             type="submit"
@@ -102,13 +103,23 @@ function HomeComponent() {
               className="flex items-center gap-3 p-3 border border-rose-pine-muted rounded"
             >
               {/* Toggle Completion Checkbox */}
-              <input
-                type="checkbox"
-                checked={task.isCompleted}
-                onChange={() => handleToggleComplete(task.id, task.isCompleted)}
-                className="w-4 h-4 text-rose-pine-gold rounded focus:ring-rose-pine-rose accent-rose-pine-gold"
+              <button
+                type="button"
+                onClick={() => handleToggleComplete(task.id, task.isCompleted)}
                 disabled={isLoading}
-              />
+                className={`transition-colors disabled:opacity-50 ${
+                  task.isCompleted
+                    ? 'text-rose-pine-rose hover:text-rose-pine-gold'
+                    : 'text-rose-pine-gold hover:text-rose-pine-rose'
+                }`}
+                aria-label={task.isCompleted ? 'Mark as incomplete' : 'Mark as complete'}
+              >
+                {task.isCompleted ? (
+                  <DiamondPlus className="w-5 h-5" />
+                ) : (
+                  <Diamond className="w-5 h-5" />
+                )}
+              </button>
 
               {/* Task Text */}
               {editingId === task.id ? (
@@ -122,7 +133,7 @@ function HomeComponent() {
                       if (e.key === 'Escape') handleEditCancel();
                     }}
                     onBlur={() => handleEditSave(task.id)}
-                    className="flex-1 px-2 py-1 border border-rose-pine-muted rounded focus:outline-none focus:ring-1 focus:ring-rose-pine-rose"
+                    className="flex-1 px-2 py-1 border border-rose-pine-muted rounded focus:outline-none focus:border-rose-pine-rose"
                   />
                 </div>
               ) : (
