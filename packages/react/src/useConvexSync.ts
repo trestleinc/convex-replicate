@@ -21,6 +21,8 @@ export interface UseConvexSyncResult<T> {
   collection: any | null;
   rxCollection: any | null;
   actions: UseConvexSyncActions<T>;
+  pauseSync: () => Promise<void>;
+  resumeSync: () => Promise<void>;
 }
 
 // ========================================
@@ -184,6 +186,19 @@ export function useConvexSync<T extends { id: string; updatedTime: number; delet
     };
   }, [syncInstance]);
 
+  // Pause/Resume methods
+  const pauseSync = React.useCallback(async () => {
+    if (syncInstance) {
+      await syncInstance.pauseSync();
+    }
+  }, [syncInstance]);
+
+  const resumeSync = React.useCallback(async () => {
+    if (syncInstance) {
+      await syncInstance.resumeSync();
+    }
+  }, [syncInstance]);
+
   return {
     data,
     isLoading,
@@ -191,6 +206,8 @@ export function useConvexSync<T extends { id: string; updatedTime: number; delet
     collection: syncInstance?.collection || null,
     rxCollection: syncInstance?.rxCollection || null,
     actions,
+    pauseSync,
+    resumeSync,
   };
 }
 

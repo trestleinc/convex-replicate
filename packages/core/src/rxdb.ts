@@ -55,6 +55,10 @@ export interface ConvexRxDBInstance<T extends object = any> {
   replicationState: any;
   /** Cleanup function to cancel replication and remove database */
   cleanup: () => Promise<void>;
+  /** Pause sync - stops replication and WebSocket connection (simulates offline) */
+  pauseSync: () => Promise<void>;
+  /** Resume sync - restarts replication and WebSocket connection (simulates going online) */
+  resumeSync: () => Promise<void>;
 }
 
 // ========================================
@@ -290,7 +294,185 @@ export async function createConvexRxDB<T extends object>(
     // Continue anyway - live sync will catch up
   }
 
-  // 7. Cleanup function to purge all storage
+  // 7. Pause/Resume functionality for simulating offline mode
+  let currentReplicationState = replicationState;
+  let isPaused = false;
+
+  const pauseSync = async () => {
+    if (isPaused) {
+      if (enableLogging) {
+        console.log(`[${collectionName}] Sync already paused`);
+      }
+      return;
+    }
+
+    if (enableLogging) {
+      console.log(`[${collectionName}] Pausing sync (simulating offline)...`);
+    }
+
+    // Unsubscribe from change stream
+    if (unsubscribeChangeStream) {
+      unsubscribeChangeStream();
+      unsubscribeChangeStream = null;
+    }
+
+    // Cancel replication
+    await currentReplicationState.cancel();
+
+    isPaused = true;
+
+    if (enableLogging) {
+      console.log(`[${collectionName}] Sync paused - offline mode active`);
+    }
+  };
+
+  const resumeSync = async () => {
+    if (!isPaused) {
+      if (enableLogging) {
+        console.log(`[${collectionName}] Sync already active`);
+      }
+      return;
+    }
+
+    if (enableLogging) {
+      console.log(`[${collectionName}] Resuming sync (simulating going online)...`);
+    }
+
+    // Re-setup change stream
+    setupChangeStream();
+
+    // Re-create replication state with same configuration
+    currentReplicationState = replicateRxCollection({
+      collection: rxCollection,
+      replicationIdentifier: `convex-${collectionName}`,
+      live: true,
+      retryTime: 5000,
+      autoStart: true,
+      waitForLeadership: false,
+
+      pull: {
+        async handler(checkpointOrNull, batchSize) {
+          const checkpoint = checkpointOrNull || { id: '', updatedTime: 0 };
+
+          if (enableLogging) {
+            console.log(`[${collectionName}] Pull from checkpoint:`, checkpoint);
+          }
+
+          try {
+            const result = await convexClient.query(convexApi.pullDocuments, {
+              checkpoint,
+              limit: batchSize,
+            });
+
+            if (enableLogging) {
+              console.log(
+                `[${collectionName}] Pulled ${result.documents.length} documents, new checkpoint:`,
+                result.checkpoint
+              );
+              console.log(`[${collectionName}] Raw documents from Convex:`, result.documents);
+            }
+
+            return {
+              documents: result.documents,
+              checkpoint: result.checkpoint,
+            };
+          } catch (error) {
+            console.error(`[${collectionName}] Pull error:`, error);
+            return {
+              documents: [],
+              checkpoint: checkpoint,
+            };
+          }
+        },
+        batchSize: config.batchSize || 100,
+        stream$: pullStream$.asObservable(),
+        modifier: (doc: any) => {
+          if (!doc) return doc;
+          const { deleted, ...rest } = doc;
+          const transformed = {
+            ...rest,
+            _deleted: deleted || false,
+          };
+
+          if (enableLogging && deleted) {
+            console.log(`[${collectionName}] Pull modifier - Transforming deleted doc:`, {
+              from: doc,
+              to: transformed,
+            });
+          }
+
+          return transformed;
+        },
+      },
+
+      push: {
+        async handler(changeRows) {
+          if (enableLogging) {
+            console.log(`[${collectionName}] Pushing ${changeRows.length} changes`);
+          }
+
+          try {
+            const conflicts = await convexClient.mutation(convexApi.pushDocuments, {
+              changeRows,
+            });
+
+            if (enableLogging && conflicts && conflicts.length > 0) {
+              console.log(`[${collectionName}] Conflicts detected:`, conflicts.length);
+            }
+
+            return conflicts || [];
+          } catch (error) {
+            console.error(`[${collectionName}] Push error:`, error);
+            return [];
+          }
+        },
+        batchSize: 50,
+        modifier: (doc: any) => {
+          if (!doc) return doc;
+          const { _deleted, ...rest } = doc;
+          return {
+            ...rest,
+            deleted: _deleted || false,
+          };
+        },
+      },
+    });
+
+    // Re-subscribe to replication events
+    if (enableLogging) {
+      currentReplicationState.error$.subscribe((error: any) => {
+        console.error(`[${collectionName}] Replication error:`, error);
+      });
+
+      currentReplicationState.active$.subscribe((active: boolean) => {
+        console.log(`[${collectionName}] Replication active:`, active);
+      });
+
+      currentReplicationState.received$.subscribe((doc: any) => {
+        console.log(`[${collectionName}] Received doc:`, {
+          id: doc.id,
+          _deleted: doc._deleted,
+          fullDoc: doc,
+        });
+      });
+
+      currentReplicationState.sent$.subscribe((doc: any) => {
+        console.log(`[${collectionName}] Sent doc:`, {
+          id: doc.id,
+          _deleted: doc._deleted,
+          fullDoc: doc,
+        });
+      });
+    }
+
+    isPaused = false;
+
+    if (enableLogging) {
+      console.log(`[${collectionName}] Sync resumed - online mode active`);
+    }
+  };
+
+  // 8. Cleanup function to purge all storage
   const cleanup = async () => {
     if (enableLogging) {
       console.log(`[${collectionName}] Cleaning up and removing storage...`);
@@ -302,7 +484,7 @@ export async function createConvexRxDB<T extends object>(
     }
 
     // Cancel replication
-    await replicationState.cancel();
+    await currentReplicationState.cancel();
 
     // Remove the database completely (this closes it and removes all data)
     await db.remove();
@@ -323,7 +505,9 @@ export async function createConvexRxDB<T extends object>(
   return {
     rxDatabase: db,
     rxCollection,
-    replicationState,
+    replicationState: currentReplicationState,
     cleanup,
+    pauseSync,
+    resumeSync,
   };
 }

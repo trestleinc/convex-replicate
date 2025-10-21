@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useState } from 'react';
-import { DatabaseZap, Delete, Diamond, DiamondPlus } from 'lucide-react';
+import { DatabaseZap, Delete, Diamond, DiamondPlus, Wifi, WifiOff } from 'lucide-react';
 import { useCreateTask, useDeleteTask, useTasks, useUpdateTask } from '../useTasks';
 
 export const Route = createFileRoute('/')({
@@ -11,8 +11,9 @@ function HomeComponent() {
   const [newTaskText, setNewTaskText] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
+  const [isOnline, setIsOnline] = useState(true);
 
-  const { data, isLoading, error, purgeStorage } = useTasks();
+  const { data, isLoading, error, purgeStorage, pauseSync, resumeSync } = useTasks();
 
   const createTask = useCreateTask();
   const updateTask = useUpdateTask();
@@ -78,7 +79,7 @@ function HomeComponent() {
   }
 
   return (
-    <div className="p-6 max-w-md mx-auto">
+    <div className="p-6 max-w-2xl mx-auto">
       <h3 className="text-2xl font-bold mb-6">Convex-Rx</h3>
 
       {isLoading && (
@@ -91,6 +92,33 @@ function HomeComponent() {
       {/* Create Task Form */}
       <form onSubmit={handleCreateTask} className="mb-6">
         <div className="flex gap-2">
+          {/* Online/Offline Toggle */}
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                if (isOnline) {
+                  await pauseSync();
+                  setIsOnline(false);
+                } else {
+                  await resumeSync();
+                  setIsOnline(true);
+                }
+              } catch (_error) {
+                console.error('Failed to toggle online/offline:', _error);
+              }
+            }}
+            className={`px-4 py-2 border rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+              isOnline
+                ? 'border-[#c4a7e7] text-[#c4a7e7] hover:bg-[#c4a7e7] hover:text-rose-pine-base'
+                : 'border-[#eb6f92] text-[#eb6f92] hover:bg-[#eb6f92] hover:text-rose-pine-base'
+            }`}
+            aria-label={isOnline ? 'Go offline' : 'Go online'}
+            title={isOnline ? 'Online - Click to simulate offline mode' : 'Offline - Click to go back online'}
+          >
+            {isOnline ? <Wifi className="w-5 h-5" /> : <WifiOff className="w-5 h-5" />}
+          </button>
+
           <input
             type="text"
             value={newTaskText}

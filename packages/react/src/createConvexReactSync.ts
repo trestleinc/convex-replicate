@@ -17,6 +17,10 @@ export interface ConvexReactSyncInstance<T extends object = any> {
   replicationState: any;
   /** Cleanup function to cancel replication and remove database */
   cleanup: () => Promise<void>;
+  /** Pause sync - stops replication and WebSocket connection (simulates offline) */
+  pauseSync: () => Promise<void>;
+  /** Resume sync - restarts replication and WebSocket connection (simulates going online) */
+  resumeSync: () => Promise<void>;
 }
 
 /**
@@ -30,9 +34,8 @@ export async function createConvexReactSync<T extends object>(
   config: ConvexRxDBConfig<T>
 ): Promise<ConvexReactSyncInstance<T>> {
   // 1. Create RxDB database with Convex replication
-  const { rxDatabase, rxCollection, replicationState, cleanup } = await createConvexRxDB<T>(
-    config
-  );
+  const { rxDatabase, rxCollection, replicationState, cleanup, pauseSync, resumeSync } =
+    await createConvexRxDB<T>(config);
 
   // 2. Wrap with TanStack DB using rxdbCollectionOptions
   // This is the magic that makes RxDB reactive in React!
@@ -50,5 +53,7 @@ export async function createConvexReactSync<T extends object>(
     rxDatabase,
     replicationState,
     cleanup,
+    pauseSync,
+    resumeSync,
   };
 }

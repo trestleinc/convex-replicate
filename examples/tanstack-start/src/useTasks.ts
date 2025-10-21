@@ -134,6 +134,9 @@ export function useTasks() {
       syncResult.actions.update(id, { isCompleted: !isCompleted }),
     updateTaskText: (id: string, text: string) => syncResult.actions.update(id, { text }),
     deleteTask: (id: string) => syncResult.actions.delete(id),
+    // Expose pause/resume for online/offline toggle
+    pauseSync: syncResult.pauseSync,
+    resumeSync: syncResult.resumeSync,
     purgeStorage: async () => {
       if (syncInstance) {
         try {
