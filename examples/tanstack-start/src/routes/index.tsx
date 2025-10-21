@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useState } from 'react';
-import { Diamond, DiamondPlus } from 'lucide-react';
-import { useCreateTask, useTasks, useUpdateTask } from '../useTasks';
+import { DatabaseZap, Delete, Diamond, DiamondPlus } from 'lucide-react';
+import { useCreateTask, useDeleteTask, useTasks, useUpdateTask } from '../useTasks';
 
 export const Route = createFileRoute('/')({
   component: HomeComponent,
@@ -12,10 +12,11 @@ function HomeComponent() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
 
-  const { data, isLoading, error } = useTasks();
+  const { data, isLoading, error, purgeStorage } = useTasks();
 
   const createTask = useCreateTask();
   const updateTask = useUpdateTask();
+  const deleteTask = useDeleteTask();
 
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,6 +51,20 @@ function HomeComponent() {
   const handleEditCancel = () => {
     setEditingId(null);
     setEditText('');
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteTask(id);
+    } catch (_error) {}
+  };
+
+  const handlePurgeStorage = async () => {
+    if (confirm('Are you sure you want to delete all local data? This will reload the page.')) {
+      try {
+        await purgeStorage();
+      } catch (_error) {}
+    }
   };
 
   if (error) {
@@ -90,6 +105,15 @@ function HomeComponent() {
           >
             Add
           </button>
+          <button
+            type="button"
+            onClick={handlePurgeStorage}
+            disabled={isLoading}
+            className="px-4 py-2 border border-rose-pine-rose text-rose-pine-text rounded hover:bg-rose-pine-rose hover:text-rose-pine-base disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            aria-label="Delete all local data"
+          >
+            <DatabaseZap className="w-5 h-5" />
+          </button>
         </div>
       </form>
 
@@ -102,6 +126,17 @@ function HomeComponent() {
               key={task.id}
               className="flex items-center gap-3 p-3 border border-rose-pine-muted rounded"
             >
+              {/* Delete Button */}
+              <button
+                type="button"
+                onClick={() => handleDelete(task.id)}
+                disabled={isLoading}
+                className="text-rose-pine-rose hover:text-rose-pine-rose/80 transition-colors disabled:opacity-50"
+                aria-label="Delete task"
+              >
+                <Delete className="w-5 h-5" />
+              </button>
+
               {/* Toggle Completion Checkbox */}
               <button
                 type="button"
@@ -109,8 +144,8 @@ function HomeComponent() {
                 disabled={isLoading}
                 className={`transition-colors disabled:opacity-50 ${
                   task.isCompleted
-                    ? 'text-rose-pine-rose hover:text-rose-pine-gold'
-                    : 'text-rose-pine-gold hover:text-rose-pine-rose'
+                    ? 'text-blue hover:text-rose-pine-gold'
+                    : 'text-rose-pine-gold hover:text-blue'
                 }`}
                 aria-label={task.isCompleted ? 'Mark as incomplete' : 'Mark as complete'}
               >

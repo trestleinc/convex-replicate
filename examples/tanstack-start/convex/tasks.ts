@@ -74,24 +74,58 @@ export const update = mutation({
 // RxDB Replication: Pull documents since checkpoint
 export const pullDocuments = query({
   args: {
-    checkpointTime: v.number(),
+    checkpoint: v.union(
+      v.null(),
+      v.object({
+        id: v.string(),
+        updatedTime: v.number(),
+      })
+    ),
     limit: v.number(),
   },
-  handler: async (ctx, { checkpointTime, limit }) => {
-    // Simple query: get all tasks newer than checkpoint, ordered by time
-    const tasks = await ctx.db
-      .query('tasks')
-      .filter((q) => q.gt(q.field('updatedTime'), checkpointTime))
-      .order('desc') // Most recent first for consistency with changeStream
-      .take(limit);
+  handler: async (ctx, { checkpoint, limit }) => {
+    let tasks;
 
-    // Return clean task objects
-    return tasks.map((task) => ({
+    if (!checkpoint || (checkpoint.id === '' && checkpoint.updatedTime === 0)) {
+      // Initial pull - get most recent documents
+      tasks = await ctx.db.query('tasks').order('desc').take(limit);
+    } else {
+      // Incremental pull - get documents newer than checkpoint
+      // Must handle BOTH updatedTime and id for proper ordering
+      tasks = await ctx.db
+        .query('tasks')
+        .filter((q) =>
+          q.or(
+            q.gt(q.field('updatedTime'), checkpoint.updatedTime),
+            q.and(
+              q.eq(q.field('updatedTime'), checkpoint.updatedTime),
+              q.gt(q.field('id'), checkpoint.id)
+            )
+          )
+        )
+        .order('desc')
+        .take(limit);
+    }
+
+    // Map to clean task objects (including deleted field)
+    const documents = tasks.map((task) => ({
       id: task.id,
       text: task.text,
       isCompleted: task.isCompleted,
       updatedTime: task.updatedTime,
+      deleted: task.deleted || false,
     }));
+
+    // Calculate new checkpoint from returned documents
+    const newCheckpoint =
+      documents.length > 0
+        ? { id: documents[0].id, updatedTime: documents[0].updatedTime }
+        : checkpoint || { id: '', updatedTime: 0 };
+
+    return {
+      documents,
+      checkpoint: newCheckpoint,
+    };
   },
 });
 
@@ -105,7 +139,7 @@ export const pushDocuments = mutation({
           text: v.string(),
           isCompleted: v.boolean(),
           updatedTime: v.number(),
-          _deleted: v.optional(v.boolean()),
+          deleted: v.optional(v.boolean()),
         }),
         assumedMasterState: v.optional(
           v.object({
@@ -113,7 +147,7 @@ export const pushDocuments = mutation({
             text: v.string(),
             isCompleted: v.boolean(),
             updatedTime: v.number(),
-            _deleted: v.optional(v.boolean()),
+            deleted: v.optional(v.boolean()),
           })
         ),
       })
@@ -138,6 +172,7 @@ export const pushDocuments = mutation({
             text: currentDoc.text,
             isCompleted: currentDoc.isCompleted,
             updatedTime: currentDoc.updatedTime,
+            deleted: currentDoc.deleted || false,
           }
         : null;
 
@@ -154,26 +189,23 @@ export const pushDocuments = mutation({
         // No conflict - apply the change
         const timestamp = newDocumentState.updatedTime || Date.now();
 
-        if (newDocumentState._deleted) {
-          if (currentDoc) {
-            await ctx.db.delete(currentDoc._id);
-          }
+        if (currentDoc) {
+          // Update existing document (including soft delete)
+          await ctx.db.patch(currentDoc._id, {
+            text: newDocumentState.text,
+            isCompleted: newDocumentState.isCompleted,
+            updatedTime: timestamp,
+            deleted: newDocumentState.deleted || false,
+          });
         } else {
-          // Handle insert/update
-          if (currentDoc) {
-            await ctx.db.patch(currentDoc._id, {
-              text: newDocumentState.text,
-              isCompleted: newDocumentState.isCompleted,
-              updatedTime: timestamp,
-            });
-          } else {
-            await ctx.db.insert('tasks', {
-              id: newDocumentState.id,
-              text: newDocumentState.text,
-              isCompleted: newDocumentState.isCompleted,
-              updatedTime: timestamp,
-            });
-          }
+          // Insert new document
+          await ctx.db.insert('tasks', {
+            id: newDocumentState.id,
+            text: newDocumentState.text,
+            isCompleted: newDocumentState.isCompleted,
+            updatedTime: timestamp,
+            deleted: newDocumentState.deleted || false,
+          });
         }
       }
     }
