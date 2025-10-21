@@ -1,6 +1,6 @@
 // Main exports
-export { createConvexRxDB } from './rxdb';
 
 // Type exports
 export type { ConvexRxDBConfig, ConvexRxDBInstance } from './rxdb';
-export type { RxJsonSchema } from './types';
+export { createConvexRxDB } from './rxdb';
+export type { ConvexClient, ConvexRxDocument, RxJsonSchema } from './types';
