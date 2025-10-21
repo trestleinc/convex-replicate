@@ -54,7 +54,7 @@ function HomeComponent() {
   if (error) {
     return (
       <div className="p-6 max-w-md mx-auto">
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+        <div className="bg-rose-pine-surface border border-rose-pine-rose text-rose-pine-text px-4 py-3 rounded">
           Error loading tasks: {String(error)}
         </div>
       </div>
@@ -67,8 +67,8 @@ function HomeComponent() {
 
       {isLoading && (
         <div className="mb-4 text-center">
-          <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-          <span className="ml-2 text-gray-600">Loading...</span>
+          <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-rose-pine-gold"></div>
+          <span className="ml-2 text-rose-pine-muted">Loading...</span>
         </div>
       )}
 
@@ -80,12 +80,12 @@ function HomeComponent() {
             value={newTaskText}
             onChange={(e) => setNewTaskText(e.target.value)}
             placeholder="Add a new task..."
-            className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="flex-1 px-3 py-2 border border-rose-pine-muted rounded focus:outline-none focus:ring-1 focus:ring-rose-pine-rose"
           />
           <button
             type="submit"
             disabled={!newTaskText.trim() || isLoading}
-            className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-4 py-2 border border-rose-pine-rose text-rose-pine-text rounded hover:bg-rose-pine-rose hover:text-rose-pine-base disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Add
           </button>
@@ -99,14 +99,14 @@ function HomeComponent() {
           .map((task) => (
             <div
               key={task.id}
-              className="flex items-center gap-3 p-3 border border-gray-200 rounded-md"
+              className="flex items-center gap-3 p-3 border border-rose-pine-muted rounded"
             >
               {/* Toggle Completion Checkbox */}
               <input
                 type="checkbox"
                 checked={task.isCompleted}
                 onChange={() => handleToggleComplete(task.id, task.isCompleted)}
-                className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                className="w-4 h-4 text-rose-pine-gold rounded focus:ring-rose-pine-rose accent-rose-pine-gold"
                 disabled={isLoading}
               />
 
@@ -122,15 +122,15 @@ function HomeComponent() {
                       if (e.key === 'Escape') handleEditCancel();
                     }}
                     onBlur={() => handleEditSave(task.id)}
-                    className="flex-1 px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="flex-1 px-2 py-1 border border-rose-pine-muted rounded focus:outline-none focus:ring-1 focus:ring-rose-pine-rose"
                   />
                 </div>
               ) : (
                 <button
                   type="button"
                   onClick={() => handleEditStart(task.id, task.text)}
-                  className={`flex-1 cursor-pointer hover:bg-gray-100 px-2 py-1 rounded text-left ${
-                    task.isCompleted ? 'line-through text-gray-500' : ''
+                  className={`flex-1 cursor-pointer hover:bg-rose-pine-surface px-2 py-1 rounded text-left ${
+                    task.isCompleted ? 'line-through text-rose-pine-muted' : ''
                   }`}
                 >
                   {task.text}
@@ -141,7 +141,7 @@ function HomeComponent() {
       </div>
 
       {data.filter((task) => !task._deleted).length === 0 && !isLoading && (
-        <p className="text-gray-500 text-center py-8">No tasks yet. Create one above!</p>
+        <p className="text-rose-pine-muted text-center py-8">No tasks yet. Create one above!</p>
       )}
     </div>
   );
