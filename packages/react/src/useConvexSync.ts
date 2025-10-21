@@ -19,6 +19,7 @@ export interface UseConvexSyncResult<T> {
   isLoading: boolean;
   error?: string;
   collection: any | null;
+  rxCollection: any | null;
   actions: UseConvexSyncActions<T>;
 }
 
@@ -61,8 +62,17 @@ export function useConvexSync<T extends { id: string; updatedTime: number; delet
                 // toArray is a getter (not a method) - access as property
                 const items: T[] = collection.toArray;
 
+                console.log('[useConvexSync] TanStack DB collection items:', items);
+
                 // Filter out soft-deleted items (_deleted: true)
                 const activeItems = items.filter((item: any) => !item._deleted);
+
+                console.log('[useConvexSync] Active items after filtering:', activeItems);
+                console.log(
+                  '[useConvexSync] Filtered out deleted items:',
+                  items.filter((item: any) => item._deleted)
+                );
+
                 setData(activeItems);
                 setIsLoading(false);
                 setError(undefined);
@@ -111,7 +121,7 @@ export function useConvexSync<T extends { id: string; updatedTime: number; delet
       };
     }
 
-    const { collection } = syncInstance;
+    const { collection, rxCollection } = syncInstance;
 
     return {
       async insert(itemData: Omit<T, 'id' | 'updatedTime' | 'deleted'>) {
@@ -145,14 +155,29 @@ export function useConvexSync<T extends { id: string; updatedTime: number; delet
 
       async delete(id: string) {
         try {
-          // Soft delete: set _deleted flag instead of hard delete
-          // This ensures the delete propagates through RxDB replication to Convex
-          const tx = collection.update(id, (draft) => {
-            (draft as any)._deleted = true;
-            (draft as any).updatedTime = Date.now();
-          });
-          await tx.isPersisted.promise;
+          console.log(`[useConvexSync] Deleting item with id: ${id}`);
+
+          // Use RxDB collection directly for soft delete
+          // Explicitly set _deleted: true instead of using remove()
+          const doc = await rxCollection.findOne(id).exec();
+
+          console.log(`[useConvexSync] Found document for deletion:`, doc?.toJSON());
+
+          if (doc) {
+            // Explicitly set _deleted: true using update() to ensure it's synced
+            // doc.remove() doesn't always set _deleted properly when using TanStack DB wrapper
+            await doc.update({
+              $set: {
+                _deleted: true,
+                updatedTime: Date.now(),
+              },
+            });
+            console.log(`[useConvexSync] Document marked as deleted (_deleted: true)`);
+          } else {
+            throw new Error(`Item ${id} not found`);
+          }
         } catch (error) {
+          console.error(`[useConvexSync] Delete error:`, error);
           throw new Error(`Failed to delete item ${id}: ${String(error)}`);
         }
       },
@@ -164,6 +189,7 @@ export function useConvexSync<T extends { id: string; updatedTime: number; delet
     isLoading,
     error,
     collection: syncInstance?.collection || null,
+    rxCollection: syncInstance?.rxCollection || null,
     actions,
   };
 }

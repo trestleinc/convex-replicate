@@ -136,11 +136,23 @@ export function useTasks() {
     deleteTask: (id: string) => syncResult.actions.delete(id),
     purgeStorage: async () => {
       if (syncInstance) {
-        await syncInstance.cleanup();
-        // Reset the singleton to allow re-initialization
-        tasksSyncInstance = null;
-        // Reload the page to reinitialize everything
-        window.location.reload();
+        try {
+          console.log('[useTasks] Starting storage purge...');
+          await syncInstance.cleanup();
+          console.log('[useTasks] Cleanup complete, resetting singleton...');
+          // Reset the singleton to allow re-initialization
+          tasksSyncInstance = null;
+          // Reload the page to reinitialize everything
+          console.log('[useTasks] Reloading page...');
+          window.location.reload();
+        } catch (error) {
+          console.error('[useTasks] Failed to purge storage:', error);
+          // Even if cleanup fails, try to reset and reload
+          tasksSyncInstance = null;
+          window.location.reload();
+        }
+      } else {
+        console.warn('[useTasks] No sync instance to purge');
       }
     },
   };

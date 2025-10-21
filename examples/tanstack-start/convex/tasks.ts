@@ -12,12 +12,20 @@ export const get = query({
 export const changeStream = query({
   args: {},
   handler: async (ctx) => {
-    // Get count and latest timestamp - simple and reliable
-    const allTasks = await ctx.db.query('tasks').order('desc').collect();
-    const latestTime = allTasks.length > 0 ? allTasks[0].updatedTime : Date.now();
+    // Get all tasks and find the max updatedTime
+    // This ensures ANY update (including deletions) triggers a sync on other clients
+    const allTasks = await ctx.db.query('tasks').collect();
+
+    // Use deterministic for-loop instead of Math.max to avoid re-evaluation issues
+    let latestTime = 0;
+    for (const task of allTasks) {
+      if (task.updatedTime > latestTime) {
+        latestTime = task.updatedTime;
+      }
+    }
 
     return {
-      timestamp: latestTime,
+      timestamp: latestTime || Date.now(),
       count: allTasks.length,
     };
   },
@@ -84,7 +92,7 @@ export const pullDocuments = query({
     limit: v.number(),
   },
   handler: async (ctx, { checkpoint, limit }) => {
-    let tasks;
+    let tasks: any;
 
     if (!checkpoint || (checkpoint.id === '' && checkpoint.updatedTime === 0)) {
       // Initial pull - get most recent documents
@@ -108,7 +116,7 @@ export const pullDocuments = query({
     }
 
     // Map to clean task objects (including deleted field)
-    const documents = tasks.map((task) => ({
+    const documents = tasks.map((task : any) => ({
       id: task.id,
       text: task.text,
       isCompleted: task.isCompleted,

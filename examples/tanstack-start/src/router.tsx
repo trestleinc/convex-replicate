@@ -34,6 +34,14 @@ export const getRouter = () => {
     scrollRestoration: true,
     defaultPreloadStaleTime: 0,
     context: { queryClient },
+    defaultNotFoundComponent: () => (
+      <div className="p-6 max-w-md mx-auto">
+        <div className="bg-rose-pine-surface border border-rose-pine-rose text-rose-pine-text px-4 py-3 rounded">
+          <h2 className="text-xl font-bold mb-2">404 - Page Not Found</h2>
+          <p className="text-rose-pine-muted">The page you're looking for doesn't exist.</p>
+        </div>
+      </div>
+    ),
   });
 
   return routerWithQueryClient(router, queryClient);

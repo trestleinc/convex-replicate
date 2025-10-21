@@ -158,7 +158,6 @@ export async function createConvexRxDB<T extends object>(
     retryTime: 5000,
     autoStart: true,
     waitForLeadership: false,
-    deletedField: 'deleted',
 
     pull: {
       async handler(checkpointOrNull, batchSize) {
@@ -179,19 +178,11 @@ export async function createConvexRxDB<T extends object>(
               `[${collectionName}] Pulled ${result.documents.length} documents, new checkpoint:`,
               result.checkpoint
             );
+            console.log(`[${collectionName}] Raw documents from Convex:`, result.documents);
           }
 
-          // Transform Convex's 'deleted' field to RxDB's '_deleted' field
-          const transformedDocuments = result.documents.map((doc: any) => {
-            const { deleted, ...rest } = doc;
-            return {
-              ...rest,
-              _deleted: deleted || false,
-            };
-          });
-
           return {
-            documents: transformedDocuments,
+            documents: result.documents,
             checkpoint: result.checkpoint,
           };
         } catch (error) {
@@ -204,6 +195,24 @@ export async function createConvexRxDB<T extends object>(
       },
       batchSize: config.batchSize || 100,
       stream$: pullStream$.asObservable(),
+      // Transform Convex's 'deleted' field to RxDB's '_deleted' field
+      modifier: (doc: any) => {
+        if (!doc) return doc;
+        const { deleted, ...rest } = doc;
+        const transformed = {
+          ...rest,
+          _deleted: deleted || false,
+        };
+
+        if (enableLogging && deleted) {
+          console.log(`[${collectionName}] Pull modifier - Transforming deleted doc:`, {
+            from: doc,
+            to: transformed,
+          });
+        }
+
+        return transformed;
+      },
     },
 
     push: {
@@ -213,48 +222,30 @@ export async function createConvexRxDB<T extends object>(
         }
 
         try {
-          // Transform RxDB's '_deleted' field to Convex's 'deleted' field
-          const transformedRows = changeRows.map((row: any) => {
-            const transformDoc = (doc: any) => {
-              if (!doc) return doc;
-              const { _deleted, ...rest } = doc;
-              return {
-                ...rest,
-                deleted: _deleted || false,
-              };
-            };
-
-            return {
-              newDocumentState: transformDoc(row.newDocumentState),
-              assumedMasterState: transformDoc(row.assumedMasterState),
-            };
-          });
-
           const conflicts = await convexClient.mutation(convexApi.pushDocuments, {
-            changeRows: transformedRows,
+            changeRows,
           });
 
           if (enableLogging && conflicts && conflicts.length > 0) {
             console.log(`[${collectionName}] Conflicts detected:`, conflicts.length);
           }
 
-          // Transform conflicts back from 'deleted' to '_deleted'
-          const transformedConflicts = (conflicts || []).map((doc: any) => {
-            if (!doc) return doc;
-            const { deleted, ...rest } = doc;
-            return {
-              ...rest,
-              _deleted: deleted || false,
-            };
-          });
-
-          return transformedConflicts;
+          return conflicts || [];
         } catch (error) {
           console.error(`[${collectionName}] Push error:`, error);
           return [];
         }
       },
       batchSize: 50,
+      // Transform RxDB's '_deleted' field to Convex's 'deleted' field before sending
+      modifier: (doc: any) => {
+        if (!doc) return doc;
+        const { _deleted, ...rest } = doc;
+        return {
+          ...rest,
+          deleted: _deleted || false,
+        };
+      },
     },
   });
 
@@ -269,11 +260,19 @@ export async function createConvexRxDB<T extends object>(
     });
 
     replicationState.received$.subscribe((doc: any) => {
-      console.log(`[${collectionName}] Received doc:`, doc.id || doc);
+      console.log(`[${collectionName}] Received doc:`, {
+        id: doc.id,
+        _deleted: doc._deleted,
+        fullDoc: doc,
+      });
     });
 
     replicationState.sent$.subscribe((doc: any) => {
-      console.log(`[${collectionName}] Sent doc:`, doc.id || doc);
+      console.log(`[${collectionName}] Sent doc:`, {
+        id: doc.id,
+        _deleted: doc._deleted,
+        fullDoc: doc,
+      });
     });
   }
 
