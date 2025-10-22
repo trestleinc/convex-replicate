@@ -14,9 +14,13 @@
  * @template TContext - Context type provided to builders (varies by framework)
  * @template TSubscriptions - Object with subscription methods
  */
-export type SubscriptionBuilder<TContext, TSubscriptions extends Record<string, (...args: any[]) => (() => void) | { unsubscribe: () => void }>> = (
-  context: TContext,
-) => TSubscriptions;
+export type SubscriptionBuilder<
+  TContext,
+  TSubscriptions extends Record<
+    string,
+    (...args: any[]) => (() => void) | { unsubscribe: () => void }
+  >,
+> = (context: TContext) => TSubscriptions;
 
 /**
  * Build custom subscriptions from user-provided builder function.
@@ -37,10 +41,13 @@ export type SubscriptionBuilder<TContext, TSubscriptions extends Record<string, 
  */
 export function buildSubscriptions<
   TContext,
-  TSubscriptions extends Record<string, (...args: any[]) => (() => void) | { unsubscribe: () => void }>,
+  TSubscriptions extends Record<
+    string,
+    (...args: any[]) => (() => void) | { unsubscribe: () => void }
+  >,
 >(
   builder: SubscriptionBuilder<TContext, TSubscriptions> | undefined,
-  context: TContext,
+  context: TContext
 ): TSubscriptions {
   if (!builder) {
     return {} as TSubscriptions;
@@ -66,7 +73,7 @@ export function buildSubscriptions<
  * ```
  */
 export function normalizeUnsubscribe(
-  subscription: (() => void) | { unsubscribe: () => void },
+  subscription: (() => void) | { unsubscribe: () => void }
 ): () => void {
   if (typeof subscription === 'function') {
     return subscription;

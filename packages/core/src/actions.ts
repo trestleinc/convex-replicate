@@ -71,7 +71,7 @@ export interface ActionContext<TData extends SyncedDocument> {
  * ```
  */
 export function createBaseActions<TData extends SyncedDocument>(
-  context: ActionContext<TData>,
+  context: ActionContext<TData>
 ): BaseActions<TData> {
   return {
     /**
@@ -96,7 +96,7 @@ export function createBaseActions<TData extends SyncedDocument>(
      */
     update: async (
       id: string,
-      updates: Partial<Omit<TData, keyof SyncedDocument>>,
+      updates: Partial<Omit<TData, keyof SyncedDocument>>
     ): Promise<void> => {
       await context.updateFn(id, (draft: TData) => {
         Object.assign(draft, updates);

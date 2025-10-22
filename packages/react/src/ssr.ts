@@ -44,14 +44,14 @@ import { getLogger } from '@convex-rx/core';
  * Configuration for SSR data preloading.
  */
 export interface PreloadConvexRxDataConfig {
-	/** Convex deployment URL (e.g., process.env.CONVEX_URL) */
-	convexUrl: string;
-	/** Convex API endpoints (only pullDocuments needed for preload) */
-	convexApi: {
-		pullDocuments: any;
-	};
-	/** Batch size for initial data pull (default: 300) */
-	batchSize?: number;
+  /** Convex deployment URL (e.g., process.env.CONVEX_URL) */
+  convexUrl: string;
+  /** Convex API endpoints (only pullDocuments needed for preload) */
+  convexApi: {
+    pullDocuments: any;
+  };
+  /** Batch size for initial data pull (default: 300) */
+  batchSize?: number;
 }
 
 /**
@@ -93,34 +93,34 @@ export interface PreloadConvexRxDataConfig {
  * ```
  */
 export async function preloadConvexRxData<TData extends SyncedDocument>(
-	config: PreloadConvexRxDataConfig,
+  config: PreloadConvexRxDataConfig
 ): Promise<TData[]> {
-	const { convexUrl, convexApi, batchSize = 300 } = config;
+  const { convexUrl, convexApi, batchSize = 300 } = config;
 
-	const logger = getLogger('ssr-preload', true);
+  const logger = getLogger('ssr-preload', true);
 
-	try {
-		logger.info('Preloading Convex data for SSR via HTTP', { convexUrl, batchSize });
+  try {
+    logger.info('Preloading Convex data for SSR via HTTP', { convexUrl, batchSize });
 
-		// Create HTTP client for server-side fetching
-		const httpClient = new ConvexHttpClient(convexUrl);
+    // Create HTTP client for server-side fetching
+    const httpClient = new ConvexHttpClient(convexUrl);
 
-		// Pull all documents from beginning (checkpoint 0)
-		const result = (await httpClient.query(convexApi.pullDocuments, {
-			checkpoint: { id: '', updatedTime: 0 },
-			limit: batchSize,
-		})) as { documents: TData[]; checkpoint: any };
+    // Pull all documents from beginning (checkpoint 0)
+    const result = (await httpClient.query(convexApi.pullDocuments, {
+      checkpoint: { id: '', updatedTime: 0 },
+      limit: batchSize,
+    })) as { documents: TData[]; checkpoint: any };
 
-		// Filter out soft-deleted items
-		const activeDocuments = result.documents.filter((doc: any) => !doc.deleted);
+    // Filter out soft-deleted items
+    const activeDocuments = result.documents.filter((doc: any) => !doc.deleted);
 
-		logger.info('Successfully preloaded data via HTTP', { documentCount: activeDocuments.length });
+    logger.info('Successfully preloaded data via HTTP', { documentCount: activeDocuments.length });
 
-		return activeDocuments;
-	} catch (error) {
-		// Log error but don't crash SSR
-		logger.error('Failed to preload data for SSR', { error });
-		// Return empty array to allow hydration with loading state
-		return [];
-	}
+    return activeDocuments;
+  } catch (error) {
+    // Log error but don't crash SSR
+    logger.error('Failed to preload data for SSR', { error });
+    // Return empty array to allow hydration with loading state
+    return [];
+  }
 }

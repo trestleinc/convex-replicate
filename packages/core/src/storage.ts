@@ -15,12 +15,12 @@ import { z } from 'zod';
  * - MEMORY: Fastest but ephemeral (testing only)
  */
 export enum StorageType {
-	/** IndexedDB via Dexie.js - Fast, persistent (recommended) */
-	DEXIE = 'dexie',
-	/** LocalStorage - Simple, persistent (legacy, slower) */
-	LOCALSTORAGE = 'localstorage',
-	/** In-memory - Fast, ephemeral (testing only) */
-	MEMORY = 'memory',
+  /** IndexedDB via Dexie.js - Fast, persistent (recommended) */
+  DEXIE = 'dexie',
+  /** LocalStorage - Simple, persistent (legacy, slower) */
+  LOCALSTORAGE = 'localstorage',
+  /** In-memory - Fast, ephemeral (testing only) */
+  MEMORY = 'memory',
 }
 
 /**
@@ -32,28 +32,28 @@ export const storageTypeSchema = z.nativeEnum(StorageType);
  * Storage configuration options.
  */
 export interface StorageConfig {
-	/**
-	 * Storage type to use.
-	 *
-	 * @default StorageType.DEXIE - Recommended for production (IndexedDB via Dexie.js)
-	 *
-	 * Options:
-	 * - StorageType.DEXIE: Fast IndexedDB storage (5-10x faster than localstorage)
-	 * - StorageType.LOCALSTORAGE: Simple key-value storage (legacy, slower)
-	 * - StorageType.MEMORY: In-memory only (testing, data lost on reload)
-	 */
-	type?: StorageType;
+  /**
+   * Storage type to use.
+   *
+   * @default StorageType.DEXIE - Recommended for production (IndexedDB via Dexie.js)
+   *
+   * Options:
+   * - StorageType.DEXIE: Fast IndexedDB storage (5-10x faster than localstorage)
+   * - StorageType.LOCALSTORAGE: Simple key-value storage (legacy, slower)
+   * - StorageType.MEMORY: In-memory only (testing, data lost on reload)
+   */
+  type?: StorageType;
 
-	/**
-	 * Custom RxStorage instance for advanced use cases.
-	 * If provided, overrides the 'type' option.
-	 *
-	 * Use this for:
-	 * - Premium RxDB storage adapters (OPFS, IndexedDB Premium)
-	 * - Custom storage implementations
-	 * - Special requirements (encryption, compression layers)
-	 */
-	customStorage?: RxStorage<any, any>;
+  /**
+   * Custom RxStorage instance for advanced use cases.
+   * If provided, overrides the 'type' option.
+   *
+   * Use this for:
+   * - Premium RxDB storage adapters (OPFS, IndexedDB Premium)
+   * - Custom storage implementations
+   * - Special requirements (encryption, compression layers)
+   */
+  customStorage?: RxStorage<any, any>;
 }
 
 /**
@@ -82,40 +82,40 @@ export interface StorageConfig {
  * });
  */
 export function getStorage(config: StorageConfig = {}): RxStorage<any, any> {
-	// Get base storage
-	let baseStorage: RxStorage<any, any>;
+  // Get base storage
+  let baseStorage: RxStorage<any, any>;
 
-	if (config.customStorage) {
-		baseStorage = config.customStorage;
-	} else {
-		// Get base storage by type
-		const type = config.type || StorageType.DEXIE; // Default to Dexie.js
+  if (config.customStorage) {
+    baseStorage = config.customStorage;
+  } else {
+    // Get base storage by type
+    const type = config.type || StorageType.DEXIE; // Default to Dexie.js
 
-		// Validate storage type with Zod
-		const validatedType = storageTypeSchema.parse(type);
+    // Validate storage type with Zod
+    const validatedType = storageTypeSchema.parse(type);
 
-		switch (validatedType) {
-			case StorageType.DEXIE:
-				baseStorage = getRxStorageDexie();
-				break;
-			case StorageType.LOCALSTORAGE:
-				baseStorage = getRxStorageLocalstorage();
-				break;
-			case StorageType.MEMORY:
-				baseStorage = getRxStorageMemory();
-				break;
-		}
-	}
+    switch (validatedType) {
+      case StorageType.DEXIE:
+        baseStorage = getRxStorageDexie();
+        break;
+      case StorageType.LOCALSTORAGE:
+        baseStorage = getRxStorageLocalstorage();
+        break;
+      case StorageType.MEMORY:
+        baseStorage = getRxStorageMemory();
+        break;
+    }
+  }
 
-	// Wrap with key compression (required for keyCompression: true in schemas)
-	const storageWithKeyCompression = wrappedKeyCompressionStorage({
-		storage: baseStorage,
-	});
+  // Wrap with key compression (required for keyCompression: true in schemas)
+  const storageWithKeyCompression = wrappedKeyCompressionStorage({
+    storage: baseStorage,
+  });
 
-	// Wrap with validation (final layer)
-	return wrappedValidateAjvStorage({
-		storage: storageWithKeyCompression,
-	});
+  // Wrap with validation (final layer)
+  return wrappedValidateAjvStorage({
+    storage: storageWithKeyCompression,
+  });
 }
 
 // Re-export storage getters for advanced users

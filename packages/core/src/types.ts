@@ -82,10 +82,7 @@ export interface BaseActions<TData extends SyncedDocument> {
   /** Insert a new document. Returns the generated ID. */
   insert: (doc: Omit<TData, keyof SyncedDocument>) => Promise<string>;
   /** Update an existing document by ID. */
-  update: (
-    id: string,
-    updates: Partial<Omit<TData, keyof SyncedDocument>>,
-  ) => Promise<void>;
+  update: (id: string, updates: Partial<Omit<TData, keyof SyncedDocument>>) => Promise<void>;
   /** Soft delete a document by ID (sets _deleted: true). */
   delete: (id: string) => Promise<void>;
 }
@@ -102,7 +99,7 @@ export interface BaseActions<TData extends SyncedDocument> {
 export interface MiddlewareConfig<TData extends SyncedDocument> {
   /** Called before insert. Can transform the document or throw to cancel. */
   beforeInsert?: (
-    doc: Omit<TData, keyof SyncedDocument>,
+    doc: Omit<TData, keyof SyncedDocument>
   ) => Omit<TData, keyof SyncedDocument> | Promise<Omit<TData, keyof SyncedDocument>>;
 
   /** Called after insert succeeds. */
@@ -111,8 +108,10 @@ export interface MiddlewareConfig<TData extends SyncedDocument> {
   /** Called before update. Can transform updates or throw to cancel. */
   beforeUpdate?: (
     id: string,
-    updates: Partial<Omit<TData, keyof SyncedDocument>>,
-  ) => Partial<Omit<TData, keyof SyncedDocument>> | Promise<Partial<Omit<TData, keyof SyncedDocument>>>;
+    updates: Partial<Omit<TData, keyof SyncedDocument>>
+  ) =>
+    | Partial<Omit<TData, keyof SyncedDocument>>
+    | Promise<Partial<Omit<TData, keyof SyncedDocument>>>;
 
   /** Called after update succeeds. */
   afterUpdate?: (id: string, doc: TData) => void | Promise<void>;

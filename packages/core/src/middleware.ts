@@ -36,7 +36,7 @@ import type { BaseActions, MiddlewareConfig, SyncedDocument } from './types';
  */
 export function wrapActionsWithMiddleware<TData extends SyncedDocument>(
   baseActions: BaseActions<TData>,
-  middleware?: MiddlewareConfig<TData>,
+  middleware?: MiddlewareConfig<TData>
 ): BaseActions<TData> {
   // If no middleware, return base actions as-is
   if (!middleware) {
@@ -70,7 +70,7 @@ export function wrapActionsWithMiddleware<TData extends SyncedDocument>(
 
     update: async (
       id: string,
-      updates: Partial<Omit<TData, keyof SyncedDocument>>,
+      updates: Partial<Omit<TData, keyof SyncedDocument>>
     ): Promise<void> => {
       // Before update hook
       let processedUpdates = updates;
@@ -117,7 +117,7 @@ export function wrapActionsWithMiddleware<TData extends SyncedDocument>(
  *
  * @param replicationState - RxDB replication state with error$ observable
  * @param middleware - Middleware configuration
- * @returns Cleanup function to unsubscribe, or null if no error handler
+ * @returns Cleanup function to unsubscribe (always returns a function, even if no-op)
  *
  * @example
  * ```typescript
@@ -135,10 +135,10 @@ export function setupSyncErrorMiddleware(
   replicationState: {
     error$: { subscribe: (fn: (error: any) => void) => { unsubscribe: () => void } };
   },
-  middleware?: MiddlewareConfig<any>,
-): (() => void) | null {
+  middleware?: MiddlewareConfig<any>
+): () => void {
   if (!middleware?.onSyncError) {
-    return null;
+    return () => {}; // Return no-op function instead of null
   }
 
   const subscription = replicationState.error$.subscribe((error) => {

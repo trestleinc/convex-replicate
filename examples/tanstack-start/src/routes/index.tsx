@@ -47,7 +47,15 @@ function TasksContent() {
   const { tasks: initialTasks } = Route.useLoaderData();
 
   // Pass SSR data to hook for instant hydration
-  const { data, isLoading, error, insert, update, delete: deleteFn, purgeStorage } = useTasks(initialTasks);
+  const {
+    data,
+    isLoading,
+    error,
+    insert,
+    update,
+    delete: deleteFn,
+    purgeStorage,
+  } = useTasks(initialTasks);
 
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();

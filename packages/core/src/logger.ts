@@ -12,12 +12,12 @@ import { type Logger, getLogger as getLogTapeLogger } from '@logtape/logtape';
 // Re-export LogTape types and utilities for advanced users
 export type { Logger } from '@logtape/logtape';
 export {
-	type Config,
-	type LogLevel,
-	type Sink,
-	configure,
-	getConsoleSink,
-	getLogger as getLogTapeLogger,
+  type Config,
+  type LogLevel,
+  type Sink,
+  configure,
+  getConsoleSink,
+  getLogger as getLogTapeLogger,
 } from '@logtape/logtape';
 
 /**
@@ -36,20 +36,20 @@ export {
  * ```
  */
 export function getLogger(component: string, enabled = true): Logger {
-	const logger = getLogTapeLogger(['convex-rx', component]);
+  const logger = getLogTapeLogger(['convex-rx', component]);
 
-	if (!enabled) {
-		// Return a no-op logger that implements the full Logger interface
-		const noop = () => {};
-		return {
-			...logger,
-			debug: noop,
-			info: noop,
-			warn: noop,
-			error: noop,
-			fatal: noop,
-		};
-	}
+  if (!enabled) {
+    // Return a no-op logger that implements the full Logger interface
+    const noop = () => {};
+    return {
+      ...logger,
+      debug: noop,
+      info: noop,
+      warn: noop,
+      error: noop,
+      fatal: noop,
+    };
+  }
 
-	return logger;
+  return logger;
 }

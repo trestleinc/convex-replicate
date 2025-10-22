@@ -14,16 +14,34 @@ import { getLogger } from './logger';
 import { getStorage, type StorageConfig } from './storage';
 import type { ConvexClient, ConvexRxDocument, RxJsonSchema } from './types';
 
+// ========================================
+// ENVIRONMENT DETECTION
+// ========================================
+
+/**
+ * Check if running in development mode.
+ * Handles environments where process.env is not available.
+ */
+function isDevelopment(): boolean {
+  try {
+    return process.env.NODE_ENV === 'development';
+  } catch (_error) {
+    // process.env might not be available in all environments
+    return false;
+  }
+}
+
+// ========================================
+// PLUGIN INITIALIZATION
+// ========================================
+
 // Add required plugins
+// Note: RxDBUpdatePlugin is used for soft deletes via doc.update() in actions.ts
 addRxPlugin(RxDBUpdatePlugin);
 
 // Conditionally add dev mode plugin
-try {
-  if (process.env.NODE_ENV === 'development') {
-    addRxPlugin(RxDBDevModePlugin);
-  }
-} catch (_error) {
-  // process.env might not be available in all environments
+if (isDevelopment()) {
+  addRxPlugin(RxDBDevModePlugin);
 }
 
 // ========================================
@@ -112,7 +130,7 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
     storage: getStorage(config.storage),
     multiInstance: true,
     eventReduce: true,
-    ignoreDuplicate: process.env.NODE_ENV === 'development',
+    ignoreDuplicate: isDevelopment(),
   });
 
   // 2. Add collection with schema
@@ -271,29 +289,40 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
   });
 
   // 5. Monitor replication state
-  replicationState.error$.subscribe((error: any) => {
-    logger.error('Replication error', { error });
-  });
+  // Track all subscriptions for proper cleanup
+  const subscriptions: Array<{ unsubscribe: () => void }> = [];
 
-  replicationState.active$.subscribe((active: boolean) => {
-    logger.info('Replication active', { active });
-  });
+  subscriptions.push(
+    replicationState.error$.subscribe((error: any) => {
+      logger.error('Replication error', { error });
+    })
+  );
 
-  replicationState.received$.subscribe((doc: any) => {
-    logger.info('Received doc', {
-      id: doc.id,
-      _deleted: doc._deleted,
-      fullDoc: doc,
-    });
-  });
+  subscriptions.push(
+    replicationState.active$.subscribe((active: boolean) => {
+      logger.info('Replication active', { active });
+    })
+  );
 
-  replicationState.sent$.subscribe((doc: any) => {
-    logger.info('Sent doc', {
-      id: doc.id,
-      _deleted: doc._deleted,
-      fullDoc: doc,
-    });
-  });
+  subscriptions.push(
+    replicationState.received$.subscribe((doc: any) => {
+      logger.info('Received doc', {
+        id: doc.id,
+        _deleted: doc._deleted,
+        fullDoc: doc,
+      });
+    })
+  );
+
+  subscriptions.push(
+    replicationState.sent$.subscribe((doc: any) => {
+      logger.info('Sent doc', {
+        id: doc.id,
+        _deleted: doc._deleted,
+        fullDoc: doc,
+      });
+    })
+  );
 
   // 6. Wait for initial replication
   try {
@@ -306,24 +335,78 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
   }
 
   // 7. Cleanup function to purge all storage
-  const cleanup = async () => {
-    logger.info('Cleaning up and removing storage...');
+  let isCleaningUp = false;
 
-    // Unsubscribe from change stream
-    if (unsubscribeChangeStream) {
-      unsubscribeChangeStream();
+  const cleanup = async () => {
+    // Prevent concurrent cleanup execution
+    if (isCleaningUp) {
+      logger.warn('Cleanup already in progress, skipping');
+      return;
     }
 
-    // Cancel replication
-    await replicationState.cancel();
+    isCleaningUp = true;
+    logger.info('Cleaning up and removing storage...');
 
-    // Remove the database completely (this closes it and removes all data)
-    await db.remove();
+    try {
+      // Step 1: Unsubscribe from all RxJS subscriptions
+      logger.info('Unsubscribing from RxJS subscriptions...');
+      for (const subscription of subscriptions) {
+        try {
+          subscription.unsubscribe();
+        } catch (error) {
+          logger.error('Failed to unsubscribe', { error });
+        }
+      }
 
-    // Also remove from storage layer to ensure complete cleanup
-    await removeRxDatabase(databaseName, getStorage(config.storage));
+      // Step 2: Unsubscribe from Convex change stream
+      logger.info('Unsubscribing from Convex change stream...');
+      if (unsubscribeChangeStream) {
+        try {
+          unsubscribeChangeStream();
+        } catch (error) {
+          logger.error('Failed to unsubscribe from change stream', { error });
+        }
+      }
 
-    logger.info('Storage removed successfully');
+      // Step 3: Cancel replication
+      logger.info('Cancelling replication...');
+      try {
+        await replicationState.cancel();
+      } catch (error) {
+        logger.error('Failed to cancel replication', { error });
+      }
+
+      // Step 4: Close ConvexClient connection if available
+      logger.info('Closing ConvexClient connection...');
+      if (convexClient && typeof convexClient.close === 'function') {
+        try {
+          convexClient.close();
+        } catch (error) {
+          logger.error('Failed to close ConvexClient', { error });
+        }
+      }
+
+      // Step 5: Remove the database completely (this closes it and removes all data)
+      logger.info('Removing database...');
+      try {
+        await db.remove();
+      } catch (error) {
+        logger.error('Failed to remove database', { error });
+      }
+
+      // Step 6: Also remove from storage layer to ensure complete cleanup
+      logger.info('Removing from storage layer...');
+      try {
+        await removeRxDatabase(databaseName, getStorage(config.storage));
+      } catch (error) {
+        logger.error('Failed to remove from storage layer', { error });
+      }
+
+      logger.info('Storage removed successfully');
+    } finally {
+      // Always reset flag, even if cleanup fails
+      isCleaningUp = false;
+    }
   };
 
   return {

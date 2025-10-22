@@ -19,27 +19,28 @@ import type { ConvexRxInstance } from './types';
  * @internal
  */
 export async function createConvexRx<TData extends SyncedDocument>(
-	config: ConvexRxDBConfig<TData>,
+  config: ConvexRxDBConfig<TData>
 ): Promise<ConvexRxInstance<TData>> {
-	// 1. Create RxDB database with Convex replication
-	const { rxDatabase, rxCollection, replicationState, cleanup } = await createConvexRxDB<TData>(config);
+  // 1. Create RxDB database with Convex replication
+  const { rxDatabase, rxCollection, replicationState, cleanup } =
+    await createConvexRxDB<TData>(config);
 
-	// 2. Wrap with TanStack DB using rxdbCollectionOptions
-	// This is the magic that makes RxDB reactive in React!
-	// Note: RxDB collections always use string keys, so TKey = string
-	const tanStackCollection = createCollection(
-		rxdbCollectionOptions({
-			rxCollection,
-			startSync: true, // Immediately start syncing RxDB → TanStack DB
-		}),
-	);
+  // 2. Wrap with TanStack DB using rxdbCollectionOptions
+  // This is the magic that makes RxDB reactive in React!
+  // Note: RxDB collections always use string keys, so TKey = string
+  const tanStackCollection = createCollection(
+    rxdbCollectionOptions({
+      rxCollection,
+      startSync: true, // Immediately start syncing RxDB → TanStack DB
+    })
+  );
 
-	// Return instance with both TanStack and RxDB access
-	return {
-		collection: tanStackCollection,
-		rxCollection,
-		database: rxDatabase,
-		replicationState,
-		cleanup,
-	};
+  // Return instance with both TanStack and RxDB access
+  return {
+    collection: tanStackCollection,
+    rxCollection,
+    database: rxDatabase,
+    replicationState,
+    cleanup,
+  };
 }

@@ -56,6 +56,7 @@ export type { ConvexRxTableFunctions } from './convex';
 export {
   getSingletonInstance,
   removeSingletonInstance,
+  markSingletonAsCleaningUp,
   hasSingletonInstance,
   clearAllSingletons,
   createSingletonKey,

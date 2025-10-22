@@ -6,12 +6,12 @@
  */
 
 import type {
-	ConvexClient,
-	RxConflictHandler,
-	RxJsonSchema,
-	SyncedDocument,
-	BaseActions,
-	MiddlewareConfig,
+  ConvexClient,
+  RxConflictHandler,
+  RxJsonSchema,
+  SyncedDocument,
+  BaseActions,
+  MiddlewareConfig,
 } from '@convex-rx/core';
 import type { Collection, UtilsRecord } from '@tanstack/react-db';
 import type { RxCollection, RxDatabase } from 'rxdb';
@@ -30,14 +30,14 @@ import type { RxReplicationState } from 'rxdb/plugins/replication';
  * React-specific: includes TanStack DB Collection.
  */
 export interface HookContext<TData extends SyncedDocument> {
-	/** TanStack DB collection - reactive React-friendly wrapper */
-	collection: Collection<TData, string, UtilsRecord>;
-	/** RxDB collection - direct access to RxDB queries and operations */
-	rxCollection: RxCollection<TData>;
-	/** RxDB database instance */
-	database: RxDatabase;
-	/** Replication state - observables for sync status (error$, active$, etc.) */
-	replicationState: RxReplicationState<TData, Record<string, never>>;
+  /** TanStack DB collection - reactive React-friendly wrapper */
+  collection: Collection<TData, string, UtilsRecord>;
+  /** RxDB collection - direct access to RxDB queries and operations */
+  rxCollection: RxCollection<TData>;
+  /** RxDB database instance */
+  database: RxDatabase;
+  /** Replication state - observables for sync status (error$, active$, etc.) */
+  replicationState: RxReplicationState<TData, Record<string, never>>;
 }
 
 // ========================================
@@ -59,8 +59,8 @@ export interface HookContext<TData extends SyncedDocument> {
  * ```
  */
 export type ActionBuilder<
-	TData extends SyncedDocument,
-	TActions extends Record<string, (...args: any[]) => any>,
+  TData extends SyncedDocument,
+  TActions extends Record<string, (...args: any[]) => any>,
 > = (base: BaseActions<TData>, ctx: HookContext<TData>) => TActions;
 
 /**
@@ -76,8 +76,8 @@ export type ActionBuilder<
  * ```
  */
 export type QueryBuilder<
-	TData extends SyncedDocument,
-	TQueries extends Record<string, (...args: any[]) => any>,
+  TData extends SyncedDocument,
+  TQueries extends Record<string, (...args: any[]) => any>,
 > = (ctx: HookContext<TData>) => TQueries;
 
 /**
@@ -96,8 +96,11 @@ export type QueryBuilder<
  * ```
  */
 export type SubscriptionBuilder<
-	TData extends SyncedDocument,
-	TSubscriptions extends Record<string, (...args: any[]) => (() => void) | { unsubscribe: () => void }>,
+  TData extends SyncedDocument,
+  TSubscriptions extends Record<
+    string,
+    (...args: any[]) => (() => void) | { unsubscribe: () => void }
+  >,
 > = (ctx: HookContext<TData>) => TSubscriptions;
 
 // ========================================
@@ -111,71 +114,74 @@ export type SubscriptionBuilder<
  * The convexClient is provided automatically via ConvexRxProvider.
  */
 export interface UseConvexRxConfig<
-	TData extends SyncedDocument,
-	TActions extends Record<string, (...args: any[]) => any> = Record<string, never>,
-	TQueries extends Record<string, (...args: any[]) => any> = Record<string, never>,
-	TSubscriptions extends Record<string, (...args: any[]) => (() => void) | { unsubscribe: () => void }> = Record<string, never>,
+  TData extends SyncedDocument,
+  TActions extends Record<string, (...args: any[]) => any> = Record<string, never>,
+  TQueries extends Record<string, (...args: any[]) => any> = Record<string, never>,
+  TSubscriptions extends Record<
+    string,
+    (...args: any[]) => (() => void) | { unsubscribe: () => void }
+  > = Record<string, never>,
 > {
-	// ========== Required ==========
+  // ========== Required ==========
 
-	/** Table/collection name in Convex */
-	table: string;
+  /** Table/collection name in Convex */
+  table: string;
 
-	/** RxDB JSON schema for the collection */
-	schema: RxJsonSchema<TData>;
+  /** RxDB JSON schema for the collection */
+  schema: RxJsonSchema<TData>;
 
-	/** Convex API functions for sync */
-	convexApi: {
-		changeStream: any;
-		pullDocuments: any;
-		pushDocuments: any;
-	};
+  /** Convex API functions for sync */
+  convexApi: {
+    changeStream: any;
+    pullDocuments: any;
+    pushDocuments: any;
+  };
 
-	// ========== Optional - Config Overrides ==========
+  // ========== Optional - Config Overrides ==========
 
-	/** Database name (defaults to table name) */
-	databaseName?: string;
+  /** Database name (defaults to table name) */
+  databaseName?: string;
 
-	/** Batch size for replication (default: 50) */
-	batchSize?: number;
+  /** Batch size for replication (default: 50) */
+  batchSize?: number;
 
-	/** Enable logging for debugging */
-	enableLogging?: boolean;
+  /** Enable logging for debugging */
+  enableLogging?: boolean;
 
-	/** Conflict resolution handler (default: last-write-wins) */
-	conflictHandler?: RxConflictHandler<TData>;
+  /** Conflict resolution handler (default: last-write-wins) */
+  conflictHandler?: RxConflictHandler<TData>;
 
-	/**
-	 * Initial data for SSR hydration.
-	 * If provided, data state will be immediately populated with this data
-	 * instead of showing loading state. Useful for server-side rendering.
-	 *
-	 * @example
-	 * ```typescript
-	 * const { tasks } = Route.useLoaderData();
-	 * const tasksDb = useConvexRx({
-	 *   table: 'tasks',
-	 *   schema: taskSchema,
-	 *   convexApi: api.tasks,
-	 *   initialData: tasks, // Pre-loaded on server
-	 * });
-	 * ```
-	 */
-	initialData?: TData[];
+  /**
+   * Initial data for SSR hydration.
+   * If provided, data state will be immediately populated with this data
+   * instead of showing loading state. Useful for server-side rendering.
+   *
+   * @example
+   * ```typescript
+   * const { tasks } = Route.useLoaderData();
+   * const tasksDb = useConvexRx({
+   *   table: 'tasks',
+   *   schema: taskSchema,
+   *   convexApi: api.tasks,
+   *   initialData: tasks, // Pre-loaded on server
+   * });
+   * ```
+   */
+  initialData?: TData[];
 
-	// ========== Optional - Extensions ==========
+  // ========== Optional - Extensions ==========
 
-	/** Custom action builder */
-	actions?: ActionBuilder<TData, TActions>;
+  /** Custom action builder */
+  actions?: ActionBuilder<TData, TActions>;
 
-	/** Custom query builder */
-	queries?: QueryBuilder<TData, TQueries>;
+  /** Custom query builder */
+  queries?: QueryBuilder<TData, TQueries>;
 
-	/** Custom subscription builder */
-	subscriptions?: SubscriptionBuilder<TData, TSubscriptions>;
+  /** Custom subscription builder */
+  subscriptions?: SubscriptionBuilder<TData, TSubscriptions>;
 
-	/** Middleware for intercepting operations */
-	middleware?: MiddlewareConfig<TData>;
+  /** Middleware for intercepting operations */
+  middleware?: MiddlewareConfig<TData>;
 }
 
 // ========================================
@@ -187,57 +193,60 @@ export interface UseConvexRxConfig<
  * Combines data, loading state, base actions, and any custom extensions.
  */
 export interface UseConvexRxResult<
-	TData extends SyncedDocument,
-	TActions extends Record<string, (...args: any[]) => any> = Record<string, never>,
-	TQueries extends Record<string, (...args: any[]) => any> = Record<string, never>,
-	TSubscriptions extends Record<string, (...args: any[]) => (() => void) | { unsubscribe: () => void }> = Record<string, never>,
+  TData extends SyncedDocument,
+  TActions extends Record<string, (...args: any[]) => any> = Record<string, never>,
+  TQueries extends Record<string, (...args: any[]) => any> = Record<string, never>,
+  TSubscriptions extends Record<
+    string,
+    (...args: any[]) => (() => void) | { unsubscribe: () => void }
+  > = Record<string, never>,
 > {
-	// ========== Data ==========
+  // ========== Data ==========
 
-	/** Array of synced documents (filtered to exclude _deleted: true) */
-	data: TData[];
+  /** Array of synced documents (filtered to exclude _deleted: true) */
+  data: TData[];
 
-	/** Loading state - true while initializing or syncing */
-	isLoading: boolean;
+  /** Loading state - true while initializing or syncing */
+  isLoading: boolean;
 
-	/** Error message if initialization or sync fails */
-	error: string | null;
+  /** Error message if initialization or sync fails */
+  error: string | null;
 
-	// ========== Base Actions (Always Available) ==========
+  // ========== Base Actions (Always Available) ==========
 
-	/** Insert a new document */
-	insert: BaseActions<TData>['insert'];
+  /** Insert a new document */
+  insert: BaseActions<TData>['insert'];
 
-	/** Update an existing document */
-	update: BaseActions<TData>['update'];
+  /** Update an existing document */
+  update: BaseActions<TData>['update'];
 
-	/** Delete a document (soft delete) */
-	delete: BaseActions<TData>['delete'];
+  /** Delete a document (soft delete) */
+  delete: BaseActions<TData>['delete'];
 
-	// ========== Custom Extensions ==========
+  // ========== Custom Extensions ==========
 
-	/** Custom actions (if provided via config.actions) */
-	actions: TActions;
+  /** Custom actions (if provided via config.actions) */
+  actions: TActions;
 
-	/** Custom queries (if provided via config.queries) */
-	queries: TQueries;
+  /** Custom queries (if provided via config.queries) */
+  queries: TQueries;
 
-	/** Custom subscriptions (if provided via config.subscriptions) */
-	subscribe: TSubscriptions;
+  /** Custom subscriptions (if provided via config.subscriptions) */
+  subscribe: TSubscriptions;
 
-	// ========== Advanced Access ==========
+  // ========== Advanced Access ==========
 
-	/** TanStack DB collection for direct access */
-	collection: Collection<TData, string, UtilsRecord> | null;
+  /** TanStack DB collection for direct access */
+  collection: Collection<TData, string, UtilsRecord> | null;
 
-	/** RxDB collection for direct access */
-	rxCollection: RxCollection<TData> | null;
+  /** RxDB collection for direct access */
+  rxCollection: RxCollection<TData> | null;
 
-	/** Replication state for monitoring sync */
-	replicationState: RxReplicationState<TData, Record<string, never>> | null;
+  /** Replication state for monitoring sync */
+  replicationState: RxReplicationState<TData, Record<string, never>> | null;
 
-	/** Purge all local storage and reload the page */
-	purgeStorage: () => Promise<void>;
+  /** Purge all local storage and reload the page */
+  purgeStorage: () => Promise<void>;
 }
 
 // ========================================
@@ -249,27 +258,27 @@ export interface UseConvexRxResult<
  * Allows setting defaults for all hooks in the app.
  */
 export interface ConvexRxConfig {
-	/** Convex client instance */
-	convexClient: ConvexClient;
+  /** Convex client instance */
+  convexClient: ConvexClient;
 
-	/** Default database name (can be overridden per-hook) */
-	databaseName?: string;
+  /** Default database name (can be overridden per-hook) */
+  databaseName?: string;
 
-	/** Default batch size for replication */
-	batchSize?: number;
+  /** Default batch size for replication */
+  batchSize?: number;
 
-	/** Enable logging for all collections */
-	enableLogging?: boolean;
+  /** Enable logging for all collections */
+  enableLogging?: boolean;
 
-	/** Default conflict handler for all collections */
-	conflictHandler?: RxConflictHandler<any>;
+  /** Default conflict handler for all collections */
+  conflictHandler?: RxConflictHandler<any>;
 }
 
 /**
  * Internal context value with isConfigured flag
  */
 export interface ConvexRxContextValue extends ConvexRxConfig {
-	isConfigured: boolean;
+  isConfigured: boolean;
 }
 
 // ========================================
@@ -281,20 +290,20 @@ export interface ConvexRxContextValue extends ConvexRxConfig {
  * Contains all sync primitives and cleanup function.
  */
 export interface ConvexRxInstance<TData extends SyncedDocument> {
-	/** TanStack DB collection - reactive wrapper around RxDB */
-	collection: Collection<TData, string, UtilsRecord>;
+  /** TanStack DB collection - reactive wrapper around RxDB */
+  collection: Collection<TData, string, UtilsRecord>;
 
-	/** Underlying RxDB collection */
-	rxCollection: RxCollection<TData>;
+  /** Underlying RxDB collection */
+  rxCollection: RxCollection<TData>;
 
-	/** RxDB database instance */
-	database: RxDatabase;
+  /** RxDB database instance */
+  database: RxDatabase;
 
-	/** RxDB replication state with observables (error$, active$, received$, sent$) */
-	replicationState: RxReplicationState<TData, Record<string, never>>;
+  /** RxDB replication state with observables (error$, active$, received$, sent$) */
+  replicationState: RxReplicationState<TData, Record<string, never>>;
 
-	/** Cleanup function to cancel replication and remove database */
-	cleanup: () => Promise<void>;
+  /** Cleanup function to cancel replication and remove database */
+  cleanup: () => Promise<void>;
 }
 
 // Note: Configuration for createConvexRx is ConvexRxDBConfig from @convex-rx/core

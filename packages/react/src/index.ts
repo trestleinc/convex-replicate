@@ -63,11 +63,11 @@ export type { ConvexClient, ConvexRxDocument, RxJsonSchema } from '@convex-rx/co
 /** Conflict resolution types and handlers */
 export type { RxConflictHandler, RxConflictHandlerInput } from '@convex-rx/core';
 export {
-	createClientWinsHandler,
-	createCustomMergeHandler,
-	createLastWriteWinsHandler,
-	createServerWinsHandler,
-	defaultConflictHandler,
+  createClientWinsHandler,
+  createCustomMergeHandler,
+  createLastWriteWinsHandler,
+  createServerWinsHandler,
+  defaultConflictHandler,
 } from '@convex-rx/core';
 
 /** Schema builder utilities */

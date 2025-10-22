@@ -13,6 +13,7 @@
 interface SingletonEntry<TInstance> {
   promise: Promise<TInstance>;
   resolved: TInstance | null;
+  isCleaningUp?: boolean;
 }
 
 /**
@@ -50,13 +51,21 @@ export interface SingletonConfig<TConfig, TInstance> {
  */
 export async function getSingletonInstance<TConfig, TInstance>(
   config: TConfig,
-  singleton: SingletonConfig<TConfig, TInstance>,
+  singleton: SingletonConfig<TConfig, TInstance>
 ): Promise<TInstance> {
   const key = singleton.keyFn(config);
 
   // Check if instance already exists
   const existing = singletonInstances.get(key);
   if (existing) {
+    // Prevent access during cleanup to avoid race conditions
+    if (existing.isCleaningUp) {
+      throw new Error(
+        `Cannot access singleton instance '${key}' while cleanup is in progress. ` +
+          `Please wait for cleanup to complete before creating a new instance.`
+      );
+    }
+
     // If already resolved, return immediately
     if (existing.resolved) {
       return existing.resolved;
@@ -84,6 +93,19 @@ export async function getSingletonInstance<TConfig, TInstance>(
     // Remove failed instance from cache
     singletonInstances.delete(key);
     throw error;
+  }
+}
+
+/**
+ * Mark a singleton instance as cleaning up to prevent race conditions.
+ * Call this before starting cleanup operations.
+ *
+ * @param key - Unique key for the singleton instance
+ */
+export function markSingletonAsCleaningUp(key: string): void {
+  const existing = singletonInstances.get(key);
+  if (existing) {
+    existing.isCleaningUp = true;
   }
 }
 
