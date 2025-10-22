@@ -54,6 +54,25 @@ export function formatError(error: unknown): string {
   return String(error);
 }
 
+/**
+ * Check if an error is a network-related error
+ */
+export function isNetworkError(error: unknown): boolean {
+  if (error instanceof TypeError) {
+    return true;
+  }
+  if (error instanceof Error && error.message) {
+    const message = error.message.toLowerCase();
+    return (
+      message.includes('network') ||
+      message.includes('fetch') ||
+      message.includes('connection') ||
+      message.includes('timeout')
+    );
+  }
+  return false;
+}
+
 // ========================================
 // SYNCED DOCUMENT TYPE
 // ========================================

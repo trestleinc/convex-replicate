@@ -13,6 +13,7 @@ import { defaultConflictHandler, type RxConflictHandler } from './conflictHandle
 import { getLogger } from './logger';
 import { getStorage, type StorageConfig } from './storage';
 import type { ConvexClient, ConvexRxDocument, RxJsonSchema } from './types';
+import { isNetworkError } from './types';
 
 // ========================================
 // ENVIRONMENT DETECTION
@@ -86,6 +87,27 @@ export interface ConvexRxDBConfig<T extends ConvexRxDocument> {
    * storage: { customStorage: getRxStorageIndexedDB() }
    */
   storage?: StorageConfig;
+  /**
+   * Time in milliseconds to wait before retrying failed operations.
+   * @default 5000
+   */
+  retryTime?: number;
+  /**
+   * Custom replication identifier. Defaults to `convex-${collectionName}`.
+   * Useful for multi-tenant scenarios or custom replication instances.
+   */
+  replicationIdentifier?: string;
+  /**
+   * Wait for this instance to become leader before starting replication.
+   * Set to false to sync in all tabs simultaneously.
+   * @default false
+   */
+  waitForLeadership?: boolean;
+  /**
+   * Push batch size (1-1000). Controls how many documents are pushed at once.
+   * @default 100
+   */
+  pushBatchSize?: number;
 }
 
 /**
@@ -100,6 +122,23 @@ export interface ConvexRxDBInstance<T extends ConvexRxDocument> {
   replicationState: RxReplicationState<T, any>;
   /** Cleanup function to cancel replication and remove database */
   cleanup: () => Promise<void>;
+}
+
+// ========================================
+// HELPER FUNCTIONS
+// ========================================
+
+/**
+ * Validates batch size is within acceptable range (1-1000)
+ */
+function validateBatchSize(batchSize: number | undefined, defaultValue: number): number {
+  if (batchSize === undefined) return defaultValue;
+
+  if (batchSize < 1 || batchSize > 1000) {
+    throw new Error(`Invalid batch size: ${batchSize}. Must be between 1 and 1000.`);
+  }
+
+  return batchSize;
 }
 
 // ========================================
@@ -160,46 +199,69 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
 
   // 3. Set up WebSocket stream for real-time updates
   const pullStream$ = new Subject<'RESYNC' | any>();
-  let lastKnownState = { timestamp: 0, count: 0 };
+  let lastKnownState: { timestamp: number; count: number } | null = null;
   let unsubscribeChangeStream: (() => void) | null = null;
+  let retryCount = 0;
+  const maxRetries = 10;
 
   function setupChangeStream() {
-    logger.info('Setting up Convex change stream');
+    logger.info('Setting up Convex change stream', { retryCount });
 
     try {
       const changeWatch = convexClient.watchQuery(convexApi.changeStream, {});
 
-      // Trigger initial sync
-      pullStream$.next('RESYNC');
-
       const unsubscribe = changeWatch.onUpdate(() => {
+        retryCount = 0; // Reset on successful connection
         const data = changeWatch.localQueryResult();
-        if (
-          data &&
-          (data.timestamp !== lastKnownState.timestamp || data.count !== lastKnownState.count)
-        ) {
-          logger.info('Change detected', { data });
-          lastKnownState = { timestamp: data.timestamp, count: data.count };
-          pullStream$.next('RESYNC');
+
+        if (data) {
+          // First update - initialize state
+          if (lastKnownState === null) {
+            lastKnownState = { timestamp: data.timestamp, count: data.count };
+            pullStream$.next('RESYNC');
+            logger.info('Initial change stream state', { data });
+            return;
+          }
+
+          // Subsequent updates - check for changes
+          if (data.timestamp !== lastKnownState.timestamp || data.count !== lastKnownState.count) {
+            logger.info('Change detected', { data });
+            lastKnownState = { timestamp: data.timestamp, count: data.count };
+            pullStream$.next('RESYNC');
+          }
         }
       });
 
       unsubscribeChangeStream = unsubscribe;
     } catch (error) {
       logger.error('Failed to setup change stream', { error });
+
+      // Retry with exponential backoff
+      if (retryCount < maxRetries) {
+        const delay = Math.min(1000 * 2 ** retryCount, 30000); // Cap at 30s
+        retryCount++;
+        logger.info(`Retrying change stream in ${delay}ms (attempt ${retryCount}/${maxRetries})`);
+        setTimeout(setupChangeStream, delay);
+      } else {
+        logger.error('Max retries reached for change stream');
+      }
     }
   }
 
   setupChangeStream();
 
   // 4. Set up RxDB replication using native replicateRxCollection
+  // Add rate limiting state
+  let lastPushTime = 0;
+  const MIN_PUSH_INTERVAL = 100; // 100ms = max 10 pushes/sec
+
   const replicationState = replicateRxCollection({
     collection: rxCollection,
-    replicationIdentifier: `convex-${collectionName}`,
+    replicationIdentifier: config.replicationIdentifier ?? `convex-${collectionName}`,
     live: true,
-    retryTime: 5000,
+    retryTime: config.retryTime ?? 5000,
     autoStart: true,
-    waitForLeadership: false,
+    waitForLeadership: config.waitForLeadership ?? false,
 
     pull: {
       async handler(checkpointOrNull, batchSize) {
@@ -228,13 +290,22 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
           };
         } catch (error) {
           logger.error('Pull error', { error });
+
+          // Network errors should be thrown to trigger RxDB retry
+          if (isNetworkError(error)) {
+            logger.info('Network error detected, triggering RxDB retry');
+            throw error; // RxDB will retry with retryTime
+          }
+
+          // Non-network errors: skip batch, keep checkpoint
+          logger.info('Non-network error, skipping batch but keeping checkpoint');
           return {
             documents: [],
             checkpoint: checkpoint,
           };
         }
       },
-      batchSize: config.batchSize || 300, // Optimized batch size for better performance
+      batchSize: validateBatchSize(config.batchSize, 300),
       stream$: pullStream$.asObservable(),
       // Transform Convex's 'deleted' field to RxDB's '_deleted' field
       modifier: (doc: any) => {
@@ -258,6 +329,16 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
 
     push: {
       async handler(changeRows) {
+        // Rate limiting
+        const now = Date.now();
+        const timeSinceLastPush = now - lastPushTime;
+        if (timeSinceLastPush < MIN_PUSH_INTERVAL) {
+          const waitTime = MIN_PUSH_INTERVAL - timeSinceLastPush;
+          logger.info(`Rate limiting: waiting ${waitTime}ms before push`);
+          await new Promise((resolve) => setTimeout(resolve, waitTime));
+        }
+        lastPushTime = Date.now();
+
         logger.info(`Pushing ${changeRows.length} changes`);
 
         try {
@@ -272,10 +353,19 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
           return conflicts || [];
         } catch (error) {
           logger.error('Push error', { error });
+
+          // Network errors should be thrown to trigger retry
+          if (isNetworkError(error)) {
+            logger.info('Network error detected, triggering RxDB retry');
+            throw error;
+          }
+
+          // Non-network errors: return empty conflicts
+          logger.info('Non-network error, returning empty conflicts');
           return [];
         }
       },
-      batchSize: 100, // Optimized batch size for better performance
+      batchSize: validateBatchSize(config.pushBatchSize, 100),
       // Transform RxDB's '_deleted' field to Convex's 'deleted' field before sending
       modifier: (doc: any) => {
         if (!doc) return doc;
@@ -324,14 +414,21 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
     })
   );
 
-  // 6. Wait for initial replication
+  // 6. Wait for initial replication with timeout
   try {
     logger.info('Waiting for initial replication...');
-    await replicationState.awaitInitialReplication();
+
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Initial replication timeout')), 30000);
+    });
+
+    await Promise.race([replicationState.awaitInitialReplication(), timeoutPromise]);
+
     logger.info('Initial replication complete!');
   } catch (error) {
     logger.error('Initial replication failed', { error });
     // Continue anyway - live sync will catch up
+    logger.info('Falling back to optimistic UI');
   }
 
   // 7. Cleanup function to purge all storage
