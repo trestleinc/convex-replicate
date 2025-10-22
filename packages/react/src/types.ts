@@ -7,36 +7,27 @@
 
 import type {
 	ConvexClient,
-	ConvexRxDocument,
 	RxConflictHandler,
 	RxJsonSchema,
+	SyncedDocument,
+	BaseActions,
+	MiddlewareConfig,
 } from '@convex-rx/core';
 import type { Collection, UtilsRecord } from '@tanstack/react-db';
 import type { RxCollection, RxDatabase } from 'rxdb';
 import type { RxReplicationState } from 'rxdb/plugins/replication';
 
 // ========================================
-// CORE DOCUMENT TYPE
+// REACT-SPECIFIC CONTEXT TYPES
 // ========================================
 
-/**
- * Base type for all synced documents.
- * Standardized to use _deleted (with underscore) for soft deletes.
- */
-export interface SyncedDocument extends ConvexRxDocument {
-	/** Soft delete flag - when true, document is hidden from queries */
-	_deleted?: boolean;
-	/** Index signature for compatibility with Record<string, unknown> */
-	[key: string]: unknown;
-}
-
-// ========================================
-// CONTEXT TYPES
-// ========================================
+// Note: SyncedDocument, BaseActions, and MiddlewareConfig are now in @convex-rx/core
+// Import them directly from core instead of from this package
 
 /**
  * Context provided to extension builders (actions, queries, subscriptions).
  * Gives access to all underlying sync primitives.
+ * React-specific: includes TanStack DB Collection.
  */
 export interface HookContext<TData extends SyncedDocument> {
 	/** TanStack DB collection - reactive React-friendly wrapper */
@@ -47,62 +38,6 @@ export interface HookContext<TData extends SyncedDocument> {
 	database: RxDatabase;
 	/** Replication state - observables for sync status (error$, active$, etc.) */
 	replicationState: RxReplicationState<TData, Record<string, never>>;
-}
-
-// ========================================
-// BASE ACTIONS
-// ========================================
-
-/**
- * Base CRUD actions available to all hooks.
- * These are always available, even when custom actions are added.
- */
-export interface BaseActions<TData extends SyncedDocument> {
-	/** Insert a new document. Returns the generated ID. */
-	insert: (doc: Omit<TData, keyof SyncedDocument>) => Promise<string>;
-	/** Update an existing document by ID. */
-	update: (
-		id: string,
-		updates: Partial<Omit<TData, keyof SyncedDocument>>,
-	) => Promise<void>;
-	/** Soft delete a document by ID (sets _deleted: true). */
-	delete: (id: string) => Promise<void>;
-}
-
-// ========================================
-// MIDDLEWARE
-// ========================================
-
-/**
- * Middleware configuration for intercepting CRUD operations.
- * All hooks are optional and can be async.
- */
-export interface MiddlewareConfig<TData extends SyncedDocument> {
-	/** Called before insert. Can transform the document or throw to cancel. */
-	beforeInsert?: (
-		doc: Omit<TData, keyof SyncedDocument>,
-	) => Omit<TData, keyof SyncedDocument> | Promise<Omit<TData, keyof SyncedDocument>>;
-
-	/** Called after insert succeeds. */
-	afterInsert?: (doc: TData) => void | Promise<void>;
-
-	/** Called before update. Can transform updates or throw to cancel. */
-	beforeUpdate?: (
-		id: string,
-		updates: Partial<Omit<TData, keyof SyncedDocument>>,
-	) => Partial<Omit<TData, keyof SyncedDocument>> | Promise<Partial<Omit<TData, keyof SyncedDocument>>>;
-
-	/** Called after update succeeds. */
-	afterUpdate?: (id: string, doc: TData) => void | Promise<void>;
-
-	/** Called before delete. Return false to cancel deletion. */
-	beforeDelete?: (id: string) => boolean | Promise<boolean>;
-
-	/** Called after delete succeeds. */
-	afterDelete?: (id: string) => void | Promise<void>;
-
-	/** Called when sync replication encounters an error. */
-	onSyncError?: (error: Error) => void;
 }
 
 // ========================================

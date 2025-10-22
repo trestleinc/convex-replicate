@@ -22,16 +22,11 @@ export { ConvexRxProvider } from './ConvexRxProvider';
 // TYPE EXPORTS
 // ========================================
 
-/** Hook configuration types */
-export type {
-	BaseActions,
-	ConvexRxConfig,
-	HookContext,
-	MiddlewareConfig,
-	SyncedDocument,
-	UseConvexRxConfig,
-	UseConvexRxResult,
-} from './types';
+/** Hook configuration types (React-specific) */
+export type { ConvexRxConfig, HookContext, UseConvexRxConfig, UseConvexRxResult } from './types';
+
+// Note: BaseActions, MiddlewareConfig, and SyncedDocument are now in @convex-rx/core
+// Import them directly from '@convex-rx/core' instead
 
 /** Builder types for extensibility */
 export type { ActionBuilder, QueryBuilder, SubscriptionBuilder } from './types';

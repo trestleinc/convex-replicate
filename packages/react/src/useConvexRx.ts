@@ -38,23 +38,23 @@
  * ```
  */
 
-import { type ConvexRxDBConfig, getLogger } from '@convex-rx/core';
+import {
+	type ConvexRxDBConfig,
+	type BaseActions,
+	type SyncedDocument,
+	getLogger,
+	getSingletonInstance,
+	removeSingletonInstance,
+	createSingletonKey,
+	wrapActionsWithMiddleware,
+	setupSyncErrorMiddleware,
+	buildSubscriptions,
+	createBaseActions,
+} from '@convex-rx/core';
 import React from 'react';
 import { createConvexRx } from './createConvexRx';
 import { useConvexRxContextOptional } from './ConvexRxProvider';
-import { getSingletonInstance, removeSingletonInstance } from './internal/singleton';
-import {
-	setupSyncErrorMiddleware,
-	wrapActionsWithMiddleware,
-} from './internal/middleware';
-import { buildSubscriptions } from './internal/subscriptions';
-import type {
-	BaseActions,
-	HookContext,
-	SyncedDocument,
-	UseConvexRxConfig,
-	UseConvexRxResult,
-} from './types';
+import type { HookContext, UseConvexRxConfig, UseConvexRxResult } from './types';
 
 /**
  * Main ConvexRx hook for offline-first sync with Convex.
@@ -129,7 +129,10 @@ export function useConvexRx<
 
 		const init = async () => {
 			try {
-				const instance = await getSingletonInstance<TData>(mergedConfig, createConvexRx);
+				const instance = await getSingletonInstance(mergedConfig, {
+					keyFn: (cfg) => createSingletonKey(cfg.databaseName, cfg.collectionName),
+					createFn: createConvexRx,
+				});
 
 				if (mounted) {
 					setSyncInstance(instance);
@@ -235,45 +238,16 @@ export function useConvexRx<
 
 		const { collection, rxCollection } = syncInstance;
 
-		return {
-			insert: async (doc: Omit<TData, keyof SyncedDocument>): Promise<string> => {
-				const id = crypto.randomUUID();
-				const fullDoc: TData = {
-					...doc,
-					id,
-					updatedTime: Date.now(),
-				} as unknown as TData;
-
-				await collection.insert(fullDoc);
-				return id;
+		// Use core action factory with TanStack DB collection wrapper
+		return createBaseActions<TData>({
+			rxCollection,
+			insertFn: async (doc) => {
+				collection.insert(doc);
 			},
-
-			update: async (
-				id: string,
-				updates: Partial<Omit<TData, keyof SyncedDocument>>,
-			): Promise<void> => {
-				await collection.update(id, (draft: any) => {
-					Object.assign(draft, updates);
-					draft.updatedTime = Date.now();
-				});
+			updateFn: async (id, updater) => {
+				collection.update(id, updater as any);
 			},
-
-			delete: async (id: string): Promise<void> => {
-				// Soft delete using RxDB collection directly
-				const doc = await rxCollection.findOne(id).exec();
-
-				if (doc) {
-					await doc.update({
-						$set: {
-							_deleted: true,
-							updatedTime: Date.now(),
-						},
-					});
-				} else {
-					throw new Error(`Document ${id} not found`);
-				}
-			},
-		};
+		});
 	}, [syncInstance]);
 
 	// ========================================
@@ -358,7 +332,9 @@ export function useConvexRx<
 
 		try {
 			await syncInstance.cleanup();
-			removeSingletonInstance(mergedConfig.databaseName, mergedConfig.collectionName);
+			removeSingletonInstance(
+				createSingletonKey(mergedConfig.databaseName, mergedConfig.collectionName),
+			);
 			window.location.reload();
 		} catch (error) {
 			const logger = getLogger(config.table, mergedConfig.enableLogging ?? false);

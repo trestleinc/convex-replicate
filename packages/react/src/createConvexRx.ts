@@ -5,10 +5,10 @@
  * This is an internal function - users should use useConvexRx hook instead.
  */
 
-import { type ConvexRxDBConfig, createConvexRxDB } from '@convex-rx/core';
+import { type ConvexRxDBConfig, type SyncedDocument, createConvexRxDB } from '@convex-rx/core';
 import { createCollection } from '@tanstack/react-db';
 import { rxdbCollectionOptions } from '@tanstack/rxdb-db-collection';
-import type { ConvexRxInstance, SyncedDocument } from './types';
+import type { ConvexRxInstance } from './types';
 
 /**
  * Creates a ConvexRx instance with TanStack DB integration.
