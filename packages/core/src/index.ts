@@ -1,9 +1,23 @@
 // Main exports
 
-// Type exports
+// ========================================
+// CORE DATABASE & REPLICATION
+// ========================================
+
 export type { ConvexRxDBConfig, ConvexRxDBInstance } from './rxdb';
 export { createConvexRxDB } from './rxdb';
+
+// ========================================
+// TYPE DEFINITIONS
+// ========================================
+
 export type { ConvexClient, ConvexRxDocument, RxJsonSchema } from './types';
+export type { SyncedDocument, BaseActions, MiddlewareConfig } from './types';
+
+// ========================================
+// CONFLICT RESOLUTION
+// ========================================
+
 export type { RxConflictHandler, RxConflictHandlerInput } from './conflictHandler';
 export {
   createClientWinsHandler,
@@ -13,14 +27,56 @@ export {
   defaultConflictHandler,
 } from './conflictHandler';
 
-// Schema builder utilities
+// ========================================
+// SCHEMA BUILDER UTILITIES
+// ========================================
+
 export { createSchema, inferBasicSchema, property } from './schema';
 export type { SimpleSchema } from './schema';
 
-// Convex function generators
+// ========================================
+// CONVEX FUNCTION GENERATORS
+// ========================================
+
 export { defineConvexRxTable, generateConvexRxFunctions } from './convex';
 export type { ConvexRxTableFunctions } from './convex';
 
-// Logger utilities (LogTape integration)
+// ========================================
+// SINGLETON MANAGEMENT
+// ========================================
+
+export {
+  getSingletonInstance,
+  removeSingletonInstance,
+  hasSingletonInstance,
+  clearAllSingletons,
+  createSingletonKey,
+} from './singleton';
+export type { SingletonConfig } from './singleton';
+
+// ========================================
+// MIDDLEWARE
+// ========================================
+
+export { wrapActionsWithMiddleware, setupSyncErrorMiddleware } from './middleware';
+
+// ========================================
+// SUBSCRIPTIONS
+// ========================================
+
+export { buildSubscriptions, normalizeUnsubscribe } from './subscriptions';
+export type { SubscriptionBuilder } from './subscriptions';
+
+// ========================================
+// BASE ACTIONS FACTORY
+// ========================================
+
+export { createBaseActions } from './actions';
+export type { ActionContext } from './actions';
+
+// ========================================
+// LOGGER UTILITIES (LogTape Integration)
+// ========================================
+
 export { configure, getConsoleSink, getLogger, getLogTapeLogger } from './logger';
 export type { Config, LogLevel, Logger, Sink } from './logger';
