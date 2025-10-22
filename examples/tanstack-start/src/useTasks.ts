@@ -1,4 +1,4 @@
-import { createSchema, property, useConvexRxSimple } from '@convex-rx/react';
+import { createSchema, property, useConvexRx } from '@convex-rx/react';
 import { api } from '../convex/_generated/api';
 import { convexClient } from './router';
 
@@ -8,40 +8,72 @@ import { convexClient } from './router';
 
 // Define your data type - that's it!
 export type Task = {
-  text: string;
-  isCompleted: boolean;
+	text: string;
+	isCompleted: boolean;
 };
 
 // Create schema using the simple builder API
 // Auto-adds required fields: id, updatedTime, _deleted
 const taskSchema = createSchema<Task>('tasks', {
-  text: property.string(),
-  isCompleted: property.boolean(),
+	text: property.string(),
+	isCompleted: property.boolean(),
 });
 
 // ========================================
-// EFFORTLESS HOOK
+// EFFORTLESS HOOK - NEW UNIFIED API
 // ========================================
 
 /**
  * Hook to access tasks with full offline-first sync.
- * Returns: { data, isLoading, error, insert, update, delete, purgeStorage }
+ * Uses the new unified useConvexRx hook.
+ *
+ * Returns: { data, isLoading, error, insert, update, delete, actions, queries, subscribe, purgeStorage }
  */
 export function useTasks() {
-  return useConvexRxSimple<Task>('tasks', {
-    schema: taskSchema,
-    convexClient,
-    convexApi: {
-      changeStream: api.tasks.changeStream,
-      pullDocuments: api.tasks.pullDocuments,
-      pushDocuments: api.tasks.pushDocuments,
-    },
-    enableLogging: true,
-  });
+	return useConvexRx({
+		table: 'tasks',
+		schema: taskSchema,
+		convexClient,
+		convexApi: {
+			changeStream: api.tasks.changeStream,
+			pullDocuments: api.tasks.pullDocuments,
+			pushDocuments: api.tasks.pushDocuments,
+		},
+		enableLogging: true,
+
+		// Optional: Add custom actions
+		actions: (base, ctx) => ({
+			// Toggle completion status
+			toggle: async (id: string) => {
+				const task = await ctx.rxCollection.findOne(id).exec();
+				if (task) {
+					await base.update(id, { isCompleted: !task.isCompleted });
+				}
+			},
+
+			// Complete all tasks
+			completeAll: async () => {
+				const tasks = ctx.collection.toArray;
+				await Promise.all(tasks.map((task) => base.update(task.id, { isCompleted: true })));
+			},
+		}),
+
+		// Optional: Add custom queries
+		queries: (ctx) => ({
+			// Get completed tasks
+			getCompleted: () => ctx.collection.toArray.filter((task) => task.isCompleted),
+
+			// Get incomplete tasks
+			getIncomplete: () => ctx.collection.toArray.filter((task) => !task.isCompleted),
+
+			// Count tasks
+			count: () => ctx.collection.toArray.length,
+		}),
+	});
 }
 
 // ========================================
-// THAT'S IT! 30 LINES INSTEAD OF 200
+// THAT'S IT! NOW WITH EXTENSIBILITY
 // ========================================
 //
 // What you get:
@@ -51,12 +83,28 @@ export function useTasks() {
 // - Real-time sync via WebSocket change stream
 // - Offline-first writes with automatic retry
 // - Cross-tab synchronization
-// - Type-safe CRUD operations
+// - Type-safe base CRUD operations: insert, update, delete
+// - Type-safe custom actions: toggle, completeAll
+// - Type-safe custom queries: getCompleted, getIncomplete, count
 //
-// What disappeared:
-// - Manual RxJsonSchema boilerplate
-// - Singleton pattern with race condition handling
-// - Complex initialization logic
-// - Manual error handling
-// - Action hook pattern
-// - HMR cleanup boilerplate
+// Usage in components:
+//
+// const tasks = useTasks();
+//
+// // Base CRUD (always available)
+// tasks.insert({ text: 'New task', isCompleted: false });
+// tasks.update(id, { isCompleted: true });
+// tasks.delete(id);
+//
+// // Custom actions (fully typed!)
+// tasks.actions.toggle(id);
+// tasks.actions.completeAll();
+//
+// // Custom queries (fully typed!)
+// const completed = tasks.queries.getCompleted();
+// const incomplete = tasks.queries.getIncomplete();
+// const count = tasks.queries.count();
+//
+// // Access raw data
+// tasks.data.map(task => ...)
+//

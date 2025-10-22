@@ -102,14 +102,16 @@ export function generateConvexRxFunctions(config: {
         docs = await ctx.db.query(tableName).order('desc').take(args.limit);
       } else {
         // Incremental pull - get documents newer than checkpoint
+        // TypeScript now knows checkpoint is not null in this branch
+        const checkpoint = args.checkpoint;
         docs = await ctx.db
           .query(tableName)
           .filter((q: any) =>
             q.or(
-              q.gt(q.field('updatedTime'), args.checkpoint!.updatedTime),
+              q.gt(q.field('updatedTime'), checkpoint.updatedTime),
               q.and(
-                q.eq(q.field('updatedTime'), args.checkpoint!.updatedTime),
-                q.gt(q.field('id'), args.checkpoint!.id)
+                q.eq(q.field('updatedTime'), checkpoint.updatedTime),
+                q.gt(q.field('id'), checkpoint.id)
               )
             )
           )

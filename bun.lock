@@ -56,6 +56,7 @@
       "name": "@convex-rx/core",
       "version": "0.1.0",
       "dependencies": {
+        "@logtape/logtape": "1.1.2",
         "rxdb": "~16.19.0",
         "rxjs": "7.8.2",
       },
@@ -342,6 +343,8 @@
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.5.5", "", {}, "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="],
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
+
+    "@logtape/logtape": ["@logtape/logtape@1.1.2", "", {}, "sha512-4QXa/5cwt3+cx01C1xm8iqvEXxNZMDTTbT5AFGZnwPkn2WDAyA6UP2khWBZ7FctMnvQqW3fnJ96kgBJ4ahorHw=="],
 
     "@mongodb-js/saslprep": ["@mongodb-js/saslprep@1.3.0", "", { "dependencies": { "sparse-bitfield": "^3.0.3" } }, "sha512-zlayKCsIjYb7/IdfqxorK5+xUMyi4vOKcFy10wKJYc63NSdKI8mNME+uJqfatkPmOSMMUiojrL58IePKBm3gvQ=="],
 

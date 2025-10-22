@@ -1,26 +1,5 @@
-import type { ConvexClient, RxConflictHandler } from '@convex-rx/core';
 import React from 'react';
-
-// ========================================
-// CONTEXT TYPES
-// ========================================
-
-export interface ConvexRxConfig {
-  /** Convex client instance */
-  convexClient: ConvexClient;
-  /** Default database name (can be overridden per-hook) */
-  databaseName?: string;
-  /** Default batch size for replication */
-  batchSize?: number;
-  /** Enable logging for all collections */
-  enableLogging?: boolean;
-  /** Default conflict handler for all collections */
-  conflictHandler?: RxConflictHandler<any>;
-}
-
-interface ConvexRxContextValue extends ConvexRxConfig {
-  isConfigured: boolean;
-}
+import type { ConvexRxConfig, ConvexRxContextValue } from './types';
 
 // ========================================
 // CONTEXT CREATION
@@ -61,10 +40,20 @@ export interface ConvexRxProviderProps extends ConvexRxConfig {
 export function ConvexRxProvider({ children, ...config }: ConvexRxProviderProps) {
   const contextValue = React.useMemo<ConvexRxContextValue>(
     () => ({
-      ...config,
+      convexClient: config.convexClient,
+      databaseName: config.databaseName,
+      batchSize: config.batchSize,
+      enableLogging: config.enableLogging,
+      conflictHandler: config.conflictHandler,
       isConfigured: true,
     }),
-    [config.convexClient, config.databaseName, config.batchSize, config.enableLogging]
+    [
+      config.convexClient,
+      config.databaseName,
+      config.batchSize,
+      config.enableLogging,
+      config.conflictHandler,
+    ]
   );
 
   return <ConvexRxContext.Provider value={contextValue}>{children}</ConvexRxContext.Provider>;

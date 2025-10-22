@@ -20,3 +20,7 @@ export type { SimpleSchema } from './schema';
 // Convex function generators
 export { defineConvexRxTable, generateConvexRxFunctions } from './convex';
 export type { ConvexRxTableFunctions } from './convex';
+
+// Logger utilities (LogTape integration)
+export { configure, getConsoleSink, getLogger, getLogTapeLogger } from './logger';
+export type { Config, LogLevel, Logger, Sink } from './logger';

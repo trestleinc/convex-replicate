@@ -12,7 +12,7 @@ import { RxDBUpdatePlugin } from 'rxdb/plugins/update';
 import { wrappedValidateAjvStorage } from 'rxdb/plugins/validate-ajv';
 import { Subject } from 'rxjs';
 import { defaultConflictHandler, type RxConflictHandler } from './conflictHandler';
-import { createLogger, type Logger } from './logger';
+import { getLogger } from './logger';
 import type { ConvexClient, ConvexRxDocument, RxJsonSchema } from './types';
 
 // Add required plugins
@@ -88,9 +88,9 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
   } = config;
 
   // Create logger instance
-  const logger = createLogger(collectionName, enableLogging);
+  const logger = getLogger(collectionName, enableLogging);
 
-  logger.info('Creating RxDB database:', databaseName);
+  logger.info('Creating RxDB database', { databaseName });
 
   // 1. Create RxDB database
   const db = await createRxDatabase({
@@ -146,7 +146,7 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
           data &&
           (data.timestamp !== lastKnownState.timestamp || data.count !== lastKnownState.count)
         ) {
-          logger.info('Change detected:', data);
+          logger.info('Change detected', { data });
           lastKnownState = { timestamp: data.timestamp, count: data.count };
           pullStream$.next('RESYNC');
         }
@@ -154,7 +154,7 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
 
       unsubscribeChangeStream = unsubscribe;
     } catch (error) {
-      logger.error('Failed to setup change stream:', error);
+      logger.error('Failed to setup change stream', { error });
     }
   }
 
@@ -173,7 +173,7 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
       async handler(checkpointOrNull, batchSize) {
         const checkpoint = checkpointOrNull || { id: '', updatedTime: 0 };
 
-        logger.info('Pull from checkpoint:', checkpoint);
+        logger.info('Pull from checkpoint', { checkpoint });
 
         try {
           const result = await convexClient.query<{
@@ -184,18 +184,18 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
             limit: batchSize,
           });
 
-          logger.info(
-            `Pulled ${result.documents.length} documents, new checkpoint:`,
-            result.checkpoint
-          );
-          logger.info('Raw documents from Convex:', result.documents);
+          logger.info('Pulled documents', {
+            documentCount: result.documents.length,
+            checkpoint: result.checkpoint,
+          });
+          logger.info('Raw documents from Convex', { documents: result.documents });
 
           return {
             documents: result.documents,
             checkpoint: result.checkpoint,
           };
         } catch (error) {
-          logger.error('Pull error:', error);
+          logger.error('Pull error', { error });
           return {
             documents: [],
             checkpoint: checkpoint,
@@ -214,7 +214,7 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
         };
 
         if (deleted) {
-          logger.info('Pull modifier - Transforming deleted doc:', {
+          logger.info('Pull modifier - Transforming deleted doc', {
             from: doc,
             to: transformed,
           });
@@ -234,12 +234,12 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
           });
 
           if (conflicts && conflicts.length > 0) {
-            logger.info('Conflicts detected:', conflicts.length);
+            logger.info('Conflicts detected', { conflictCount: conflicts.length });
           }
 
           return conflicts || [];
         } catch (error) {
-          logger.error('Push error:', error);
+          logger.error('Push error', { error });
           return [];
         }
       },
@@ -258,15 +258,15 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
 
   // 5. Monitor replication state
   replicationState.error$.subscribe((error: any) => {
-    logger.error('Replication error:', error);
+    logger.error('Replication error', { error });
   });
 
   replicationState.active$.subscribe((active: boolean) => {
-    logger.info('Replication active:', active);
+    logger.info('Replication active', { active });
   });
 
   replicationState.received$.subscribe((doc: any) => {
-    logger.info('Received doc:', {
+    logger.info('Received doc', {
       id: doc.id,
       _deleted: doc._deleted,
       fullDoc: doc,
@@ -274,7 +274,7 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
   });
 
   replicationState.sent$.subscribe((doc: any) => {
-    logger.info('Sent doc:', {
+    logger.info('Sent doc', {
       id: doc.id,
       _deleted: doc._deleted,
       fullDoc: doc,
@@ -287,7 +287,7 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
     await replicationState.awaitInitialReplication();
     logger.info('Initial replication complete!');
   } catch (error) {
-    logger.error('Initial replication failed:', error);
+    logger.error('Initial replication failed', { error });
     // Continue anyway - live sync will catch up
   }
 

@@ -17,6 +17,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@logtape/logtape": "1.1.2",
     "rxdb": "~16.19.0",
     "rxjs": "7.8.2"
   },

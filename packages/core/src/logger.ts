@@ -1,38 +1,55 @@
-// ========================================
-// LOGGING ABSTRACTION
-// ========================================
+/**
+ * LogTape integration for ConvexRx
+ *
+ * This module provides a simplified interface to LogTape for ConvexRx packages.
+ * LogTape is a zero-dependency, universally compatible logging library.
+ *
+ * @see https://github.com/dahlia/logtape
+ */
 
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+import { type Logger, getLogger as getLogTapeLogger } from '@logtape/logtape';
 
-export interface Logger {
-  debug: (...args: any[]) => void;
-  info: (...args: any[]) => void;
-  warn: (...args: any[]) => void;
-  error: (...args: any[]) => void;
-}
+// Re-export LogTape types and utilities for advanced users
+export type { Logger } from '@logtape/logtape';
+export {
+	type Config,
+	type LogLevel,
+	type Sink,
+	configure,
+	getConsoleSink,
+	getLogger as getLogTapeLogger,
+} from '@logtape/logtape';
 
 /**
- * Creates a namespaced logger that can be enabled/disabled
- * @param namespace - Logger namespace (e.g., collection name)
- * @param enabled - Whether logging is enabled
+ * Get a logger for a ConvexRx component.
+ * Uses hierarchical categories for organized logging.
+ *
+ * @param component - Component name (e.g., 'rxdb', 'replication', 'sync')
+ * @param enabled - Whether logging is enabled (default: true)
  * @returns Logger instance
+ *
+ * @example
+ * ```typescript
+ * const logger = getLogger('replication', true);
+ * logger.info('Starting sync', { batchSize: 50 });
+ * logger.error('Sync failed', { error: err });
+ * ```
  */
-export function createLogger(namespace: string, enabled: boolean = true): Logger {
-  const noop = () => {};
+export function getLogger(component: string, enabled = true): Logger {
+	const logger = getLogTapeLogger(['convex-rx', component]);
 
-  if (!enabled) {
-    return {
-      debug: noop,
-      info: noop,
-      warn: noop,
-      error: (...args) => console.error(`[${namespace}]`, ...args), // Always log errors
-    };
-  }
+	if (!enabled) {
+		// Return a no-op logger that implements the full Logger interface
+		const noop = () => {};
+		return {
+			...logger,
+			debug: noop,
+			info: noop,
+			warn: noop,
+			error: noop,
+			fatal: noop,
+		};
+	}
 
-  return {
-    debug: (...args) => console.debug(`[${namespace}]`, ...args),
-    info: (...args) => console.log(`[${namespace}]`, ...args),
-    warn: (...args) => console.warn(`[${namespace}]`, ...args),
-    error: (...args) => console.error(`[${namespace}]`, ...args),
-  };
+	return logger;
 }
