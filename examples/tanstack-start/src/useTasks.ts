@@ -1,6 +1,6 @@
 import {
-  type ConvexReactSyncInstance,
-  createConvexReactSync,
+  type ReactConvexRxInstance,
+  createReactConvexRx,
   type RxJsonSchema,
   useConvexRx,
 } from '@convex-rx/react';
@@ -54,10 +54,10 @@ const taskSchema: RxJsonSchema<Task> = {
 // SYNC INSTANCE MANAGEMENT
 // ========================================
 
-let tasksSyncInstance: Promise<ConvexReactSyncInstance<Task>> | null = null;
-let tasksSyncInstanceResolved: ConvexReactSyncInstance<Task> | null = null;
+let tasksSyncInstance: Promise<ReactConvexRxInstance<Task>> | null = null;
+let tasksSyncInstanceResolved: ReactConvexRxInstance<Task> | null = null;
 
-async function getTasksSync(): Promise<ConvexReactSyncInstance<Task>> {
+async function getTasksSync(): Promise<ReactConvexRxInstance<Task>> {
   if (tasksSyncInstanceResolved) {
     return tasksSyncInstanceResolved;
   }
@@ -65,7 +65,7 @@ async function getTasksSync(): Promise<ConvexReactSyncInstance<Task>> {
     return tasksSyncInstance;
   }
 
-  tasksSyncInstance = createConvexReactSync<Task>({
+  tasksSyncInstance = createReactConvexRx<Task>({
     databaseName: 'taskdb',
     collectionName: 'tasks',
     schema: taskSchema,

@@ -4,9 +4,9 @@ import { rxdbCollectionOptions } from '@tanstack/rxdb-db-collection';
 import type { RxCollection, RxDatabase } from 'rxdb';
 
 /**
- * Instance returned by createConvexReactSync containing TanStack DB collection and RxDB primitives
+ * Instance returned by createReactConvexRx containing TanStack DB collection and RxDB primitives
  */
-export interface ConvexReactSyncInstance<T extends ConvexRxDocument = any> {
+export interface ReactConvexRxInstance<T extends ConvexRxDocument = any> {
   /** TanStack DB collection - reactive wrapper around RxDB */
   collection: Collection<T, string | number, any>;
   /** Underlying RxDB collection */
@@ -20,15 +20,15 @@ export interface ConvexReactSyncInstance<T extends ConvexRxDocument = any> {
 }
 
 /**
- * Creates a Convex sync instance with TanStack React DB integration.
+ * Creates a React ConvexRx instance with TanStack DB integration.
  * This uses RxDB's native replication wrapped with TanStack DB for React.
  *
  * @param config - Convex RxDB configuration
  * @returns Promise resolving to sync instance with TanStack collection
  */
-export async function createConvexReactSync<T extends ConvexRxDocument>(
+export async function createReactConvexRx<T extends ConvexRxDocument>(
   config: ConvexRxDBConfig<T>
-): Promise<ConvexReactSyncInstance<T>> {
+): Promise<ReactConvexRxInstance<T>> {
   // 1. Create RxDB database with Convex replication
   const { rxDatabase, rxCollection, replicationState, cleanup } = await createConvexRxDB<T>(config);
 

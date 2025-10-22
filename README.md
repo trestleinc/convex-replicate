@@ -164,7 +164,7 @@ export const pushDocuments = mutation({
 ```typescript
 // src/useYourTable.ts
 import React from "react";
-import { createConvexReactSync, useConvexRx, type RxJsonSchema } from "@convex-rx/react";
+import { createReactConvexRx, useConvexRx, type RxJsonSchema } from "@convex-rx/react";
 import { api } from "../convex/_generated/api";
 
 // Define your data type
@@ -202,7 +202,7 @@ let syncInstance: Promise<any> | null = null;
 
 async function getYourSync() {
   if (!syncInstance) {
-    syncInstance = createConvexReactSync<YourItem>({
+    syncInstance = createReactConvexRx<YourItem>({
       tableName: 'yourTable',
       schema: yourSchema,
       convexApi: {
@@ -316,7 +316,7 @@ export function YourComponent() {
 
 ## 📋 API Reference
 
-### `createConvexReactSync<T>(config)` (from `@convex-rx/react`)
+### `createReactConvexRx<T>(config)` (from `@convex-rx/react`)
 
 Creates a React sync instance with TanStack DB integration for any Convex table.
 
@@ -418,7 +418,7 @@ const replication = replicateRxCollection(/* complex replication setup */);
 **After:**
 ```typescript
 // Simple one-line setup
-const syncInstance = await createConvexReactSync({
+const syncInstance = await createReactConvexRx({
   tableName: 'yourTable',
   schema: yourSchema,
   convexApi: api.yourTable

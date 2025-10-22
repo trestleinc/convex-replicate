@@ -1,5 +1,5 @@
 import React from 'react';
-import type { ConvexReactSyncInstance } from './createConvexReactSync';
+import type { ReactConvexRxInstance } from './createReactConvexRx';
 
 // ========================================
 // TYPE DEFINITIONS
@@ -35,7 +35,7 @@ export interface UseConvexRxResult<T> {
  * @returns Sync result with data, loading state, and action methods
  */
 export function useConvexRx<T extends { id: string; updatedTime: number; deleted?: boolean }>(
-  syncInstance: ConvexReactSyncInstance<T> | null
+  syncInstance: ReactConvexRxInstance<T> | null
 ): UseConvexRxResult<T> {
   const [data, setData] = React.useState<T[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
@@ -206,7 +206,7 @@ export function useConvexRx<T extends { id: string; updatedTime: number; deleted
  */
 export function useConvexRxActions<
   T extends { id: string; updatedTime: number; deleted?: boolean },
->(syncInstance: ConvexReactSyncInstance<T> | null) {
+>(syncInstance: ReactConvexRxInstance<T> | null) {
   const { actions } = useConvexRx(syncInstance);
   return actions;
 }
@@ -218,7 +218,7 @@ export function useConvexRxActions<
  * @returns Object with data, isLoading, and error
  */
 export function useConvexRxData<T extends { id: string; updatedTime: number; deleted?: boolean }>(
-  syncInstance: ConvexReactSyncInstance<T> | null
+  syncInstance: ReactConvexRxInstance<T> | null
 ) {
   const { data, isLoading, error } = useConvexRx(syncInstance);
   return { data, isLoading, error };
