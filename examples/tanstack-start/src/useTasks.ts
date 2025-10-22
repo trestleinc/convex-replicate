@@ -1,6 +1,7 @@
 import {
   type ReactConvexRxInstance,
   createReactConvexRx,
+  createLastWriteWinsHandler,
   type RxJsonSchema,
   useConvexRx,
 } from '@convex-rx/react';
@@ -77,6 +78,9 @@ async function getTasksSync(): Promise<ReactConvexRxInstance<Task>> {
     },
     batchSize: 100,
     enableLogging: true,
+    // Conflict resolution: last-write-wins based on updatedTime
+    // This ensures the most recent change wins when conflicts occur
+    conflictHandler: createLastWriteWinsHandler<Task>(),
   });
   tasksSyncInstanceResolved = await tasksSyncInstance;
   return tasksSyncInstanceResolved;

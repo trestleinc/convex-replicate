@@ -163,9 +163,114 @@ All synced types must include:
 }
 ```
 
+### Conflict Resolution
+
+ConvexRx provides built-in conflict resolution strategies to handle when multiple clients edit the same document simultaneously.
+
+#### How Conflicts Are Detected
+
+Conflicts occur when:
+1. Client A and Client B both read a document (e.g., `updatedTime: 100`)
+2. Client A modifies it locally (new state with `updatedTime: 200`)
+3. Client B also modifies it locally (new state with `updatedTime: 150`)
+4. Client A pushes first → succeeds, server now has `updatedTime: 200`
+5. Client B pushes → **conflict detected** because server state (200) ≠ assumed state (100)
+
+#### Available Strategies
+
+**1. Last-Write-Wins (Default)**
+```typescript
+import { createLastWriteWinsHandler } from '@convex-rx/react';
+
+createReactConvexRx({
+  // ...
+  conflictHandler: createLastWriteWinsHandler<YourType>(),
+});
+```
+- Compares `updatedTime` timestamps
+- Newest change wins, regardless of source
+- **Best for**: General use cases where timing matters
+
+**2. Server-Wins**
+```typescript
+import { createServerWinsHandler } from '@convex-rx/react';
+
+createReactConvexRx({
+  // ...
+  conflictHandler: createServerWinsHandler<YourType>(),
+});
+```
+- Always uses server state when conflicts occur
+- Local changes are discarded
+- **Best for**: When server is source of truth (e.g., inventory, pricing)
+
+**3. Client-Wins**
+```typescript
+import { createClientWinsHandler } from '@convex-rx/react';
+
+createReactConvexRx({
+  // ...
+  conflictHandler: createClientWinsHandler<YourType>(),
+});
+```
+- Always uses client state, overwriting server
+- ⚠️ **Warning**: Can cause data loss with concurrent edits
+- **Best for**: Single-user scenarios or when local edits must persist
+
+**4. Custom Merge**
+```typescript
+import { createCustomMergeHandler } from '@convex-rx/react';
+
+createReactConvexRx({
+  // ...
+  conflictHandler: createCustomMergeHandler<YourType>((input) => {
+    // input.realMasterState - current server state
+    // input.newDocumentState - local client state
+    // input.assumedMasterState - what client thought was on server
+
+    // Example: Merge specific fields
+    return {
+      ...input.realMasterState,
+      // Keep local user changes
+      text: input.newDocumentState.text,
+      // But use server's completion status
+      isCompleted: input.realMasterState.isCompleted,
+      // Use newest timestamp
+      updatedTime: Math.max(
+        input.realMasterState.updatedTime,
+        input.newDocumentState.updatedTime
+      ),
+    };
+  }),
+});
+```
+- Full control over conflict resolution
+- **Best for**: Complex business logic or field-level merging
+
+#### Conflict Resolution Flow
+
+```
+1. Client modifies document locally
+2. RxDB detects change and queues for push
+3. Push handler sends: { newDocumentState, assumedMasterState }
+4. Server compares assumedMasterState with realMasterState
+5. If different → conflict detected, returns realMasterState
+6. Client receives conflict
+7. RxDB calls conflictHandler.isEqual() to verify conflict
+8. If conflict confirmed, calls conflictHandler.resolve()
+9. Resolved document is applied locally
+10. Client retries push with resolved state
+```
+
+#### Best Practices
+
+- **Use `updatedTime` comparisons**: More efficient than deep equality checks
+- **Log conflicts**: Add logging in custom handlers to track resolution frequency
+- **Test with multiple clients**: Open app in multiple tabs to simulate concurrent edits
+- **Consider UI feedback**: Show users when their changes were overridden by conflicts
+
 ### Key Implementation Details
 
-- **Conflict Resolution**: Server-wins strategy implemented in `pushDocuments`
 - **WebSocket Change Detection**: Uses Convex `watchQuery()` to monitor `changeStream` query
 - **Cross-tab Sync**: RxDB multiInstance mode enables automatic tab synchronization
 - **Soft Deletes**: Items marked with `_deleted: true` instead of hard deletion
@@ -175,8 +280,10 @@ All synced types must include:
 
 ### Core Package (`packages/core/`)
 - `src/index.ts` - Main package exports
-- `src/sync.ts` - Core sync engine (createConvexRxSync)
+- `src/rxdb.ts` - Core sync engine (createConvexRxDB)
 - `src/types.ts` - TypeScript type definitions
+- `src/conflictHandler.ts` - Conflict resolution strategies
+- `src/logger.ts` - Logging abstraction utility
 - `package.json` - Package configuration with RxDB/RxJS dependencies
 - `tsconfig.json` - TypeScript configuration extending base
 

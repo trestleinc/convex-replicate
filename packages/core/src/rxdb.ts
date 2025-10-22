@@ -11,6 +11,7 @@ import { getRxStorageLocalstorage } from 'rxdb/plugins/storage-localstorage';
 import { RxDBUpdatePlugin } from 'rxdb/plugins/update';
 import { wrappedValidateAjvStorage } from 'rxdb/plugins/validate-ajv';
 import { Subject } from 'rxjs';
+import { defaultConflictHandler, type RxConflictHandler } from './conflictHandler';
 import { createLogger, type Logger } from './logger';
 import type { ConvexClient, ConvexRxDocument, RxJsonSchema } from './types';
 
@@ -42,6 +43,17 @@ export interface ConvexRxDBConfig<T extends ConvexRxDocument> {
   };
   batchSize?: number;
   enableLogging?: boolean;
+  /**
+   * Optional conflict handler for resolving document conflicts during replication.
+   * If not provided, uses defaultConflictHandler (last-write-wins strategy).
+   *
+   * Available strategies:
+   * - createServerWinsHandler() - Always use server state
+   * - createClientWinsHandler() - Always use client state (can cause data loss)
+   * - createLastWriteWinsHandler() - Use newest updatedTime (default)
+   * - createCustomMergeHandler() - Custom merge logic
+   */
+  conflictHandler?: RxConflictHandler<T>;
 }
 
 /**
@@ -72,6 +84,7 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
     convexClient,
     convexApi,
     enableLogging = true,
+    conflictHandler = defaultConflictHandler,
   } = config;
 
   // Create logger instance
@@ -105,6 +118,7 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
   const collections = await db.addCollections({
     [collectionName]: {
       schema: schemaWithDeleted,
+      conflictHandler: conflictHandler as any, // Type cast needed for RxDB's generic types
     },
   });
 
