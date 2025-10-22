@@ -18,8 +18,10 @@
   },
   "dependencies": {
     "@logtape/logtape": "1.1.2",
+    "dexie": "4.2.1",
     "rxdb": "~16.19.0",
-    "rxjs": "7.8.2"
+    "rxjs": "7.8.2",
+    "zod": "4.1.12"
   },
   "peerDependencies": {
     "convex": "1.28.0"

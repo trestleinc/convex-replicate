@@ -7,12 +7,11 @@ import {
 } from 'rxdb';
 import { RxDBDevModePlugin } from 'rxdb/plugins/dev-mode';
 import { type RxReplicationState, replicateRxCollection } from 'rxdb/plugins/replication';
-import { getRxStorageLocalstorage } from 'rxdb/plugins/storage-localstorage';
 import { RxDBUpdatePlugin } from 'rxdb/plugins/update';
-import { wrappedValidateAjvStorage } from 'rxdb/plugins/validate-ajv';
 import { Subject } from 'rxjs';
 import { defaultConflictHandler, type RxConflictHandler } from './conflictHandler';
 import { getLogger } from './logger';
+import { getStorage, type StorageConfig } from './storage';
 import type { ConvexClient, ConvexRxDocument, RxJsonSchema } from './types';
 
 // Add required plugins
@@ -54,6 +53,21 @@ export interface ConvexRxDBConfig<T extends ConvexRxDocument> {
    * - createCustomMergeHandler() - Custom merge logic
    */
   conflictHandler?: RxConflictHandler<T>;
+  /**
+   * Storage configuration.
+   *
+   * @default { type: StorageType.DEXIE } - Fast IndexedDB storage (recommended)
+   *
+   * @example Use default (Dexie.js - recommended)
+   * storage: { type: StorageType.DEXIE }
+   *
+   * @example Use LocalStorage (legacy)
+   * storage: { type: StorageType.LOCALSTORAGE }
+   *
+   * @example Use custom storage
+   * storage: { customStorage: getRxStorageIndexedDB() }
+   */
+  storage?: StorageConfig;
 }
 
 /**
@@ -95,9 +109,7 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
   // 1. Create RxDB database
   const db = await createRxDatabase({
     name: databaseName,
-    storage: wrappedValidateAjvStorage({
-      storage: getRxStorageLocalstorage(),
-    }),
+    storage: getStorage(config.storage),
     multiInstance: true,
     eventReduce: true,
     ignoreDuplicate: process.env.NODE_ENV === 'development',
@@ -105,15 +117,17 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
 
   // 2. Add collection with schema
   // Extend schema to include _deleted field for soft deletes
-  const schemaWithDeleted: RxJsonSchema<T & { _deleted?: boolean }> = {
+  // Note: keyCompression is added at schema level but not in RxJsonSchema type
+  const schemaWithDeleted = {
     ...schema,
+    keyCompression: true, // Enable key compression for ~40% storage reduction
     properties: {
       ...schema.properties,
       _deleted: {
         type: 'boolean',
       },
     },
-  };
+  } as RxJsonSchema<T & { _deleted?: boolean }>;
 
   const collections = await db.addCollections({
     [collectionName]: {
@@ -202,7 +216,7 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
           };
         }
       },
-      batchSize: config.batchSize || 100,
+      batchSize: config.batchSize || 300, // Optimized batch size for better performance
       stream$: pullStream$.asObservable(),
       // Transform Convex's 'deleted' field to RxDB's '_deleted' field
       modifier: (doc: any) => {
@@ -243,7 +257,7 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
           return [];
         }
       },
-      batchSize: 50,
+      batchSize: 100, // Optimized batch size for better performance
       // Transform RxDB's '_deleted' field to Convex's 'deleted' field before sending
       modifier: (doc: any) => {
         if (!doc) return doc;
@@ -307,12 +321,7 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
     await db.remove();
 
     // Also remove from storage layer to ensure complete cleanup
-    await removeRxDatabase(
-      databaseName,
-      wrappedValidateAjvStorage({
-        storage: getRxStorageLocalstorage(),
-      })
-    );
+    await removeRxDatabase(databaseName, getStorage(config.storage));
 
     logger.info('Storage removed successfully');
   };

@@ -146,6 +146,24 @@ export interface UseConvexRxConfig<
 	/** Conflict resolution handler (default: last-write-wins) */
 	conflictHandler?: RxConflictHandler<TData>;
 
+	/**
+	 * Initial data for SSR hydration.
+	 * If provided, data state will be immediately populated with this data
+	 * instead of showing loading state. Useful for server-side rendering.
+	 *
+	 * @example
+	 * ```typescript
+	 * const { tasks } = Route.useLoaderData();
+	 * const tasksDb = useConvexRx({
+	 *   table: 'tasks',
+	 *   schema: taskSchema,
+	 *   convexApi: api.tasks,
+	 *   initialData: tasks, // Pre-loaded on server
+	 * });
+	 * ```
+	 */
+	initialData?: TData[];
+
 	// ========== Optional - Extensions ==========
 
 	/** Custom action builder */

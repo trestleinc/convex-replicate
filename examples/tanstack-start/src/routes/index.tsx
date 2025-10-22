@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router';
+import { ClientOnly, createFileRoute } from '@tanstack/react-router';
 import { DatabaseZap, Delete, Diamond, DiamondPlus } from 'lucide-react';
 import { useState } from 'react';
 import { useTasks } from '../useTasks';
@@ -8,17 +8,36 @@ export const Route = createFileRoute('/')({
 });
 
 function HomeComponent() {
+  return (
+    <ClientOnly fallback={<LoadingFallback />}>
+      <TasksContent />
+    </ClientOnly>
+  );
+}
+
+function LoadingFallback() {
+  return (
+    <div className="p-6 max-w-2xl mx-auto">
+      <div className="mb-4 text-center">
+        <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-rose-pine-gold"></div>
+        <span className="ml-2 text-rose-pine-muted">Loading...</span>
+      </div>
+    </div>
+  );
+}
+
+function TasksContent() {
   const [newTaskText, setNewTaskText] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
 
-  const { data, isLoading, error, actions, purgeStorage } = useTasks();
+  const { data, isLoading, error, insert, update, delete: deleteFn, purgeStorage } = useTasks();
 
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (newTaskText.trim()) {
       try {
-        await actions.insert({ text: newTaskText.trim(), isCompleted: false });
+        await insert({ text: newTaskText.trim(), isCompleted: false });
         setNewTaskText('');
       } catch (_error) {}
     }
@@ -26,7 +45,7 @@ function HomeComponent() {
 
   const handleToggleComplete = async (id: string, isCompleted: boolean) => {
     try {
-      await actions.update(id, { isCompleted: !isCompleted });
+      await update(id, { isCompleted: !isCompleted });
     } catch (_error) {}
   };
 
@@ -38,7 +57,7 @@ function HomeComponent() {
   const handleEditSave = async (id: string) => {
     if (editText.trim()) {
       try {
-        await actions.update(id, { text: editText.trim() });
+        await update(id, { text: editText.trim() });
         setEditingId(null);
       } catch (_error) {}
     }
@@ -51,7 +70,7 @@ function HomeComponent() {
 
   const handleDelete = async (id: string) => {
     try {
-      await actions.delete(id);
+      await deleteFn(id);
     } catch (_error) {}
   };
 

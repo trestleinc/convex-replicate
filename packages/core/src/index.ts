@@ -28,6 +28,14 @@ export {
 } from './conflictHandler';
 
 // ========================================
+// STORAGE CONFIGURATION
+// ========================================
+
+export { getStorage, StorageType, storageTypeSchema } from './storage';
+export type { StorageConfig } from './storage';
+export { getRxStorageDexie, getRxStorageLocalstorage, getRxStorageMemory } from './storage';
+
+// ========================================
 // SCHEMA BUILDER UTILITIES
 // ========================================
 

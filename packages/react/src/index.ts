@@ -18,6 +18,10 @@ export { useConvexRx } from './useConvexRx';
 /** Optional provider for shared configuration across hooks */
 export { ConvexRxProvider } from './ConvexRxProvider';
 
+/** SSR utilities for preloading data on the server */
+export { preloadConvexRxData } from './ssr';
+export type { PreloadConvexRxDataConfig } from './ssr';
+
 // ========================================
 // TYPE EXPORTS
 // ========================================
@@ -58,3 +62,8 @@ export type { SimpleSchema } from '@convex-rx/core';
 /** Convex function generators */
 export { defineConvexRxTable, generateConvexRxFunctions } from '@convex-rx/core';
 export type { ConvexRxTableFunctions } from '@convex-rx/core';
+
+/** Storage configuration */
+export { getStorage, StorageType, storageTypeSchema } from '@convex-rx/core';
+export type { StorageConfig } from '@convex-rx/core';
+export { getRxStorageDexie, getRxStorageLocalstorage, getRxStorageMemory } from '@convex-rx/core';

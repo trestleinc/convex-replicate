@@ -1,0 +1,125 @@
+/**
+ * SSR utilities for preloading Convex data on the server side.
+ *
+ * Enables fast server-side rendering by fetching initial data from Convex
+ * before hydration, avoiding loading states on first render.
+ *
+ * @example TanStack Start loader
+ * ```typescript
+ * import { createFileRoute } from '@tanstack/react-router';
+ * import { preloadConvexRxData } from '@convex-rx/react/ssr';
+ * import { convexClient } from './convexClient';
+ * import { api } from '../convex/_generated/api';
+ *
+ * export const Route = createFileRoute('/')({
+ *   loader: async () => {
+ *     const tasks = await preloadConvexRxData({
+ *       convexClient,
+ *       convexApi: {
+ *         pullDocuments: api.tasks.pullDocuments,
+ *       },
+ *     });
+ *     return { tasks };
+ *   },
+ * });
+ *
+ * function Component() {
+ *   const { tasks } = Route.useLoaderData();
+ *   const tasksDb = useConvexRx({
+ *     table: 'tasks',
+ *     schema: taskSchema,
+ *     convexApi: api.tasks,
+ *     initialData: tasks,
+ *   });
+ *   // No loading state - data available immediately!
+ * }
+ * ```
+ */
+
+import type { SyncedDocument, ConvexClient } from '@convex-rx/core';
+import { getLogger } from '@convex-rx/core';
+
+/**
+ * Configuration for SSR data preloading.
+ */
+export interface PreloadConvexRxDataConfig {
+	/** Convex client instance */
+	convexClient: ConvexClient;
+	/** Convex API endpoints (only pullDocuments needed for preload) */
+	convexApi: {
+		pullDocuments: any;
+	};
+	/** Batch size for initial data pull (default: 300) */
+	batchSize?: number;
+}
+
+/**
+ * Preload Convex data on the server for SSR.
+ *
+ * Fetches all documents from Convex starting from checkpoint 0,
+ * returning data that can be passed as `initialData` to `useConvexRx`.
+ *
+ * Benefits:
+ * - No loading state on first render
+ * - Faster perceived performance
+ * - SEO-friendly content
+ * - Reduces layout shift
+ *
+ * @param config - Preload configuration
+ * @returns Array of documents fetched from Convex
+ *
+ * @example
+ * ```typescript
+ * // In TanStack Start loader
+ * export const Route = createFileRoute('/')({
+ *   loader: async () => {
+ *     const data = await preloadConvexRxData({
+ *       convexClient,
+ *       convexApi: { pullDocuments: api.tasks.pullDocuments },
+ *     });
+ *     return { initialTasks: data };
+ *   },
+ * });
+ *
+ * // In component
+ * const { initialTasks } = Route.useLoaderData();
+ * const tasks = useConvexRx({
+ *   table: 'tasks',
+ *   schema: taskSchema,
+ *   convexApi: api.tasks,
+ *   initialData: initialTasks,
+ * });
+ * ```
+ */
+export async function preloadConvexRxData<TData extends SyncedDocument>(
+	config: PreloadConvexRxDataConfig,
+): Promise<TData[]> {
+	const { convexClient, convexApi, batchSize = 300 } = config;
+
+	const logger = getLogger('ssr-preload', true);
+
+	try {
+		logger.info('Preloading Convex data for SSR', { batchSize });
+
+		// Pull all documents from beginning (checkpoint 0)
+		const result = await convexClient.query<{
+			documents: TData[];
+			checkpoint: any;
+		}>(convexApi.pullDocuments, {
+			checkpoint: { id: '', updatedTime: 0 },
+			limit: batchSize,
+		});
+
+		// Filter out soft-deleted items
+		const activeDocuments = result.documents.filter((doc: any) => !doc.deleted);
+
+		logger.info('Successfully preloaded data', { documentCount: activeDocuments.length });
+
+		return activeDocuments;
+	} catch (error) {
+		// Log error but don't crash SSR
+		logger.error('Failed to preload data for SSR', { error });
+		// Return empty array to allow hydration with loading state
+		return [];
+	}
+}

@@ -156,8 +156,8 @@ export function useConvexRx<
 	// 3. SUBSCRIBE TO COLLECTION CHANGES
 	// ========================================
 
-	const [data, setData] = React.useState<TData[]>([]);
-	const [isLoading, setIsLoading] = React.useState(true);
+	const [data, setData] = React.useState<TData[]>(config.initialData || []);
+	const [isLoading, setIsLoading] = React.useState(!config.initialData);
 
 	React.useEffect(() => {
 		if (!syncInstance) return;

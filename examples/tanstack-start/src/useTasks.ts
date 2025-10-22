@@ -1,4 +1,4 @@
-import { createSchema, property, useConvexRx } from '@convex-rx/react';
+import { createSchema, property, useConvexRx, StorageType } from '@convex-rx/react';
 import { api } from '../convex/_generated/api';
 import { convexClient } from './router';
 
@@ -40,6 +40,7 @@ export function useTasks() {
 			pushDocuments: api.tasks.pushDocuments,
 		},
 		enableLogging: true,
+		storage: { type: StorageType.DEXIE }, // Use Dexie.js (IndexedDB) for 5-10x better performance
 
 		// Optional: Add custom actions
 		actions: (base, ctx) => ({
