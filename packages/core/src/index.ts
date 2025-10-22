@@ -12,3 +12,11 @@ export {
   createServerWinsHandler,
   defaultConflictHandler,
 } from './conflictHandler';
+
+// Schema builder utilities
+export { createSchema, inferBasicSchema, property } from './schema';
+export type { SimpleSchema } from './schema';
+
+// Convex function generators
+export { defineConvexRxTable, generateConvexRxFunctions } from './convex';
+export type { ConvexRxTableFunctions } from './convex';
