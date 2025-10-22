@@ -38,6 +38,15 @@ export interface ConvexRxProviderProps extends ConvexRxConfig {
  * ```
  */
 export function ConvexRxProvider({ children, ...config }: ConvexRxProviderProps) {
+  // Runtime validation
+  if (!config.convexClient) {
+    throw new Error(
+      'ConvexRxProvider requires a convexClient prop. ' +
+        'Please provide a ConvexReactClient instance: ' +
+        '<ConvexRxProvider convexClient={convexClient}>...</ConvexRxProvider>'
+    );
+  }
+
   const contextValue = React.useMemo<ConvexRxContextValue>(
     () => ({
       convexClient: config.convexClient,

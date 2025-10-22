@@ -1,4 +1,5 @@
 import type { ConvexRxDocument } from './types';
+import { getLogger } from './logger';
 
 // ========================================
 // CONFLICT RESOLUTION TYPES
@@ -38,13 +39,20 @@ export interface RxConflictHandler<T> {
  * Safest option - ensures consistency across all clients.
  * Local changes are discarded when conflicts occur.
  */
-export function createServerWinsHandler<T extends ConvexRxDocument>(): RxConflictHandler<T> {
+export function createServerWinsHandler<T extends ConvexRxDocument>(
+  enableLogging = false
+): RxConflictHandler<T> {
+  const logger = getLogger('conflict-handler', enableLogging);
+
   return {
     isEqual(docA, docB) {
       // Compare updatedTime for efficient conflict detection
       return docA.updatedTime === docB.updatedTime;
     },
     resolve(input) {
+      logger.debug('Server-wins conflict resolution', {
+        documentId: input.realMasterState.id,
+      });
       // Always use server state
       return input.realMasterState;
     },
@@ -56,12 +64,19 @@ export function createServerWinsHandler<T extends ConvexRxDocument>(): RxConflic
  * WARNING: Can lead to data loss if multiple clients edit simultaneously.
  * Use only when you're certain conflicts should be resolved by overwriting server data.
  */
-export function createClientWinsHandler<T extends ConvexRxDocument>(): RxConflictHandler<T> {
+export function createClientWinsHandler<T extends ConvexRxDocument>(
+  enableLogging = false
+): RxConflictHandler<T> {
+  const logger = getLogger('conflict-handler', enableLogging);
+
   return {
     isEqual(docA, docB) {
       return docA.updatedTime === docB.updatedTime;
     },
     resolve(input) {
+      logger.debug('Client-wins conflict resolution', {
+        documentId: input.newDocumentState.id,
+      });
       // Always use client state
       return input.newDocumentState;
     },
@@ -73,36 +88,124 @@ export function createClientWinsHandler<T extends ConvexRxDocument>(): RxConflic
  * Common strategy for timestamp-based conflict resolution.
  * Ensures the most recent change wins, regardless of where it came from.
  */
-export function createLastWriteWinsHandler<T extends ConvexRxDocument>(): RxConflictHandler<T> {
+export function createLastWriteWinsHandler<T extends ConvexRxDocument>(
+  enableLogging = false
+): RxConflictHandler<T> {
+  const logger = getLogger('conflict-handler', enableLogging);
+
   return {
     isEqual(docA, docB) {
       return docA.updatedTime === docB.updatedTime;
     },
     resolve(input) {
       // Compare timestamps and use the newer one
-      if (input.newDocumentState.updatedTime > input.realMasterState.updatedTime) {
-        return input.newDocumentState;
-      }
-      return input.realMasterState;
+      const winner =
+        input.newDocumentState.updatedTime > input.realMasterState.updatedTime
+          ? 'client'
+          : 'server';
+
+      logger.debug('Last-write-wins conflict resolution', {
+        documentId: input.newDocumentState.id,
+        winner,
+        clientTime: input.newDocumentState.updatedTime,
+        serverTime: input.realMasterState.updatedTime,
+      });
+
+      return winner === 'client' ? input.newDocumentState : input.realMasterState;
     },
   };
 }
 
 /**
  * Custom merge strategy: Merge properties from both states.
- * Allows field-level conflict resolution.
+ * Allows field-level conflict resolution with error handling.
+ * Supports both synchronous and asynchronous merge functions.
  *
- * @param mergeFunction - Custom function to merge document states
+ * @param mergeFunction - Custom function to merge document states (can be async)
+ * @param options - Configuration options
+ * @param options.onError - Callback when merge function throws (can be async)
+ * @param options.fallbackStrategy - Strategy to use when merge fails ('server-wins' or 'client-wins')
+ * @param options.enableLogging - Enable logging for debugging (default: true)
+ *
+ * @example Async merge with UI prompt
+ * ```typescript
+ * createCustomMergeHandler(
+ *   async (input) => {
+ *     const userChoice = await showConflictDialog(input);
+ *     return userChoice === 'keep-local'
+ *       ? input.newDocumentState
+ *       : input.realMasterState;
+ *   },
+ *   { enableLogging: true }
+ * )
+ * ```
  */
 export function createCustomMergeHandler<T extends ConvexRxDocument>(
-  mergeFunction: (input: RxConflictHandlerInput<T>) => T
+  mergeFunction: (input: RxConflictHandlerInput<T>) => T | Promise<T>,
+  options?: {
+    onError?: (error: Error, input: RxConflictHandlerInput<T>) => void | Promise<void>;
+    fallbackStrategy?: 'server-wins' | 'client-wins';
+    enableLogging?: boolean;
+  }
 ): RxConflictHandler<T> {
+  const fallback = options?.fallbackStrategy ?? 'server-wins';
+  const logger = getLogger('conflict-handler', options?.enableLogging ?? true);
+
   return {
     isEqual(docA, docB) {
       return docA.updatedTime === docB.updatedTime;
     },
-    resolve(input) {
-      return mergeFunction(input);
+    async resolve(input) {
+      try {
+        logger.debug('Custom merge conflict resolution started', {
+          documentId: input.newDocumentState.id,
+          realMasterTime: input.realMasterState?.updatedTime,
+          newDocumentTime: input.newDocumentState.updatedTime,
+        });
+
+        // Support both sync and async merge functions using Promise.resolve
+        const result = await Promise.resolve(mergeFunction(input));
+
+        logger.debug('Custom merge conflict resolution succeeded', {
+          documentId: result.id,
+        });
+
+        return result;
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+
+        // Log error with context using logger
+        logger.error('Conflict handler error', {
+          error: err.message,
+          stack: err.stack,
+          documentId: input.newDocumentState.id,
+          realMasterTime: input.realMasterState?.updatedTime,
+          newDocumentTime: input.newDocumentState.updatedTime,
+        });
+
+        // Call error callback if provided (support async)
+        if (options?.onError) {
+          try {
+            await Promise.resolve(options.onError(err, input));
+          } catch (callbackError) {
+            logger.error('Error in conflict handler error callback', {
+              callbackError,
+            });
+          }
+        }
+
+        // Fallback strategy with safer null coalescing
+        const fallbackDoc =
+          fallback === 'server-wins'
+            ? input.realMasterState ?? input.newDocumentState
+            : input.newDocumentState;
+
+        logger.warn(`Falling back to ${fallback} strategy`, {
+          documentId: fallbackDoc.id,
+        });
+
+        return fallbackDoc;
+      }
     },
   };
 }

@@ -112,6 +112,8 @@ export async function preloadConvexRxData<TData extends SyncedDocument>(
     })) as { documents: TData[]; checkpoint: any };
 
     // Filter out soft-deleted items
+    // Note: Using 'deleted' field (Convex format), not '_deleted' (RxDB format)
+    // SSR pulls raw data from Convex before RxDB transformation
     const activeDocuments = result.documents.filter((doc: any) => !doc.deleted);
 
     logger.info('Successfully preloaded data via HTTP', { documentCount: activeDocuments.length });

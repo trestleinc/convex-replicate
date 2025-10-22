@@ -4,6 +4,7 @@ import { createRootRouteWithContext, HeadContent, Scripts } from '@tanstack/reac
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools';
 import { ConvexRxProvider } from '@convex-rx/react';
 import { convexClient } from '../router';
+import { ConvexRxErrorBoundary } from '../components/ErrorBoundary';
 
 import appCss from '../styles.css?url';
 
@@ -43,20 +44,22 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <HeadContent />
       </head>
       <body>
-        <ConvexRxProvider convexClient={convexClient} enableLogging={true}>
-          {children}
-          <TanStackDevtools
-            config={{
-              position: 'bottom-right',
-            }}
-            plugins={[
-              {
-                name: 'Tanstack Router',
-                render: <TanStackRouterDevtoolsPanel />,
-              },
-            ]}
-          />
-        </ConvexRxProvider>
+        <ConvexRxErrorBoundary>
+          <ConvexRxProvider convexClient={convexClient} enableLogging={true}>
+            {children}
+            <TanStackDevtools
+              config={{
+                position: 'bottom-right',
+              }}
+              plugins={[
+                {
+                  name: 'Tanstack Router',
+                  render: <TanStackRouterDevtoolsPanel />,
+                },
+              ]}
+            />
+          </ConvexRxProvider>
+        </ConvexRxErrorBoundary>
         <Scripts />
       </body>
     </html>

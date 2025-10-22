@@ -9,6 +9,7 @@ import { RxDBDevModePlugin } from 'rxdb/plugins/dev-mode';
 import { type RxReplicationState, replicateRxCollection } from 'rxdb/plugins/replication';
 import { RxDBUpdatePlugin } from 'rxdb/plugins/update';
 import { Subject } from 'rxjs';
+import { z } from 'zod';
 import { defaultConflictHandler, type RxConflictHandler } from './conflictHandler';
 import { getLogger } from './logger';
 import { getStorage, type StorageConfig } from './storage';
@@ -141,6 +142,49 @@ function validateBatchSize(batchSize: number | undefined, defaultValue: number):
   return batchSize;
 }
 
+/**
+ * Zod schema for validating pulled documents from Convex
+ */
+const pullDocumentSchema = z.object({
+  id: z.string().min(1),
+  updatedTime: z.number().positive(),
+  deleted: z.boolean().optional(),
+});
+
+/**
+ * Zod schema for validating user-provided config
+ */
+const configSchema = z.object({
+  databaseName: z
+    .string()
+    .min(1, 'Database name cannot be empty')
+    .max(100, 'Database name too long')
+    .regex(/^[a-zA-Z0-9_-]+$/, 'Database name must contain only alphanumeric, underscore, or dash'),
+  collectionName: z
+    .string()
+    .min(1, 'Collection name cannot be empty')
+    .max(100, 'Collection name too long')
+    .regex(
+      /^[a-zA-Z0-9_-]+$/,
+      'Collection name must contain only alphanumeric, underscore, or dash'
+    ),
+  schema: z.any(), // RxJsonSchema validation is complex
+  convexClient: z.any(), // ConvexClient validation is complex
+  convexApi: z.object({
+    changeStream: z.any(),
+    pullDocuments: z.any(),
+    pushDocuments: z.any(),
+  }),
+  batchSize: z.number().int().min(1).max(1000).optional(),
+  enableLogging: z.boolean().optional(),
+  conflictHandler: z.any().optional(),
+  storage: z.any().optional(),
+  retryTime: z.number().int().min(100).max(60000).optional(),
+  replicationIdentifier: z.string().optional(),
+  waitForLeadership: z.boolean().optional(),
+  pushBatchSize: z.number().int().min(1).max(1000).optional(),
+});
+
 // ========================================
 // MAIN API: CREATE CONVEX RXDB
 // ========================================
@@ -148,6 +192,16 @@ function validateBatchSize(batchSize: number | undefined, defaultValue: number):
 export async function createConvexRxDB<T extends ConvexRxDocument>(
   config: ConvexRxDBConfig<T>
 ): Promise<ConvexRxDBInstance<T>> {
+  // Validate config
+  try {
+    configSchema.parse(config);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      const issues = error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
+      throw new Error(`Invalid ConvexRxDB configuration:\n${issues.join('\n')}`);
+    }
+    throw error;
+  }
   const {
     databaseName,
     collectionName,
@@ -278,14 +332,36 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
             limit: batchSize,
           });
 
+          // Validate documents before inserting into RxDB
+          const validDocuments = result.documents.filter((doc, index) => {
+            try {
+              pullDocumentSchema.parse(doc);
+              return true;
+            } catch (error) {
+              logger.error('Invalid document from Convex', {
+                doc,
+                index,
+                error: error instanceof Error ? error.message : String(error),
+              });
+              return false;
+            }
+          });
+
+          if (validDocuments.length < result.documents.length) {
+            logger.warn('Filtered out invalid documents', {
+              total: result.documents.length,
+              valid: validDocuments.length,
+              invalid: result.documents.length - validDocuments.length,
+            });
+          }
+
           logger.info('Pulled documents', {
-            documentCount: result.documents.length,
+            documentCount: validDocuments.length,
             checkpoint: result.checkpoint,
           });
-          logger.info('Raw documents from Convex', { documents: result.documents });
 
           return {
-            documents: result.documents,
+            documents: validDocuments,
             checkpoint: result.checkpoint,
           };
         } catch (error) {
@@ -309,7 +385,10 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
       stream$: pullStream$.asObservable(),
       // Transform Convex's 'deleted' field to RxDB's '_deleted' field
       modifier: (doc: any) => {
-        if (!doc) return doc;
+        if (!doc) {
+          logger.warn('Received null/undefined document in pull modifier');
+          return undefined; // Return undefined to skip document
+        }
         const { deleted, ...rest } = doc;
         const transformed = {
           ...rest,
@@ -368,11 +447,26 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
       batchSize: validateBatchSize(config.pushBatchSize, 100),
       // Transform RxDB's '_deleted' field to Convex's 'deleted' field before sending
       modifier: (doc: any) => {
-        if (!doc) return doc;
+        if (!doc) {
+          logger.warn('Received null/undefined document in push modifier');
+          return undefined;
+        }
         const { _deleted, ...rest } = doc;
+
+        // Validate and normalize _deleted to boolean
+        const deleted = typeof _deleted === 'boolean' ? _deleted : false;
+
+        if (typeof _deleted !== 'boolean' && _deleted !== undefined) {
+          logger.warn('Invalid _deleted field type', {
+            id: doc.id,
+            _deleted,
+            type: typeof _deleted,
+          });
+        }
+
         return {
           ...rest,
-          deleted: _deleted || false,
+          deleted,
         };
       },
     },

@@ -11,6 +11,7 @@
  */
 
 import type { BaseActions, MiddlewareConfig, SyncedDocument } from './types';
+import { getLogger } from './logger';
 
 /**
  * Wraps base actions with middleware hooks.
@@ -18,6 +19,7 @@ import type { BaseActions, MiddlewareConfig, SyncedDocument } from './types';
  *
  * @param baseActions - Unwrapped base CRUD actions
  * @param middleware - Middleware configuration with hooks
+ * @param enableLogging - Enable logging for debugging (default: false)
  * @returns Wrapped actions that execute middleware
  *
  * @example
@@ -29,26 +31,39 @@ import type { BaseActions, MiddlewareConfig, SyncedDocument } from './types';
  *     return { ...doc, text: doc.text.trim() };
  *   },
  *   afterInsert: async (doc) => {
- *     console.log('Document inserted:', doc.id);
+ *     logger.info('Document inserted:', doc.id);
  *   }
- * });
+ * }, true);
  * ```
  */
 export function wrapActionsWithMiddleware<TData extends SyncedDocument>(
   baseActions: BaseActions<TData>,
-  middleware?: MiddlewareConfig<TData>
+  middleware?: MiddlewareConfig<TData>,
+  enableLogging = false
 ): BaseActions<TData> {
   // If no middleware, return base actions as-is
   if (!middleware) {
     return baseActions;
   }
 
+  const logger = getLogger('middleware', enableLogging);
+
   return {
     insert: async (doc: Omit<TData, keyof SyncedDocument>): Promise<string> => {
       // Before insert hook
       let processedDoc = doc;
       if (middleware.beforeInsert) {
-        processedDoc = await middleware.beforeInsert(doc);
+        try {
+          processedDoc = await middleware.beforeInsert(doc);
+        } catch (error) {
+          logger.error('Error in beforeInsert middleware', {
+            error: error instanceof Error ? error.message : String(error),
+            doc,
+          });
+          throw new Error(
+            `beforeInsert middleware failed: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
       }
 
       // Execute base insert
@@ -56,13 +71,21 @@ export function wrapActionsWithMiddleware<TData extends SyncedDocument>(
 
       // After insert hook
       if (middleware.afterInsert) {
-        // Fetch the full document that was inserted
-        const fullDoc: TData = {
-          ...processedDoc,
-          id,
-          updatedTime: Date.now(),
-        } as unknown as TData;
-        await middleware.afterInsert(fullDoc);
+        try {
+          // Fetch the full document that was inserted
+          const fullDoc: TData = {
+            ...processedDoc,
+            id,
+            updatedTime: Date.now(),
+          } as unknown as TData;
+          await middleware.afterInsert(fullDoc);
+        } catch (error) {
+          logger.error('Error in afterInsert middleware', {
+            error: error instanceof Error ? error.message : String(error),
+            id,
+          });
+          // Don't throw - insert already succeeded
+        }
       }
 
       return id;
@@ -75,7 +98,18 @@ export function wrapActionsWithMiddleware<TData extends SyncedDocument>(
       // Before update hook
       let processedUpdates = updates;
       if (middleware.beforeUpdate) {
-        processedUpdates = await middleware.beforeUpdate(id, updates);
+        try {
+          processedUpdates = await middleware.beforeUpdate(id, updates);
+        } catch (error) {
+          logger.error('Error in beforeUpdate middleware', {
+            error: error instanceof Error ? error.message : String(error),
+            id,
+            updates,
+          });
+          throw new Error(
+            `beforeUpdate middleware failed: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
       }
 
       // Execute base update
@@ -83,20 +117,39 @@ export function wrapActionsWithMiddleware<TData extends SyncedDocument>(
 
       // After update hook
       if (middleware.afterUpdate) {
-        // Note: We don't have the full document here, just the ID
-        // If middleware needs the full doc, it should query it
-        const doc: TData = { id, ...processedUpdates } as unknown as TData;
-        await middleware.afterUpdate(id, doc);
+        try {
+          // Note: We don't have the full document here, just the ID
+          // If middleware needs the full doc, it should query it
+          const doc: TData = { id, ...processedUpdates } as unknown as TData;
+          await middleware.afterUpdate(id, doc);
+        } catch (error) {
+          logger.error('Error in afterUpdate middleware', {
+            error: error instanceof Error ? error.message : String(error),
+            id,
+          });
+          // Don't throw - update already succeeded
+        }
       }
     },
 
     delete: async (id: string): Promise<void> => {
       // Before delete hook - can cancel deletion
       if (middleware.beforeDelete) {
-        const shouldDelete = await middleware.beforeDelete(id);
-        if (!shouldDelete) {
-          // Deletion cancelled by middleware
-          return;
+        try {
+          const shouldDelete = await middleware.beforeDelete(id);
+          if (!shouldDelete) {
+            // Deletion cancelled by middleware
+            logger.info('Delete canceled by beforeDelete middleware', { id });
+            return;
+          }
+        } catch (error) {
+          logger.error('Error in beforeDelete middleware', {
+            error: error instanceof Error ? error.message : String(error),
+            id,
+          });
+          throw new Error(
+            `beforeDelete middleware failed: ${error instanceof Error ? error.message : String(error)}`
+          );
         }
       }
 
@@ -105,7 +158,15 @@ export function wrapActionsWithMiddleware<TData extends SyncedDocument>(
 
       // After delete hook
       if (middleware.afterDelete) {
-        await middleware.afterDelete(id);
+        try {
+          await middleware.afterDelete(id);
+        } catch (error) {
+          logger.error('Error in afterDelete middleware', {
+            error: error instanceof Error ? error.message : String(error),
+            id,
+          });
+          // Don't throw - delete already succeeded
+        }
       }
     },
   };

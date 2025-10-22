@@ -108,9 +108,34 @@ function TasksContent() {
 
   if (error) {
     return (
-      <div className="p-6 max-w-md mx-auto">
-        <div className="bg-rose-pine-surface border border-rose-pine-rose text-rose-pine-text px-4 py-3 rounded">
-          Error loading tasks: {String(error)}
+      <div className="p-6 max-w-2xl mx-auto">
+        <div className="bg-rose-pine-surface border-2 border-rose-pine-rose text-rose-pine-text px-6 py-4 rounded-lg shadow-md">
+          <h2 className="text-lg font-semibold text-rose-pine-rose mb-2">Sync Error</h2>
+          <p className="text-rose-pine-muted mb-4">
+            Failed to sync tasks with the server. Your local changes are safe.
+          </p>
+          <details className="mb-4">
+            <summary className="cursor-pointer text-rose-pine-text hover:text-rose-pine-rose">
+              Error details
+            </summary>
+            <pre className="mt-2 p-3 bg-rose-pine-base rounded text-sm overflow-auto">
+              {String(error)}
+            </pre>
+          </details>
+          <div className="flex gap-2">
+            <button
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 bg-rose-pine-rose text-rose-pine-base rounded hover:bg-rose-pine-rose/80 transition-colors"
+            >
+              Retry
+            </button>
+            <button
+              onClick={handlePurgeStorage}
+              className="px-4 py-2 border border-rose-pine-rose text-rose-pine-text rounded hover:bg-rose-pine-rose hover:text-rose-pine-base transition-colors"
+            >
+              Clear Local Data & Retry
+            </button>
+          </div>
         </div>
       </div>
     );

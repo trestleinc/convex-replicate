@@ -40,14 +40,16 @@ export function getLogger(component: string, enabled = true): Logger {
 
   if (!enabled) {
     // Return a no-op logger that implements the full Logger interface
+    // IMPORTANT: Always log errors and fatals even when logging disabled
     const noop = () => {};
     return {
       ...logger,
       debug: noop,
       info: noop,
       warn: noop,
-      error: noop,
-      fatal: noop,
+      // Keep error and fatal logging even when disabled
+      error: logger.error,
+      fatal: logger.fatal,
     };
   }
 

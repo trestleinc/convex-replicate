@@ -48,6 +48,12 @@ export interface ConvexWatch {
  * Utility to format errors consistently
  */
 export function formatError(error: unknown): string {
+  if (error === null) {
+    return 'Error: null (no error information available)';
+  }
+  if (error === undefined) {
+    return 'Error: undefined (no error information available)';
+  }
   if (error instanceof Error) {
     return error.message;
   }
