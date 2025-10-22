@@ -11,6 +11,7 @@
     "examples/tanstack-start": {
       "name": "tanstack-start",
       "dependencies": {
+        "@convex-rx/core": "workspace:*",
         "@convex-rx/react": "workspace:*",
         "@radix-ui/react-switch": "1.2.6",
         "@radix-ui/react-toggle": "1.1.10",

@@ -26,6 +26,8 @@ import type { RxReplicationState } from 'rxdb/plugins/replication';
 export interface SyncedDocument extends ConvexRxDocument {
 	/** Soft delete flag - when true, document is hidden from queries */
 	_deleted?: boolean;
+	/** Index signature for compatibility with Record<string, unknown> */
+	[key: string]: unknown;
 }
 
 // ========================================

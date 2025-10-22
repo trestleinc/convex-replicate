@@ -41,7 +41,7 @@ export function wrapActionsWithMiddleware<TData extends SyncedDocument>(
 			// After insert hook
 			if (middleware.afterInsert) {
 				// Fetch the full document that was inserted
-				const fullDoc = { ...processedDoc, id, updatedTime: Date.now() } as TData;
+				const fullDoc: TData = { ...processedDoc, id, updatedTime: Date.now() } as unknown as TData;
 				await middleware.afterInsert(fullDoc);
 			}
 
@@ -65,7 +65,7 @@ export function wrapActionsWithMiddleware<TData extends SyncedDocument>(
 			if (middleware.afterUpdate) {
 				// Note: We don't have the full document here, just the ID
 				// If middleware needs the full doc, it should query it
-				const doc = { id, ...processedUpdates } as TData;
+				const doc: TData = { id, ...processedUpdates } as unknown as TData;
 				await middleware.afterUpdate(id, doc);
 			}
 		},

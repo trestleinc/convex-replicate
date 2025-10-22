@@ -238,11 +238,11 @@ export function useConvexRx<
 		return {
 			insert: async (doc: Omit<TData, keyof SyncedDocument>): Promise<string> => {
 				const id = crypto.randomUUID();
-				const fullDoc = {
+				const fullDoc: TData = {
 					...doc,
 					id,
 					updatedTime: Date.now(),
-				} as TData;
+				} as unknown as TData;
 
 				await collection.insert(fullDoc);
 				return id;
