@@ -1,4 +1,4 @@
-import { createSchema, property, useConvexRx, StorageType } from '@convex-rx/react';
+import { createSchema, property, useConvexRx } from '@convex-rx/react';
 import { api } from '../convex/_generated/api';
 import { convexClient } from './router';
 
@@ -7,6 +7,7 @@ import { convexClient } from './router';
 // ========================================
 
 // Define your data type - that's it!
+// Note: createSchema automatically adds id, updatedTime, _deleted fields
 export type Task = {
 	text: string;
 	isCompleted: boolean;
@@ -27,9 +28,10 @@ const taskSchema = createSchema<Task>('tasks', {
  * Hook to access tasks with full offline-first sync.
  * Uses the new unified useConvexRx hook.
  *
+ * @param initialData - Optional SSR data for instant hydration
  * Returns: { data, isLoading, error, insert, update, delete, actions, queries, subscribe, purgeStorage }
  */
-export function useTasks() {
+export function useTasks(initialData?: Task[]) {
 	return useConvexRx({
 		table: 'tasks',
 		schema: taskSchema,
@@ -40,7 +42,9 @@ export function useTasks() {
 			pushDocuments: api.tasks.pushDocuments,
 		},
 		enableLogging: true,
-		storage: { type: StorageType.DEXIE }, // Use Dexie.js (IndexedDB) for 5-10x better performance
+		initialData,
+		// Storage defaults to Dexie.js (IndexedDB) for 5-10x better performance
+		// No configuration needed!
 
 		// Optional: Add custom actions
 		actions: (base, ctx) => ({

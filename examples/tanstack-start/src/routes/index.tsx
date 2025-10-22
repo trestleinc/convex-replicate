@@ -1,9 +1,21 @@
 import { ClientOnly, createFileRoute } from '@tanstack/react-router';
 import { DatabaseZap, Delete, Diamond, DiamondPlus } from 'lucide-react';
 import { useState } from 'react';
-import { useTasks } from '../useTasks';
+import { preloadConvexRxData } from '@convex-rx/react';
+import { useTasks, type Task } from '../useTasks';
+import { api } from '../../convex/_generated/api';
 
 export const Route = createFileRoute('/')({
+  loader: async () => {
+    // SSR: Fetch data via HTTP on the server
+    const tasks = await preloadConvexRxData<Task>({
+      convexUrl: import.meta.env.VITE_CONVEX_URL,
+      convexApi: {
+        pullDocuments: api.tasks.pullDocuments,
+      },
+    });
+    return { tasks };
+  },
   component: HomeComponent,
 });
 
@@ -31,7 +43,11 @@ function TasksContent() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
 
-  const { data, isLoading, error, insert, update, delete: deleteFn, purgeStorage } = useTasks();
+  // Get SSR data from loader
+  const { tasks: initialTasks } = Route.useLoaderData();
+
+  // Pass SSR data to hook for instant hydration
+  const { data, isLoading, error, insert, update, delete: deleteFn, purgeStorage } = useTasks(initialTasks);
 
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();

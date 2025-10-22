@@ -36,15 +36,16 @@
  * ```
  */
 
-import type { SyncedDocument, ConvexClient } from '@convex-rx/core';
+import { ConvexHttpClient } from 'convex/browser';
+import type { SyncedDocument } from '@convex-rx/core';
 import { getLogger } from '@convex-rx/core';
 
 /**
  * Configuration for SSR data preloading.
  */
 export interface PreloadConvexRxDataConfig {
-	/** Convex client instance */
-	convexClient: ConvexClient;
+	/** Convex deployment URL (e.g., process.env.CONVEX_URL) */
+	convexUrl: string;
 	/** Convex API endpoints (only pullDocuments needed for preload) */
 	convexApi: {
 		pullDocuments: any;
@@ -94,26 +95,26 @@ export interface PreloadConvexRxDataConfig {
 export async function preloadConvexRxData<TData extends SyncedDocument>(
 	config: PreloadConvexRxDataConfig,
 ): Promise<TData[]> {
-	const { convexClient, convexApi, batchSize = 300 } = config;
+	const { convexUrl, convexApi, batchSize = 300 } = config;
 
 	const logger = getLogger('ssr-preload', true);
 
 	try {
-		logger.info('Preloading Convex data for SSR', { batchSize });
+		logger.info('Preloading Convex data for SSR via HTTP', { convexUrl, batchSize });
+
+		// Create HTTP client for server-side fetching
+		const httpClient = new ConvexHttpClient(convexUrl);
 
 		// Pull all documents from beginning (checkpoint 0)
-		const result = await convexClient.query<{
-			documents: TData[];
-			checkpoint: any;
-		}>(convexApi.pullDocuments, {
+		const result = (await httpClient.query(convexApi.pullDocuments, {
 			checkpoint: { id: '', updatedTime: 0 },
 			limit: batchSize,
-		});
+		})) as { documents: TData[]; checkpoint: any };
 
 		// Filter out soft-deleted items
 		const activeDocuments = result.documents.filter((doc: any) => !doc.deleted);
 
-		logger.info('Successfully preloaded data', { documentCount: activeDocuments.length });
+		logger.info('Successfully preloaded data via HTTP', { documentCount: activeDocuments.length });
 
 		return activeDocuments;
 	} catch (error) {
