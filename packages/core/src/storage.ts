@@ -1,4 +1,5 @@
 import { getRxStorageDexie } from 'rxdb/plugins/storage-dexie';
+import { wrappedKeyCompressionStorage } from 'rxdb/plugins/key-compression';
 import { getRxStorageLocalstorage } from 'rxdb/plugins/storage-localstorage';
 import { getRxStorageMemory } from 'rxdb/plugins/storage-memory';
 import { wrappedValidateAjvStorage } from 'rxdb/plugins/validate-ajv';
@@ -57,13 +58,16 @@ export interface StorageConfig {
 
 /**
  * Get RxDB storage instance based on configuration.
- * Wraps with validation layer for schema enforcement.
+ * Wraps with key compression and validation layers for optimal performance and schema enforcement.
+ *
+ * Wrapper order: base storage → key compression → validation
+ * This order is required when using keyCompression: true in schemas.
  *
  * @param config - Storage configuration
  * @returns Configured RxStorage instance
  *
  * @example
- * // Use default (Dexie.js)
+ * // Use default (Dexie.js with key compression and validation)
  * const storage = getStorage();
  *
  * @example
@@ -78,36 +82,39 @@ export interface StorageConfig {
  * });
  */
 export function getStorage(config: StorageConfig = {}): RxStorage<any, any> {
-	// Custom storage takes priority
-	if (config.customStorage) {
-		return wrappedValidateAjvStorage({
-			storage: config.customStorage,
-		});
-	}
-
-	// Get base storage by type
-	const type = config.type || StorageType.DEXIE; // Default to Dexie.js
-
-	// Validate storage type with Zod
-	const validatedType = storageTypeSchema.parse(type);
-
+	// Get base storage
 	let baseStorage: RxStorage<any, any>;
 
-	switch (validatedType) {
-		case StorageType.DEXIE:
-			baseStorage = getRxStorageDexie();
-			break;
-		case StorageType.LOCALSTORAGE:
-			baseStorage = getRxStorageLocalstorage();
-			break;
-		case StorageType.MEMORY:
-			baseStorage = getRxStorageMemory();
-			break;
+	if (config.customStorage) {
+		baseStorage = config.customStorage;
+	} else {
+		// Get base storage by type
+		const type = config.type || StorageType.DEXIE; // Default to Dexie.js
+
+		// Validate storage type with Zod
+		const validatedType = storageTypeSchema.parse(type);
+
+		switch (validatedType) {
+			case StorageType.DEXIE:
+				baseStorage = getRxStorageDexie();
+				break;
+			case StorageType.LOCALSTORAGE:
+				baseStorage = getRxStorageLocalstorage();
+				break;
+			case StorageType.MEMORY:
+				baseStorage = getRxStorageMemory();
+				break;
+		}
 	}
 
-	// Wrap with validation
-	return wrappedValidateAjvStorage({
+	// Wrap with key compression (required for keyCompression: true in schemas)
+	const storageWithKeyCompression = wrappedKeyCompressionStorage({
 		storage: baseStorage,
+	});
+
+	// Wrap with validation (final layer)
+	return wrappedValidateAjvStorage({
+		storage: storageWithKeyCompression,
 	});
 }
 

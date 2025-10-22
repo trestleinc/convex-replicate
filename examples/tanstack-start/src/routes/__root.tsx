@@ -2,6 +2,8 @@ import { TanStackDevtools } from '@tanstack/react-devtools';
 import type { QueryClient } from '@tanstack/react-query';
 import { createRootRouteWithContext, HeadContent, Scripts } from '@tanstack/react-router';
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools';
+import { ConvexRxProvider } from '@convex-rx/react';
+import { convexClient } from '../router';
 
 import appCss from '../styles.css?url';
 
@@ -41,18 +43,20 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <HeadContent />
       </head>
       <body>
-        {children}
-        <TanStackDevtools
-          config={{
-            position: 'bottom-right',
-          }}
-          plugins={[
-            {
-              name: 'Tanstack Router',
-              render: <TanStackRouterDevtoolsPanel />,
-            },
-          ]}
-        />
+        <ConvexRxProvider convexClient={convexClient} enableLogging={true}>
+          {children}
+          <TanStackDevtools
+            config={{
+              position: 'bottom-right',
+            }}
+            plugins={[
+              {
+                name: 'Tanstack Router',
+                render: <TanStackRouterDevtoolsPanel />,
+              },
+            ]}
+          />
+        </ConvexRxProvider>
         <Scripts />
       </body>
     </html>

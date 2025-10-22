@@ -3,19 +3,34 @@
  *
  * Main exports:
  * - useConvexRx - Primary hook for syncing data (simple by default, infinitely extensible)
- * - ConvexRxProvider - Optional provider for shared configuration
+ * - ConvexRxProvider - REQUIRED provider for Convex client configuration
  * - Schema builders and utilities from core package
  * - Conflict resolution handlers
+ *
+ * IMPORTANT: ConvexRxProvider is REQUIRED. Wrap your app root with it:
+ *
+ * ```tsx
+ * import { ConvexRxProvider } from '@convex-rx/react';
+ * import { convexClient } from './convex';
+ *
+ * function App() {
+ *   return (
+ *     <ConvexRxProvider convexClient={convexClient}>
+ *       <YourApp />
+ *     </ConvexRxProvider>
+ *   );
+ * }
+ * ```
  */
 
 // ========================================
 // PRIMARY EXPORTS
 // ========================================
 
-/** Main hook for offline-first sync with Convex */
+/** Main hook for offline-first sync with Convex. Requires ConvexRxProvider. */
 export { useConvexRx } from './useConvexRx';
 
-/** Optional provider for shared configuration across hooks */
+/** REQUIRED provider for Convex client configuration. Must wrap your app root. */
 export { ConvexRxProvider } from './ConvexRxProvider';
 
 /** SSR utilities for preloading data on the server */

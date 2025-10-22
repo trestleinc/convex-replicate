@@ -6,9 +6,15 @@ import { ConvexReactClient } from 'convex/react';
 // Import the generated route tree
 import { routeTree } from './routeTree.gen';
 
-// Export the queryClient and convexClient so other modules can use them
+// Initialize Convex client at module level for RxDB replication (WebSocket-based)
+const convexUrl = import.meta.env.VITE_CONVEX_URL;
+if (!convexUrl) {
+  throw new Error('VITE_CONVEX_URL environment variable is required');
+}
+export const convexClient = new ConvexReactClient(convexUrl);
+
+// Export queryClient so other modules can use it
 export let queryClient: QueryClient;
-export let convexClient: ConvexReactClient;
 
 // Create a new router instance
 export const getRouter = () => {
@@ -21,13 +27,6 @@ export const getRouter = () => {
       },
     },
   });
-
-  // Create Convex client for RxDB replication (WebSocket-based)
-  const convexUrl = import.meta.env.VITE_CONVEX_URL;
-  if (!convexUrl) {
-    throw new Error('VITE_CONVEX_URL environment variable is required');
-  }
-  convexClient = new ConvexReactClient(convexUrl);
 
   const router = createRouter({
     routeTree,

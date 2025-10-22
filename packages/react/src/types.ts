@@ -106,7 +106,9 @@ export type SubscriptionBuilder<
 
 /**
  * Configuration for useConvexRx hook.
- * Uses progressive disclosure - only table, schema, and convexApi are required.
+ *
+ * IMPORTANT: ConvexRxProvider is REQUIRED. You must wrap your app with it.
+ * The convexClient is provided automatically via ConvexRxProvider.
  */
 export interface UseConvexRxConfig<
 	TData extends SyncedDocument,
@@ -129,10 +131,7 @@ export interface UseConvexRxConfig<
 		pushDocuments: any;
 	};
 
-	// ========== Optional - Client Config ==========
-
-	/** Convex client (required if not using ConvexRxProvider) */
-	convexClient?: ConvexClient;
+	// ========== Optional - Config Overrides ==========
 
 	/** Database name (defaults to table name) */
 	databaseName?: string;

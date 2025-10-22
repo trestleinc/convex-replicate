@@ -1,6 +1,5 @@
 import { createSchema, property, useConvexRx } from '@convex-rx/react';
 import { api } from '../convex/_generated/api';
-import { convexClient } from './router';
 
 // ========================================
 // TASK TYPE AND SCHEMA
@@ -35,16 +34,15 @@ export function useTasks(initialData?: Task[]) {
 	return useConvexRx({
 		table: 'tasks',
 		schema: taskSchema,
-		convexClient,
 		convexApi: {
 			changeStream: api.tasks.changeStream,
 			pullDocuments: api.tasks.pullDocuments,
 			pushDocuments: api.tasks.pushDocuments,
 		},
-		enableLogging: true,
 		initialData,
 		// Storage defaults to Dexie.js (IndexedDB) for 5-10x better performance
 		// No configuration needed!
+		// Note: convexClient and enableLogging are provided by ConvexRxProvider
 
 		// Optional: Add custom actions
 		actions: (base, ctx) => ({

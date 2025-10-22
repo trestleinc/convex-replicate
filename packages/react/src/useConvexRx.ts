@@ -53,11 +53,13 @@ import {
 } from '@convex-rx/core';
 import React from 'react';
 import { createConvexRx } from './createConvexRx';
-import { useConvexRxContextOptional } from './ConvexRxProvider';
+import { useConvexRxContext } from './ConvexRxProvider';
 import type { HookContext, UseConvexRxConfig, UseConvexRxResult } from './types';
 
 /**
  * Main ConvexRx hook for offline-first sync with Convex.
+ *
+ * IMPORTANT: Requires ConvexRxProvider to be set up at app root.
  *
  * Features:
  * - Automatic singleton management (no race conditions)
@@ -69,6 +71,7 @@ import type { HookContext, UseConvexRxConfig, UseConvexRxResult } from './types'
  *
  * @param config - Hook configuration
  * @returns Result with data, loading state, actions, and extensions
+ * @throws Error if ConvexRxProvider is not found in component tree
  */
 export function useConvexRx<
 	TData extends SyncedDocument,
@@ -79,35 +82,27 @@ export function useConvexRx<
 	config: UseConvexRxConfig<TData, TActions, TQueries, TSubscriptions>,
 ): UseConvexRxResult<TData, TActions, TQueries, TSubscriptions> {
 	// ========================================
-	// 1. MERGE CONFIG WITH PROVIDER
+	// 1. GET CONFIG FROM REQUIRED PROVIDER
 	// ========================================
 
-	const contextConfig = useConvexRxContextOptional();
+	const contextConfig = useConvexRxContext();
 
-	// Merge context config with hook config (hook takes precedence)
+	// Merge context config with hook config (hook can override context defaults)
 	const mergedConfig = React.useMemo(() => {
-		const convexClient = config.convexClient || contextConfig?.convexClient;
-		if (!convexClient) {
-			throw new Error(
-				'convexClient is required. Either pass it to useConvexRx or wrap your app with ConvexRxProvider.',
-			);
-		}
-
 		return {
-			databaseName: config.databaseName || contextConfig?.databaseName || config.table,
+			databaseName: config.databaseName || contextConfig.databaseName || config.table,
 			collectionName: config.table,
 			schema: config.schema,
-			convexClient,
+			convexClient: contextConfig.convexClient,
 			convexApi: config.convexApi,
-			batchSize: config.batchSize ?? contextConfig?.batchSize,
-			enableLogging: config.enableLogging ?? contextConfig?.enableLogging,
-			conflictHandler: config.conflictHandler || contextConfig?.conflictHandler,
+			batchSize: config.batchSize ?? contextConfig.batchSize,
+			enableLogging: config.enableLogging ?? contextConfig.enableLogging,
+			conflictHandler: config.conflictHandler || contextConfig.conflictHandler,
 		} satisfies ConvexRxDBConfig<TData>;
 	}, [
 		config.table,
 		config.schema,
 		config.convexApi,
-		config.convexClient,
 		config.databaseName,
 		config.batchSize,
 		config.enableLogging,

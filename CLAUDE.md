@@ -2,6 +2,19 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Important: Always Use Context7 for Library Documentation
+
+**CRITICAL**: When looking up documentation for any library (RxDB, React, Convex, TanStack, etc.), ALWAYS use the context7 MCP tool (`mcp__context7__resolve-library-id` and `mcp__context7__get-library-docs`). NEVER use WebSearch for library documentation.
+
+Why:
+- Context7 provides accurate, up-to-date documentation with code examples
+- WebSearch results can be outdated or incomplete
+- Context7 has better code snippet coverage for technical libraries
+
+Usage pattern:
+1. First resolve the library ID: `mcp__context7__resolve-library-id` with library name
+2. Then fetch docs: `mcp__context7__get-library-docs` with the resolved ID and topic
+
 ## Project Overview
 
 This is a **monorepo** containing reusable packages for offline-first sync architecture using:
@@ -94,44 +107,65 @@ Framework-agnostic utilities that can be reused across any JavaScript framework:
 #### React Package (`@convex-rx/react`)
 Thin wrapper consuming core utilities + TanStack DB integration:
 - `useConvexRx()` - React hook with automatic singleton management
-- `ConvexRxProvider` - Optional provider for shared configuration
+- `ConvexRxProvider` - **REQUIRED** provider for global Convex client configuration
 - Uses `createConvexRx()` internally (wraps core with TanStack DB)
 - Returns: `{ data, isLoading, error, insert, update, delete, actions, queries, subscribe }`
 
-#### Usage Pattern (see `examples/tanstack-start/src/useTasks.ts`)
+#### Usage Pattern (see `examples/tanstack-start/src/useTasks.ts` and `src/routes/__root.tsx`)
+
+**IMPORTANT**: `ConvexRxProvider` is REQUIRED. You must wrap your app with it at the root level.
 
 ```typescript
-import { useConvexRx, type SyncedDocument } from '@convex-rx/react';
-import type { RxJsonSchema } from '@convex-rx/core';
+// STEP 1: Setup provider at app root (__root.tsx or main entry point)
+import { ConvexRxProvider } from '@convex-rx/react';
+import { convexClient } from './router'; // Your ConvexReactClient instance
+
+function RootDocument({ children }: { children: React.ReactNode }) {
+  return (
+    <ConvexRxProvider convexClient={convexClient} enableLogging={true}>
+      {children}
+    </ConvexRxProvider>
+  );
+}
+
+// STEP 2: Define your data type and schema
+import { useConvexRx, createSchema, property } from '@convex-rx/react';
 import { api } from '../convex/_generated/api';
 
-// 1. Define your data type (must extend SyncedDocument)
 type Task = {
   text: string;
   isCompleted: boolean;
-} & SyncedDocument; // Adds id, updatedTime, _deleted
+};
 
-// 2. Define RxDB schema
-const schema: RxJsonSchema<Task> = { /* ... */ };
+const taskSchema = createSchema<Task>('tasks', {
+  text: property.string(),
+  isCompleted: property.boolean(),
+});
 
-// 3. Create React hook - singleton management is automatic
+// STEP 3: Create hook - gets convexClient from provider automatically
 export function useTasks() {
   return useConvexRx({
     table: 'tasks',
-    schema,
+    schema: taskSchema,
     convexApi: {
       changeStream: api.tasks.changeStream,
       pullDocuments: api.tasks.pullDocuments,
       pushDocuments: api.tasks.pushDocuments
     }
+    // No convexClient prop needed - provided by ConvexRxProvider!
   });
 }
 
-// 4. Use in components
+// STEP 4: Use in components
 const { data, isLoading, insert, update, delete: remove } = useTasks();
 ```
 
-**Why singleton pattern?**: The hook automatically manages singleton instances internally using core utilities, preventing multiple database connections during React re-renders or hot module replacement in development.
+**Why provider is required**:
+- Prevents module-level import timing issues with convexClient
+- Follows React best practices (like React Query's QueryClientProvider)
+- Singleton management is automatic, preventing multiple database connections
+- Simplifies hook API - no need to pass convexClient to every hook
+- Enables global configuration (logging, conflict handlers, etc.)
 
 ### Required Convex Functions (per synced table)
 
