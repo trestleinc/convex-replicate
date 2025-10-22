@@ -80,56 +80,58 @@ React Components ↔ TanStack DB ↔ RxDB ↔ Convex (via WebSocket streams)
 
 ### Sync Engine Pattern
 
-The packages use a **factory + hook pattern**:
+The packages use a **core + framework wrapper pattern**:
 
 #### Core Package (`@convex-rx/core`)
-- `createConvexRxSync()` - Creates framework-agnostic sync instances
-- Returns: `{ database, rxCollection, replicationState }`
+Framework-agnostic utilities that can be reused across any JavaScript framework:
+- `createConvexRxDB()` - Creates RxDB database with Convex replication
+- `getSingletonInstance()` / `createSingletonKey()` - Prevents race conditions during init
+- `createBaseActions()` - CRUD action factory with adapter pattern
+- `wrapActionsWithMiddleware()` - Before/after hooks for operations
+- `buildSubscriptions()` - Subscription builder utilities
+- Returns: `{ rxDatabase, rxCollection, replicationState, cleanup }`
 
 #### React Package (`@convex-rx/react`)
-- `createReactConvexRx()` - Wraps core with TanStack DB collection
-- `useConvexRx()` - React hook providing reactive data + CRUD actions
-- Returns: `{ data, isLoading, error, collection, actions }`
+Thin wrapper consuming core utilities + TanStack DB integration:
+- `useConvexRx()` - React hook with automatic singleton management
+- `ConvexRxProvider` - Optional provider for shared configuration
+- Uses `createConvexRx()` internally (wraps core with TanStack DB)
+- Returns: `{ data, isLoading, error, insert, update, delete, actions, queries, subscribe }`
 
 #### Usage Pattern (see `examples/tanstack-start/src/useTasks.ts`)
 
 ```typescript
-import { createReactConvexRx, useConvexRx, type RxJsonSchema } from '@convex-rx/react';
+import { useConvexRx, type SyncedDocument } from '@convex-rx/react';
+import type { RxJsonSchema } from '@convex-rx/core';
 import { api } from '../convex/_generated/api';
 
-// 1. Define schema
-const schema: RxJsonSchema<YourType> = { /* ... */ };
+// 1. Define your data type (must extend SyncedDocument)
+type Task = {
+  text: string;
+  isCompleted: boolean;
+} & SyncedDocument; // Adds id, updatedTime, _deleted
 
-// 2. Create singleton sync instance
-let syncInstance: Promise<any> | null = null;
-async function getSyncInstance() {
-  if (!syncInstance) {
-    syncInstance = createReactConvexRx({
-      tableName: 'yourTable',
-      schema,
-      convexApi: {
-        changeStream: api.yourTable.changeStream,
-        pullDocuments: api.yourTable.pullDocuments,
-        pushDocuments: api.yourTable.pushDocuments
-      }
-    });
-  }
-  return syncInstance;
+// 2. Define RxDB schema
+const schema: RxJsonSchema<Task> = { /* ... */ };
+
+// 3. Create React hook - singleton management is automatic
+export function useTasks() {
+  return useConvexRx({
+    table: 'tasks',
+    schema,
+    convexApi: {
+      changeStream: api.tasks.changeStream,
+      pullDocuments: api.tasks.pullDocuments,
+      pushDocuments: api.tasks.pushDocuments
+    }
+  });
 }
 
-// 3. Create React hook using generic useConvexRx
-export function useYourTable() {
-  const [syncInstance, setSyncInstance] = React.useState(null);
-
-  React.useEffect(() => {
-    getSyncInstance().then(setSyncInstance);
-  }, []);
-
-  return useConvexRx<YourType>(syncInstance);
-}
+// 4. Use in components
+const { data, isLoading, insert, update, delete: remove } = useTasks();
 ```
 
-**Why singleton pattern?**: Prevents creating multiple database connections and replication states during React re-renders or hot module replacement in development.
+**Why singleton pattern?**: The hook automatically manages singleton instances internally using core utilities, preventing multiple database connections during React re-renders or hot module replacement in development.
 
 ### Required Convex Functions (per synced table)
 
@@ -180,10 +182,13 @@ Conflicts occur when:
 
 **1. Last-Write-Wins (Default)**
 ```typescript
-import { createLastWriteWinsHandler } from '@convex-rx/react';
+import { useConvexRx } from '@convex-rx/react';
+import { createLastWriteWinsHandler } from '@convex-rx/core';
 
-createReactConvexRx({
-  // ...
+useConvexRx({
+  table: 'yourTable',
+  schema: yourSchema,
+  convexApi: api.yourTable,
   conflictHandler: createLastWriteWinsHandler<YourType>(),
 });
 ```
@@ -193,10 +198,13 @@ createReactConvexRx({
 
 **2. Server-Wins**
 ```typescript
-import { createServerWinsHandler } from '@convex-rx/react';
+import { useConvexRx } from '@convex-rx/react';
+import { createServerWinsHandler } from '@convex-rx/core';
 
-createReactConvexRx({
-  // ...
+useConvexRx({
+  table: 'yourTable',
+  schema: yourSchema,
+  convexApi: api.yourTable,
   conflictHandler: createServerWinsHandler<YourType>(),
 });
 ```
@@ -206,10 +214,13 @@ createReactConvexRx({
 
 **3. Client-Wins**
 ```typescript
-import { createClientWinsHandler } from '@convex-rx/react';
+import { useConvexRx } from '@convex-rx/react';
+import { createClientWinsHandler } from '@convex-rx/core';
 
-createReactConvexRx({
-  // ...
+useConvexRx({
+  table: 'yourTable',
+  schema: yourSchema,
+  convexApi: api.yourTable,
   conflictHandler: createClientWinsHandler<YourType>(),
 });
 ```
@@ -219,10 +230,13 @@ createReactConvexRx({
 
 **4. Custom Merge**
 ```typescript
-import { createCustomMergeHandler } from '@convex-rx/react';
+import { useConvexRx } from '@convex-rx/react';
+import { createCustomMergeHandler } from '@convex-rx/core';
 
-createReactConvexRx({
-  // ...
+useConvexRx({
+  table: 'yourTable',
+  schema: yourSchema,
+  convexApi: api.yourTable,
   conflictHandler: createCustomMergeHandler<YourType>((input) => {
     // input.realMasterState - current server state
     // input.newDocumentState - local client state
@@ -279,20 +293,32 @@ createReactConvexRx({
 ## File Structure
 
 ### Core Package (`packages/core/`)
-- `src/index.ts` - Main package exports
+Framework-agnostic utilities:
+- `src/index.ts` - Main package exports with organized sections
 - `src/rxdb.ts` - Core sync engine (createConvexRxDB)
-- `src/types.ts` - TypeScript type definitions
+- `src/singleton.ts` - Generic singleton manager (128 lines)
+- `src/middleware.ts` - Middleware execution for CRUD operations (151 lines)
+- `src/subscriptions.ts` - Subscription builder utilities (75 lines)
+- `src/actions.ts` - Base CRUD action factory with adapter pattern (127 lines)
+- `src/types.ts` - TypeScript type definitions (SyncedDocument, BaseActions, MiddlewareConfig)
 - `src/conflictHandler.ts` - Conflict resolution strategies
 - `src/logger.ts` - Logging abstraction utility
+- `src/schemaBuilder.ts` - RxDB schema builder utilities
+- `src/convex.ts` - Convex function generators
 - `package.json` - Package configuration with RxDB/RxJS dependencies
 - `tsconfig.json` - TypeScript configuration extending base
 
 ### React Package (`packages/react/`)
-- `src/index.ts` - Main package exports
-- `src/createReactConvexRx.ts` - Wrapper adding TanStack DB to core sync
-- `src/useConvexRx.ts` - React hook for reactive data + CRUD actions
+Thin wrapper consuming core utilities:
+- `src/index.ts` - Main package exports (React-specific only, core types imported separately)
+- `src/createConvexRx.ts` - Internal wrapper adding TanStack DB to core sync
+- `src/useConvexRx.ts` - React hook with automatic singleton management (~350 lines)
+- `src/ConvexRxProvider.tsx` - Optional provider for shared configuration
+- `src/types.ts` - React-specific types only (HookContext, UseConvexRxConfig, UseConvexRxResult)
 - `package.json` - Package configuration with @convex-rx/core + TanStack DB
 - `tsconfig.json` - TypeScript configuration with JSX support
+
+**Note**: React package no longer contains internal/ folder - all utilities moved to core
 
 ### Example App (`examples/tanstack-start/`)
 - `src/useTasks.ts` - Example usage of @convex-rx/react
