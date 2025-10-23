@@ -437,11 +437,7 @@ export class ConvexRxErrorHandler {
   ): Promise<{ error: ConvexRxError; recovered?: T }> {
     const convexError = this.handle(error);
 
-    if (
-      this.config.autoRetry &&
-      convexError.recovery === RecoveryStrategy.RETRY &&
-      recovery
-    ) {
+    if (this.config.autoRetry && convexError.recovery === RecoveryStrategy.RETRY && recovery) {
       try {
         this.logger.info('Attempting error recovery', {
           category: convexError.category,
