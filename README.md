@@ -1,63 +1,62 @@
-# Convex RX - Offline-First Sync for React
+# ConvexRx - Offline-First Sync for React
 
-A complete offline-first sync solution that combines **Convex** (real-time backend), **RxDB** (local database), and **TanStack DB** (reactive state management) into clean, type-safe, composable packages.
+A complete offline-first sync solution combining **Convex** (real-time backend), **RxDB** (local database), and **TanStack DB** (reactive state) with full TypeScript type safety.
 
 ## 🚀 Features
 
 - ✅ **Offline-first** - Works without internet, syncs when reconnected
-- ✅ **Real-time sync** - Convex stream-based bidirectional synchronization
-- ✅ **Type-safe** - Full TypeScript support throughout the pipeline
-- ✅ **Composable** - One API works with any Convex table
-- ✅ **Conflict resolution** - Server-wins strategy with automatic handling
-- ✅ **Cross-tab sync** - Changes sync across browser tabs
-- ✅ **Framework agnostic core** - Use with React, or extend for other frameworks
+- ✅ **Real-time sync** - Convex WebSocket-based bidirectional synchronization
+- ✅ **Type-safe** - Full TypeScript support with zero `any` types
+- ✅ **Auto-generated Convex functions** - No manual replication code needed
+- ✅ **Flexible conflict resolution** - Server-wins, client-wins, last-write-wins, or custom merge
+- ✅ **Cross-tab sync** - Changes sync instantly across browser tabs
+- ✅ **SSR support** - Server-side rendering with data preloading
+- ✅ **Clock skew handling** - Automatic time synchronization across clients
+- ✅ **Network resilience** - Automatic retry with exponential backoff
+- ✅ **Extensible** - Custom actions, queries, subscriptions, and middleware
 
 ## 📦 Packages
 
-This is a monorepo containing:
-
 ### `@convex-rx/core`
-Framework-agnostic sync engine combining RxDB + Convex replication.
-- No React dependencies
-- Works with any JavaScript framework
-- Handles bidirectional sync, conflict resolution, offline queueing
-- Provides reusable utilities: singleton management, middleware, action factory, subscriptions
-- ~614 lines of framework-agnostic code
+Framework-agnostic sync engine (614 lines):
+- RxDB + Convex bidirectional replication
+- Singleton management to prevent duplicate instances
+- CRUD action factory with middleware support
+- Conflict resolution strategies
+- Clock skew detection and adjustment
+- Network error handling with retry logic
 
 ### `@convex-rx/react`
-React-specific bindings with TanStack DB integration.
-- Thin wrapper consuming core utilities (~550 lines)
-- React hooks for data subscriptions with automatic singleton management
+React hooks with TanStack DB integration (550 lines):
+- `useConvexRx` hook with automatic singleton management
+- `ConvexRxProvider` for global configuration (**REQUIRED**)
 - Optimistic UI updates
-- CRUD actions with type safety
-- Built on TanStack DB for reactive state
-- Extensible via custom actions, queries, and subscriptions
+- Custom actions, queries, and subscriptions
+- SSR data preloading
 
 ## 🏗️ Architecture
 
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│  React          │    │  TanStack DB    │    │  RxDB           │
-│  Components     │◄──►│  Collections    │◄──►│  Local Storage  │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                │                        │
-                                ▼                        ▼
-                       ┌─────────────────┐    ┌─────────────────┐
-                       │ @convex-rx/react│◄──►│ @convex-rx/core │
-                       │  (React Hooks)  │    │  (Sync Engine)  │
-                       └─────────────────┘    └─────────────────┘
-                                │                        │
-                                ▼                        ▼
-                       ┌─────────────────┐    ┌─────────────────┐
-                       │  Convex Streams │◄──►│  Change Stream  │
-                       │  Real-time      │    │  Detection      │
-                       └─────────────────┘    └─────────────────┘
-                                │
-                                ▼
-                       ┌─────────────────┐
-                       │  Convex         │
-                       │  Cloud Database │
-                       └─────────────────┘
+```mermaid
+graph TB
+    A[React Components] <-->|Subscribe| B[TanStack DB]
+    B <-->|Persist| C[RxDB Local Storage]
+    C <-->|Replicate| D[Convex Cloud]
+
+    D -->|WebSocket| E[Change Stream]
+    E -->|Detect| F[Pull New Data]
+    F --> C
+
+    C -->|Queue| G[Push Changes]
+    G --> D
+
+    H[@convex-rx/react] -.Wraps.- I[@convex-rx/core]
+    I -.Manages.- C
+    I -.Syncs with.- D
+
+    style A fill:#61dafb
+    style D fill:#f6792e
+    style H fill:#61dafb
+    style I fill:#3178c6
 ```
 
 ## 📦 Quick Start
@@ -68,189 +67,135 @@ React-specific bindings with TanStack DB integration.
 bun install
 ```
 
-### 2. Build Packages
-
-```bash
-bun run build
-```
-
-### 3. Run Example
-
-```bash
-# Set up Convex backend
-cd examples/tanstack-start
-cp .env.example .env
-# Edit .env and add your VITE_CONVEX_URL
-
-# Import sample data (convex dev must be running first)
-bunx convex import --table tasks sampleData.jsonl
-
-# Start both development server and Convex backend
-cd ../..
-bun run dev:example
-# This runs both Vite dev server (port 3000) and Convex dev environment
-```
-
-## 🔧 How to Use
-
-### 1. Set up Convex Functions
-
-For any table you want to sync, create these three Convex functions:
+### 2. Set Up ConvexRxProvider (REQUIRED)
 
 ```typescript
-// convex/yourTable.ts
-import { query, mutation } from "./_generated/server";
-import { v } from "convex/values";
+// src/app.tsx or src/routes/__root.tsx
+import { ConvexRxProvider } from '@convex-rx/react';
+import { ConvexReactClient } from 'convex/react';
 
-// Change stream for real-time updates
-export const changeStream = query({
-  args: {},
-  handler: async (ctx) => {
-    const allItems = await ctx.db.query("yourTable").order("desc").collect();
-    const latestTime = allItems.length > 0 ? allItems[0].updatedTime : Date.now();
-    
-    return {
-      timestamp: latestTime,
-      count: allItems.length
-    };
-  },
-});
+const convexClient = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL);
 
-// Pull documents for replication
-export const pullDocuments = query({
-  args: {
-    checkpointTime: v.number(),
-    limit: v.number(),
-  },
-  handler: async (ctx, { checkpointTime, limit }) => {
-    const items = await ctx.db
-      .query("yourTable")
-      .filter((q) => q.gt(q.field("updatedTime"), checkpointTime))
-      .order("desc")
-      .take(limit);
-    
-    return items.map(item => ({
-      id: item.id,
-      // ... other fields
-      updatedTime: item.updatedTime
-    }));
-  },
-});
-
-// Push documents for replication
-export const pushDocuments = mutation({
-  args: {
-    changeRows: v.array(v.object({
-      newDocumentState: v.object({
-        id: v.string(),
-        // ... your fields
-        updatedTime: v.number(),
-        _deleted: v.optional(v.boolean())
-      }),
-      assumedMasterState: v.optional(v.object({
-        id: v.string(),
-        // ... your fields  
-        updatedTime: v.number(),
-        _deleted: v.optional(v.boolean())
-      }))
-    }))
-  },
-  handler: async (ctx, { changeRows }) => {
-    // Handle conflicts and updates
-    // See convex/tasks.ts for complete implementation
-    return conflicts;
-  },
-});
+function App({ children }: { children: React.ReactNode }) {
+  return (
+    <ConvexRxProvider
+      convexClient={convexClient}
+      enableLogging={true}
+    >
+      {children}
+    </ConvexRxProvider>
+  );
+}
 ```
 
-### 2. Create Your Sync Hook
+**Why required?**
+- Prevents module-level import timing issues
+- Enables global configuration (logging, conflict handlers)
+- Automatic singleton management across all hooks
+
+### 3. Generate Convex Functions (Auto-Generated!)
 
 ```typescript
-// src/useYourTable.ts
-import { useConvexRx, type SyncedDocument } from "@convex-rx/react";
-import type { RxJsonSchema } from "@convex-rx/core";
-import { api } from "../convex/_generated/api";
+// convex/tasks.ts
+import { generateConvexRxFunctions } from '@convex-rx/core/convex';
+import { query, mutation } from './_generated/server';
+import { v } from 'convex/values';
 
-// Define your data type (extends SyncedDocument for id, updatedTime, _deleted)
-export type YourItem = {
-  name: string; // Your custom fields
-  description: string;
-} & SyncedDocument;
+// Generate all 3 required functions automatically
+const { changeStream, pullDocuments, pushDocuments } = generateConvexRxFunctions({
+  tableName: 'tasks',
+  query,
+  mutation,
+  v,
+});
 
-// Define RxDB schema
-const yourSchema: RxJsonSchema<YourItem> = {
-  title: 'YourItem Schema',
-  version: 0,
-  type: 'object',
-  primaryKey: 'id',
-  properties: {
-    id: { type: 'string', maxLength: 100 },
-    name: { type: 'string' },
-    description: { type: 'string' },
-    updatedTime: {
-      type: 'number',
-      minimum: 0,
-      maximum: 8640000000000000,
-      multipleOf: 1
-    }
-  },
-  required: ['id', 'name', 'description', 'updatedTime'],
-  indexes: [['updatedTime', 'id']]
+export { changeStream, pullDocuments, pushDocuments };
+```
+
+**That's it!** No manual replication code needed. The generator creates:
+- `changeStream` - Real-time change detection
+- `pullDocuments` - Incremental sync with index support
+- `pushDocuments` - Conflict-aware mutations
+
+### 4. Define Schema with Type-Safe Builder
+
+```typescript
+// src/hooks/useTasks.ts
+import { createSchema, property } from '@convex-rx/react';
+
+type Task = {
+  text: string;
+  isCompleted: boolean;
+  priority: 'low' | 'medium' | 'high';
 };
 
-// Main hook - singleton management is automatic!
-export function useYourTable() {
+const taskSchema = createSchema<Task>('tasks', {
+  text: property.string({ maxLength: 500 }),
+  isCompleted: property.boolean(),
+  priority: property.string(),
+});
+```
+
+**Property builders available:**
+- `property.string({ maxLength? })`
+- `property.number({ min?, max?, integer? })`
+- `property.boolean()`
+- `property.array(itemType)`
+- `property.object(properties)`
+
+### 5. Create Your Hook
+
+```typescript
+// src/hooks/useTasks.ts
+import { useConvexRx } from '@convex-rx/react';
+import { api } from '../convex/_generated/api';
+
+export function useTasks() {
   return useConvexRx({
-    table: 'yourTable',
-    schema: yourSchema,
+    table: 'tasks',
+    schema: taskSchema,
     convexApi: {
-      changeStream: api.yourTable.changeStream,
-      pullDocuments: api.yourTable.pullDocuments,
-      pushDocuments: api.yourTable.pushDocuments
-    }
+      changeStream: api.tasks.changeStream,
+      pullDocuments: api.tasks.pullDocuments,
+      pushDocuments: api.tasks.pushDocuments,
+    },
+    // Optional: Custom conflict resolution
+    // conflictHandler: createLastWriteWinsHandler<Task>(),
   });
 }
 ```
 
-### 3. Use in React Components
+### 6. Use in Components
 
 ```typescript
-// src/components/YourComponent.tsx
-import { useYourTable } from '../useYourTable';
+// src/components/TaskList.tsx
+import { useTasks } from '../hooks/useTasks';
 
-export function YourComponent() {
-  const { data, isLoading, error, insert, update, delete: remove } = useYourTable();
-
-  const handleCreate = async () => {
-    await insert({
-      name: "New item",
-      description: "Item description"
-      // id and updatedTime are auto-generated
-    });
-  };
-
-  const handleUpdate = async (id: string) => {
-    await update(id, {
-      name: "Updated name"
-    });
-  };
-
-  const handleDelete = async (id: string) => {
-    await remove(id);
-  };
+export function TaskList() {
+  const { data, isLoading, error, insert, update, delete: remove } = useTasks();
 
   if (error) return <div>Error: {error}</div>;
   if (isLoading) return <div>Loading...</div>;
 
   return (
     <div>
-      <button onClick={handleCreate}>Create Item</button>
-      {data.map(item => (
-        <div key={item.id}>
-          <h3>{item.name}</h3>
-          <p>{item.description}</p>
-          <button onClick={() => handleUpdate(item.id)}>Update</button>
-          <button onClick={() => handleDelete(item.id)}>Delete</button>
+      <button onClick={() => insert({
+        text: 'New task',
+        isCompleted: false,
+        priority: 'medium'
+      })}>
+        Add Task
+      </button>
+
+      {data.map(task => (
+        <div key={task.id}>
+          <input
+            type="checkbox"
+            checked={task.isCompleted}
+            onChange={() => update(task.id, { isCompleted: !task.isCompleted })}
+          />
+          <span>{task.text}</span>
+          <button onClick={() => remove(task.id)}>Delete</button>
         </div>
       ))}
     </div>
@@ -258,37 +203,258 @@ export function YourComponent() {
 }
 ```
 
+## 🎯 Advanced Features
+
+### Conflict Resolution Strategies
+
+```typescript
+import {
+  createLastWriteWinsHandler,
+  createServerWinsHandler,
+  createClientWinsHandler,
+  createCustomMergeHandler
+} from '@convex-rx/core';
+
+// 1. Last-Write-Wins (Default)
+useConvexRx({
+  // ...config
+  conflictHandler: createLastWriteWinsHandler<Task>()
+});
+
+// 2. Server Always Wins
+useConvexRx({
+  // ...config
+  conflictHandler: createServerWinsHandler<Task>()
+});
+
+// 3. Custom Field-Level Merge
+useConvexRx({
+  // ...config
+  conflictHandler: createCustomMergeHandler<Task>((input) => ({
+    ...input.realMasterState,
+    text: input.newDocumentState.text, // Keep client's text
+    isCompleted: input.realMasterState.isCompleted, // Keep server's status
+    updatedTime: Math.max(
+      input.realMasterState.updatedTime,
+      input.newDocumentState.updatedTime
+    ),
+  }))
+});
+```
+
+### Custom Actions
+
+```typescript
+export function useTasks() {
+  return useConvexRx({
+    table: 'tasks',
+    schema: taskSchema,
+    convexApi: api.tasks,
+
+    // Add custom actions
+    actions: (baseActions, context) => ({
+      toggleComplete: async (id: string) => {
+        const doc = await context.rxCollection.findOne(id).exec();
+        if (doc) {
+          await baseActions.update(id, { isCompleted: !doc.isCompleted });
+        }
+      },
+
+      completeAll: async () => {
+        const docs = await context.rxCollection.find().exec();
+        for (const doc of docs) {
+          await baseActions.update(doc.id, { isCompleted: true });
+        }
+      },
+    }),
+  });
+}
+
+// Usage
+const { actions } = useTasks();
+await actions.toggleComplete('task-id');
+await actions.completeAll();
+```
+
+### Custom Queries
+
+```typescript
+export function useTasks() {
+  return useConvexRx({
+    table: 'tasks',
+    schema: taskSchema,
+    convexApi: api.tasks,
+
+    // Add custom queries
+    queries: (context) => ({
+      findByPriority: async (priority: 'low' | 'medium' | 'high') => {
+        return await context.rxCollection
+          .find({ selector: { priority } })
+          .exec();
+      },
+
+      getCompletedCount: async () => {
+        const docs = await context.rxCollection
+          .find({ selector: { isCompleted: true } })
+          .exec();
+        return docs.length;
+      },
+    }),
+  });
+}
+
+// Usage
+const { queries } = useTasks();
+const highPriority = await queries.findByPriority('high');
+const count = await queries.getCompletedCount();
+```
+
+### Custom Subscriptions
+
+```typescript
+export function useTasks() {
+  return useConvexRx({
+    table: 'tasks',
+    schema: taskSchema,
+    convexApi: api.tasks,
+
+    // Add custom subscriptions
+    subscriptions: (context) => ({
+      onHighPriorityAdded: (callback) => {
+        return context.rxCollection
+          .find({ selector: { priority: 'high' } })
+          .$.subscribe(callback);
+      },
+    }),
+  });
+}
+
+// Usage
+const { subscribe } = useTasks();
+const cleanup = subscribe.onHighPriorityAdded((tasks) => {
+  console.log('High priority tasks:', tasks);
+});
+// Later: cleanup.unsubscribe() or cleanup()
+```
+
+### Middleware Hooks
+
+```typescript
+import type { MiddlewareConfig } from '@convex-rx/core';
+
+const middleware: MiddlewareConfig<Task> = {
+  beforeInsert: async (doc) => {
+    console.log('Inserting:', doc);
+    return { ...doc, createdAt: Date.now() };
+  },
+
+  afterInsert: async (id) => {
+    console.log('Inserted:', id);
+  },
+
+  beforeUpdate: async (id, updates) => {
+    console.log('Updating:', id, updates);
+    return updates;
+  },
+
+  afterUpdate: async (id, updates) => {
+    console.log('Updated:', id);
+  },
+
+  beforeDelete: async (id) => {
+    console.log('Deleting:', id);
+  },
+
+  afterDelete: async (id) => {
+    console.log('Deleted:', id);
+  },
+
+  onSyncError: (error) => {
+    console.error('Sync error:', error);
+  },
+};
+
+useConvexRx({
+  table: 'tasks',
+  schema: taskSchema,
+  convexApi: api.tasks,
+  middleware,
+});
+```
+
+### Server-Side Rendering (SSR)
+
+```typescript
+// TanStack Start loader
+import { createFileRoute } from '@tanstack/react-router';
+import { preloadConvexRxData } from '@convex-rx/react/ssr';
+
+export const Route = createFileRoute('/tasks')({
+  loader: async () => {
+    const tasks = await preloadConvexRxData({
+      convexUrl: import.meta.env.VITE_CONVEX_URL,
+      convexApi: { pullDocuments: api.tasks.pullDocuments },
+      batchSize: 300,
+    });
+
+    return { initialTasks: tasks };
+  },
+});
+
+// Component
+function TasksPage() {
+  const { initialTasks } = Route.useLoaderData();
+
+  const { data, isLoading } = useTasks({
+    initialData: initialTasks, // No loading state on first render!
+  });
+
+  return <TaskList tasks={data} />;
+}
+```
+
 ## 🔍 How It Works
 
-### Real-time Sync Flow
+### Real-Time Sync Flow
 
-1. **Local Changes**: User modifies data in React component
-2. **TanStack DB**: Reactive collection updates immediately (optimistic UI)
-3. **RxDB**: Local database stores the change
-4. **Replication**: Push changes to Convex in the background
-5. **Convex Streams**: Convex broadcasts changes via reactive queries to all connected clients
-6. **Change Detection**: Other clients detect changes via Convex query streams
-7. **Pull Sync**: Clients pull new data from Convex
-8. **Conflict Resolution**: Server-wins strategy resolves any conflicts
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant R as React Component
+    participant T as TanStack DB
+    participant RX as RxDB
+    participant C as Convex
+
+    U->>R: Update task
+    R->>T: Optimistic update
+    T->>RX: Persist change
+    RX->>C: Push mutation
+    C->>RX: Confirm
+
+    C->>C: Another client updates
+    C-->>RX: WebSocket change detected
+    RX->>RX: Pull new data
+    RX->>T: Update collection
+    T->>R: Re-render with new data
+    R->>U: Show updated UI
+```
 
 ### Offline Behavior
 
-- ✅ **Writes**: Queue locally in RxDB, sync when online
-- ✅ **Reads**: Always work from local RxDB cache
-- ✅ **UI**: Remains fully functional with optimistic updates
-- ✅ **Conflicts**: Automatically resolved when reconnected
+- ✅ **Writes** - Queue locally in RxDB, sync when online
+- ✅ **Reads** - Always work from local RxDB cache
+- ✅ **UI** - Fully functional with optimistic updates
+- ✅ **Conflicts** - Auto-resolved when reconnected
 
-### Cross-tab Sync
+### Cross-Tab Sync
 
-- ✅ **Local changes**: Sync instantly across browser tabs
-- ✅ **Remote changes**: Propagate via Convex streams to all tabs
-- ✅ **Database sharing**: Single RxDB instance shared across tabs
+- ✅ **Local changes** - Instant sync via RxDB's multiInstance mode
+- ✅ **Remote changes** - WebSocket streams propagate to all tabs
+- ✅ **Single database** - One RxDB instance shared across tabs
 
 ## 📋 API Reference
 
-### `useConvexRx<T>(config)` (from `@convex-rx/react`)
-
-Main React hook with automatic singleton management and reactive state.
+### `useConvexRx<T>(config)`
 
 ```typescript
 interface UseConvexRxConfig<T> {
@@ -296,201 +462,154 @@ interface UseConvexRxConfig<T> {
   table: string;
   schema: RxJsonSchema<T>;
   convexApi: {
-    changeStream: any; // Convex query function
-    pullDocuments: any; // Convex query function
-    pushDocuments: any; // Convex mutation function
+    changeStream: ConvexQuery;
+    pullDocuments: ConvexQuery;
+    pushDocuments: ConvexMutation;
   };
 
-  // Optional - Client Config
-  convexClient?: ConvexClient; // Required if not using ConvexRxProvider
-  databaseName?: string; // Default: table name
-  batchSize?: number; // Default: 50
-  enableLogging?: boolean; // Default: false
-  conflictHandler?: RxConflictHandler<T>; // Default: last-write-wins
+  // Optional - Configuration
+  databaseName?: string;
+  batchSize?: number;
+  pushBatchSize?: number;
+  enableLogging?: boolean;
+  conflictHandler?: RxConflictHandler<T>;
+  storage?: StorageConfig;
+  multiInstance?: boolean;
 
   // Optional - Extensions
-  actions?: (base, ctx) => TActions; // Custom action builder
-  queries?: (ctx) => TQueries; // Custom query builder
-  subscriptions?: (ctx) => TSubscriptions; // Custom subscription builder
-  middleware?: MiddlewareConfig<T>; // Before/after hooks
+  actions?: (base: BaseActions<T>, ctx: HookContext<T>) => TActions;
+  queries?: (ctx: HookContext<T>) => TQueries;
+  subscriptions?: (ctx: HookContext<T>) => TSubscriptions;
+  middleware?: MiddlewareConfig<T>;
+
+  // Optional - SSR
+  initialData?: T[];
 }
 
 interface UseConvexRxResult<T> {
   // Data
-  data: T[]; // Reactive data array (filtered to exclude _deleted: true)
-  isLoading: boolean; // Loading state
-  error: string | null; // Error message if any
+  data: T[];
+  isLoading: boolean;
+  error: string | null;
 
-  // Base Actions (always available)
-  insert: (data: Omit<T, 'id' | 'updatedTime' | '_deleted'>) => Promise<string>;
+  // Base Actions
+  insert: (doc: Omit<T, 'id' | 'updatedTime' | '_deleted'>) => Promise<string>;
   update: (id: string, updates: Partial<Omit<T, 'id' | 'updatedTime' | '_deleted'>>) => Promise<void>;
   delete: (id: string) => Promise<void>;
 
   // Custom Extensions
-  actions: TActions; // Custom actions if provided
-  queries: TQueries; // Custom queries if provided
-  subscribe: TSubscriptions; // Custom subscriptions if provided
+  actions: TActions;
+  queries: TQueries;
+  subscribe: TSubscriptions;
 
-  // Advanced Access
-  collection: Collection<T> | null; // TanStack DB collection
-  rxCollection: RxCollection<T> | null; // RxDB collection
-  replicationState: RxReplicationState<T> | null; // Replication state observables
-  purgeStorage: () => Promise<void>; // Purge local storage and reload
+  // Advanced
+  collection: Collection<T> | null;
+  rxCollection: RxCollection<T> | null;
+  replicationState: RxReplicationState<T> | null;
+  purgeStorage: () => Promise<void>;
 }
 ```
 
-### Core Utilities (from `@convex-rx/core`)
-
-Framework-agnostic utilities used internally by React package:
+### Property Builders
 
 ```typescript
-// Singleton management
-getSingletonInstance<TConfig, TInstance>(config, singleton): Promise<TInstance>
-createSingletonKey(dbName, collectionName): string
-removeSingletonInstance(key): void
+import { property } from '@convex-rx/react';
 
-// Base CRUD actions
-createBaseActions<T>(context): BaseActions<T>
+// String
+property.string({ maxLength?: number })
 
-// Middleware
-wrapActionsWithMiddleware<T>(actions, middleware): BaseActions<T>
-setupSyncErrorMiddleware(replicationState, middleware): (() => void) | null
+// Number
+property.number({ min?: number, max?: number, integer?: boolean })
+property.positiveNumber({ max?: number, integer?: boolean })
 
-// Subscriptions
-buildSubscriptions<TContext, TSubscriptions>(builder, context): TSubscriptions
+// Boolean
+property.boolean()
+
+// Array
+property.array(itemDefinition: PropertyDefinition)
+
+// Object
+property.object(properties: Record<string, PropertyDefinition>)
 ```
 
-### Required Data Type Structure
-
-Your data types must include these fields:
+### Conflict Handlers
 
 ```typescript
-type YourData = {
-  id: string; // Primary key (auto-generated)
-  updatedTime: number; // For replication (auto-generated/updated)
-  _deleted?: boolean; // For soft deletes (managed automatically)
-  // ... your custom fields
-};
+import {
+  createLastWriteWinsHandler,
+  createServerWinsHandler,
+  createClientWinsHandler,
+  createCustomMergeHandler,
+} from '@convex-rx/core';
+
+// Last-Write-Wins (default)
+createLastWriteWinsHandler<T>(enableLogging?: boolean)
+
+// Server-Wins
+createServerWinsHandler<T>(enableLogging?: boolean)
+
+// Client-Wins
+createClientWinsHandler<T>(enableLogging?: boolean)
+
+// Custom Merge
+createCustomMergeHandler<T>(
+  mergeFn: (input: RxConflictHandlerInput<T>) => T | Promise<T>,
+  options?: {
+    onError?: (error: Error, input: RxConflictHandlerInput<T>) => void | Promise<void>;
+    fallbackStrategy?: 'server-wins' | 'client-wins';
+    enableLogging?: boolean;
+  }
+)
 ```
-
-## 🛠️ Development
-
-### Running the Example
-
-The included task manager demonstrates the sync engine:
-
-```bash
-# Install dependencies
-bun install
-
-# Import sample data  
-bunx convex import --table tasks sampleData.jsonl
-
-# Start development server
-bun run dev
-```
-
-### Debugging
-
-Enable detailed logging:
-
-```typescript
-const syncInstance = createConvexSync({
-  // ... other config
-  enableLogging: true // Detailed console logging
-});
-```
-
-### Testing Offline Mode
-
-1. Open the app in your browser
-2. Open DevTools → Network tab
-3. Set throttling to "Offline"
-4. Continue using the app normally
-5. Set back to "Online" to see sync resume
-
-## 🔄 Migration Guide
-
-### From Direct RxDB
-
-**Before:**
-```typescript
-// Complex manual setup
-const db = await createRxDatabase(/* complex config */);
-const collection = await db.addCollections(/* schemas */);
-const replication = replicateRxCollection(/* complex replication setup */);
-```
-
-**After:**
-```typescript
-// Simple hook with automatic singleton management
-export function useYourTable() {
-  return useConvexRx({
-    table: 'yourTable',
-    schema: yourSchema,
-    convexApi: api.yourTable
-  });
-}
-```
-
-### From Other State Management
-
-The sync engine provides a complete replacement for:
-- **Redux/Zustand**: TanStack DB handles reactive state
-- **React Query**: Built-in caching and background sync
-- **Manual real-time connections**: Automatic Convex stream updates
-- **Local storage**: RxDB provides structured local database
-
-### Adding Multi-Framework Support
-
-With the Phase 1-2 migration complete, adding support for new frameworks is straightforward:
-
-1. **Core utilities are ready** (~614 lines reusable across any framework)
-2. **Create new package** (e.g., `@convex-rx/svelte`)
-3. **Implement framework wrapper** (~1-2 hours):
-   - Framework-specific reactive wrapper (Svelte stores, Vue refs, etc.)
-   - Use core utilities: `getSingletonInstance`, `createBaseActions`, `wrapActionsWithMiddleware`
-4. **Reuse 40% of codebase** - Core handles sync, conflicts, middleware, subscriptions
-
-See `MIGRATION.md` for detailed multi-framework architecture guide.
-
-## 📚 Examples
-
-See **`examples/tanstack-start/`** for a complete working example:
-- **`src/useTasks.ts`** - Complete task management implementation with CRUD operations
-- **`convex/tasks.ts`** - Convex backend functions (changeStream, pullDocuments, pushDocuments)
-- **`src/routes/index.tsx`** - React component using the sync hook
 
 ## 🛠️ Development
 
 ### Building Packages
 
 ```bash
-# Build all packages
-bun run build
-
-# Build individual packages
-bun run build:core
-bun run build:react
+bun run build         # Build all packages
+bun run build:core    # Build core only
+bun run build:react   # Build React only
+bun run clean         # Remove build artifacts
 ```
 
-### Running Tests
+### Type Checking
 
 ```bash
-bun run typecheck
+bun run typecheck     # Check all packages
 ```
 
 ### Code Quality
 
 ```bash
-bun run check        # Check formatting and linting
-bun run check:fix    # Auto-fix issues
+bun run check         # Lint + format check
+bun run check:fix     # Auto-fix all issues
 ```
 
-## 🤝 Contributing
+### Running Example
 
-This project demonstrates a complete offline-first architecture with a clean separation between framework-agnostic core and React-specific bindings. Feel free to extend it for other frameworks or contribute improvements to the core sync logic.
+```bash
+bun run dev:example   # Start example app + Convex
+```
+
+## 📚 Examples
+
+See `examples/tanstack-start/` for a complete implementation:
+- `src/hooks/useTasks.ts` - Hook with custom actions and queries
+- `src/routes/index.tsx` - Component usage
+- `convex/tasks.ts` - Auto-generated Convex functions
+
+## 🎓 TypeScript Best Practices
+
+This library follows strict TypeScript standards:
+- ✅ Zero `any` types - use `unknown` for truly unknown values
+- ✅ Const object pattern instead of enums
+- ✅ Explicit return types on exported functions
+- ✅ Trust TypeScript - no redundant runtime checks
+- ✅ Proper generic constraints
+
+See `CLAUDE.md` for detailed coding standards.
 
 ## 📄 License
 
-MIT License - see the existing license in this repository.
+MIT License - see LICENSE file for details
