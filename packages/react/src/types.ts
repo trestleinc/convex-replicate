@@ -19,6 +19,40 @@ import type { RxCollection, RxDatabase } from 'rxdb';
 import type { RxReplicationState } from 'rxdb/plugins/replication';
 
 // ========================================
+// TYPE INFERENCE HELPERS
+// ========================================
+
+/**
+ * Extract the data type from an RxJsonSchema.
+ * Example: RxJsonSchema<Task & SyncedDocument> => Task & SyncedDocument
+ */
+export type InferSchemaType<T> = T extends RxJsonSchema<infer U> ? U : never;
+
+/**
+ * Extract the return type from an ActionBuilder function.
+ */
+export type InferActionsType<
+  TData extends SyncedDocument,
+  TBuilder,
+> = TBuilder extends ActionBuilder<TData, infer A> ? A : Record<string, never>;
+
+/**
+ * Extract the return type from a QueryBuilder function.
+ */
+export type InferQueriesType<
+  TData extends SyncedDocument,
+  TBuilder,
+> = TBuilder extends QueryBuilder<TData, infer Q> ? Q : Record<string, never>;
+
+/**
+ * Extract the return type from a SubscriptionBuilder function.
+ */
+export type InferSubscriptionsType<
+  TData extends SyncedDocument,
+  TBuilder,
+> = TBuilder extends SubscriptionBuilder<TData, infer S> ? S : Record<string, never>;
+
+// ========================================
 // REACT-SPECIFIC CONTEXT TYPES
 // ========================================
 
@@ -171,6 +205,10 @@ export interface UseConvexRxConfig<
    * If provided, data state will be immediately populated with this data
    * instead of showing loading state. Useful for server-side rendering.
    *
+   * Accepts either:
+   * - Full synced documents with id, updatedTime, _deleted
+   * - Partial user data (without sync fields) - system will add them
+   *
    * @example
    * ```typescript
    * const { tasks } = Route.useLoaderData();
@@ -178,11 +216,11 @@ export interface UseConvexRxConfig<
    *   table: 'tasks',
    *   schema: taskSchema,
    *   convexApi: api.tasks,
-   *   initialData: tasks, // Pre-loaded on server
+   *   initialData: tasks, // Can be Task[] or (Task & SyncedDocument)[]
    * });
    * ```
    */
-  initialData?: TData[];
+  initialData?: Omit<TData, keyof SyncedDocument>[] | TData[];
 
   // ========== Optional - Extensions ==========
 

@@ -97,7 +97,7 @@ export type { ConvexRxInstance } from './types';
 // ========================================
 
 /** Core document and schema types */
-export type { ConvexClient, ConvexRxDocument, RxJsonSchema } from '@convex-rx/core';
+export type { ConvexClient, ConvexRxDocument, RxJsonSchema, SyncedDocument } from '@convex-rx/core';
 
 /** Conflict resolution types and handlers */
 export type { RxConflictHandler, RxConflictHandlerInput } from '@convex-rx/core';
@@ -115,7 +115,6 @@ export type { SimpleSchema } from '@convex-rx/core';
 
 /** Convex function generators */
 export { defineConvexRxTable, generateConvexRxFunctions } from '@convex-rx/core';
-export type { ConvexRxTableFunctions } from '@convex-rx/core';
 
 /** Storage configuration */
 export { getStorage, StorageType, storageTypeSchema } from '@convex-rx/core';

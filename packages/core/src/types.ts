@@ -60,13 +60,13 @@ export interface RxJsonSchema<T = Record<string, unknown>> {
 
 /**
  * Convex client interface for type safety
- * Note: Using unknown for function references as Convex's FunctionReference
- * type requires specific imports that may not be available
+ * Note: Using any for function references to ensure compatibility with both
+ * ConvexReactClient and ConvexClient from convex packages
  */
 export interface ConvexClient {
-  query: <T>(query: unknown, args?: unknown) => Promise<T>;
-  mutation: <T>(mutation: unknown, args?: unknown) => Promise<T>;
-  watchQuery: <T = unknown>(query: unknown, args?: unknown) => ConvexWatch<T>;
+  query: <T>(query: any, args?: any) => Promise<T>;
+  mutation: <T>(mutation: any, args?: any) => Promise<T>;
+  watchQuery: <T = any>(query: any, args?: any) => ConvexWatch<T>;
   close?: () => Promise<void>;
 }
 
@@ -107,7 +107,7 @@ export interface SyncedDocument extends ConvexRxDocument {
   /** Soft delete flag - when true, document is hidden from queries */
   _deleted?: boolean;
   /** Index signature for compatibility with RxDB's dynamic schema system */
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 // ========================================

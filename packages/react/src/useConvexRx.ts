@@ -42,6 +42,7 @@ import {
   type ConvexRxDBConfig,
   type BaseActions,
   type SyncedDocument,
+  type RxJsonSchema,
   createInitializationError,
   ErrorSeverity,
   RecoveryStrategy,
@@ -57,7 +58,14 @@ import {
 import React from 'react';
 import { createConvexRx } from './createConvexRx';
 import { useConvexRxContext } from './ConvexRxProvider';
-import type { HookContext, UseConvexRxConfig, UseConvexRxResult } from './types';
+import type {
+  ActionBuilder,
+  HookContext,
+  QueryBuilder,
+  SubscriptionBuilder,
+  UseConvexRxConfig,
+  UseConvexRxResult,
+} from './types';
 
 /**
  * Main ConvexRx hook for offline-first sync with Convex.
@@ -77,15 +85,39 @@ import type { HookContext, UseConvexRxConfig, UseConvexRxResult } from './types'
  * @throws Error if ConvexRxProvider is not found in component tree
  */
 export function useConvexRx<
-  TData extends SyncedDocument,
-  TActions extends Record<string, (...args: any[]) => any> = Record<string, never>,
-  TQueries extends Record<string, (...args: any[]) => any> = Record<string, never>,
+  TSchema extends RxJsonSchema<any>,
+  TData extends SyncedDocument = TSchema extends RxJsonSchema<infer U extends SyncedDocument>
+    ? U
+    : never,
+  TActionsBuilder extends ActionBuilder<TData, any> | undefined =
+    | ActionBuilder<TData, any>
+    | undefined,
+  TQueriesBuilder extends QueryBuilder<TData, any> | undefined =
+    | QueryBuilder<TData, any>
+    | undefined,
+  TSubscriptionsBuilder extends SubscriptionBuilder<TData, any> | undefined =
+    | SubscriptionBuilder<TData, any>
+    | undefined,
+  TActions extends Record<string, (...args: any[]) => any> = TActionsBuilder extends ActionBuilder<
+    TData,
+    infer A
+  >
+    ? A
+    : Record<string, never>,
+  TQueries extends Record<string, (...args: any[]) => any> = TQueriesBuilder extends QueryBuilder<
+    TData,
+    infer Q
+  >
+    ? Q
+    : Record<string, never>,
   TSubscriptions extends Record<
     string,
     (...args: any[]) => (() => void) | { unsubscribe: () => void }
-  > = Record<string, never>,
+  > = TSubscriptionsBuilder extends SubscriptionBuilder<TData, infer S> ? S : Record<string, never>,
 >(
-  config: UseConvexRxConfig<TData, TActions, TQueries, TSubscriptions>
+  config: Omit<UseConvexRxConfig<TData, TActions, TQueries, TSubscriptions>, 'schema'> & {
+    schema: TSchema;
+  }
 ): UseConvexRxResult<TData, TActions, TQueries, TSubscriptions> {
   // ========================================
   // 1. GET CONFIG FROM REQUIRED PROVIDER
@@ -378,7 +410,7 @@ export function useConvexRx<
   // Derive data from collection instead of duplicating in state
   const data = database
     ? database.collection.toArray.filter((item) => !item._deleted)
-    : config.initialData || [];
+    : ((config.initialData || []) as TData[]);
 
   // Consolidated status object
   const isReady = database?.collection.isReady() ?? false;
