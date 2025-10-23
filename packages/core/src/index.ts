@@ -80,7 +80,7 @@ export type { SubscriptionBuilder } from './subscriptions';
 // BASE ACTIONS FACTORY
 // ========================================
 
-export { createBaseActions } from './actions';
+export { createBaseActions, setServerTime, getAdjustedTime } from './actions';
 export type { ActionContext } from './actions';
 
 // ========================================

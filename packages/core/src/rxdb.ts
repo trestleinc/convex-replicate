@@ -47,6 +47,17 @@ if (isDevelopment()) {
 }
 
 // ========================================
+// HELPER FUNCTIONS
+// ========================================
+
+function shouldUseMultiInstance(config: ConvexRxDBConfig<any>): boolean {
+  if (config.multiInstance !== undefined) {
+    return config.multiInstance;
+  }
+  return typeof window !== 'undefined' && typeof document !== 'undefined';
+}
+
+// ========================================
 // TYPE DEFINITIONS
 // ========================================
 
@@ -109,6 +120,21 @@ export interface ConvexRxDBConfig<T extends ConvexRxDocument> {
    * @default 100
    */
   pushBatchSize?: number;
+  /**
+   * Enable cross-tab synchronization. Auto-detected: true in browser, false in Node.js.
+   * @default auto-detected
+   */
+  multiInstance?: boolean;
+  /**
+   * Enable RxDB's event reduce optimization for query performance.
+   * @default false
+   */
+  eventReduce?: boolean;
+  /**
+   * Enable key compression for ~40% storage reduction.
+   * @default true
+   */
+  keyCompression?: boolean;
 }
 
 /**
@@ -221,17 +247,16 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
   const db = await createRxDatabase({
     name: databaseName,
     storage: getStorage(config.storage),
-    multiInstance: true,
-    eventReduce: true,
+    multiInstance: shouldUseMultiInstance(config),
+    eventReduce: config.eventReduce ?? false,
     ignoreDuplicate: isDevelopment(),
   });
 
   // 2. Add collection with schema
   // Extend schema to include _deleted field for soft deletes
-  // Note: keyCompression is added at schema level but not in RxJsonSchema type
   const schemaWithDeleted = {
     ...schema,
-    keyCompression: true, // Enable key compression for ~40% storage reduction
+    keyCompression: config.keyCompression ?? true,
     properties: {
       ...schema.properties,
       _deleted: {

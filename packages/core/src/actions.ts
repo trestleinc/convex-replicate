@@ -7,6 +7,17 @@
 
 import type { RxCollection } from 'rxdb';
 import type { BaseActions, SyncedDocument } from './types';
+import { getLogger } from './logger';
+
+let clockSkew = 0;
+
+export function setServerTime(serverTime: number): void {
+  clockSkew = serverTime - Date.now();
+}
+
+export function getAdjustedTime(): number {
+  return Date.now() + clockSkew;
+}
 
 /**
  * Action context providing the primitives needed for CRUD operations.
@@ -74,16 +85,30 @@ export function createBaseActions<TData extends SyncedDocument>(
   context: ActionContext<TData>
 ): BaseActions<TData> {
   return {
-    /**
-     * Insert a new document.
-     * Generates UUID, adds updatedTime, calls wrapper's insert function.
-     */
     insert: async (doc: Omit<TData, keyof SyncedDocument>): Promise<string> => {
-      const id = crypto.randomUUID();
+      const logger = getLogger('actions', false);
+
+      let id = crypto.randomUUID();
+      let attempts = 0;
+      const maxAttempts = 3;
+
+      while (attempts < maxAttempts) {
+        const existing = await context.rxCollection.findOne(id).exec();
+        if (!existing) break;
+
+        logger.warn('UUID collision detected, regenerating', { id, attempt: attempts + 1 });
+        id = crypto.randomUUID();
+        attempts++;
+      }
+
+      if (attempts === maxAttempts) {
+        throw new Error('Failed to generate unique UUID after multiple attempts');
+      }
+
       const fullDoc: TData = {
         ...doc,
         id,
-        updatedTime: Date.now(),
+        updatedTime: getAdjustedTime(),
       } as unknown as TData;
 
       await context.insertFn(fullDoc);
@@ -100,7 +125,7 @@ export function createBaseActions<TData extends SyncedDocument>(
     ): Promise<void> => {
       await context.updateFn(id, (draft: TData) => {
         Object.assign(draft, updates);
-        draft.updatedTime = Date.now();
+        draft.updatedTime = getAdjustedTime();
       });
     },
 
@@ -116,7 +141,7 @@ export function createBaseActions<TData extends SyncedDocument>(
         await doc.update({
           $set: {
             _deleted: true,
-            updatedTime: Date.now(),
+            updatedTime: getAdjustedTime(),
           },
         });
       } else {

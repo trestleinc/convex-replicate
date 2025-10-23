@@ -95,23 +95,39 @@ export function createLastWriteWinsHandler<T extends ConvexRxDocument>(
 
   return {
     isEqual(docA, docB) {
-      return docA.updatedTime === docB.updatedTime;
+      return docA.updatedTime === docB.updatedTime && docA.id === docB.id;
     },
     resolve(input) {
-      // Compare timestamps and use the newer one
-      const winner =
-        input.newDocumentState.updatedTime > input.realMasterState.updatedTime
-          ? 'client'
-          : 'server';
+      const newTime = input.newDocumentState.updatedTime;
+      const realTime = input.realMasterState.updatedTime;
 
-      logger.debug('Last-write-wins conflict resolution', {
-        documentId: input.newDocumentState.id,
-        winner,
-        clientTime: input.newDocumentState.updatedTime,
-        serverTime: input.realMasterState.updatedTime,
+      if (newTime > realTime) {
+        logger.debug('Last-write-wins: client wins', {
+          documentId: input.newDocumentState.id,
+          clientTime: newTime,
+          serverTime: realTime,
+        });
+        return input.newDocumentState;
+      }
+
+      if (newTime < realTime) {
+        logger.debug('Last-write-wins: server wins', {
+          documentId: input.realMasterState.id,
+          clientTime: newTime,
+          serverTime: realTime,
+        });
+        return input.realMasterState;
+      }
+
+      logger.info('Timestamp collision, using ID as tie-breaker', {
+        newId: input.newDocumentState.id,
+        realId: input.realMasterState.id,
+        timestamp: newTime,
       });
 
-      return winner === 'client' ? input.newDocumentState : input.realMasterState;
+      return input.newDocumentState.id > input.realMasterState.id
+        ? input.newDocumentState
+        : input.realMasterState;
     },
   };
 }
@@ -146,15 +162,14 @@ export function createCustomMergeHandler<T extends ConvexRxDocument>(
     onError?: (error: Error, input: RxConflictHandlerInput<T>) => void | Promise<void>;
     fallbackStrategy?: 'server-wins' | 'client-wins';
     enableLogging?: boolean;
+    isEqual?: (docA: T, docB: T) => boolean;
   }
 ): RxConflictHandler<T> {
   const fallback = options?.fallbackStrategy ?? 'server-wins';
   const logger = getLogger('conflict-handler', options?.enableLogging ?? true);
 
   return {
-    isEqual(docA, docB) {
-      return docA.updatedTime === docB.updatedTime;
-    },
+    isEqual: options?.isEqual ?? ((docA, docB) => docA.updatedTime === docB.updatedTime),
     async resolve(input) {
       try {
         logger.debug('Custom merge conflict resolution started', {

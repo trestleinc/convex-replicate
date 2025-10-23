@@ -144,7 +144,7 @@ export function generateConvexRxFunctions(config: {
         const { _id, _creationTime, ...cleanDoc } = doc;
         return {
           ...cleanDoc,
-          deleted: doc.deleted || false,
+          deleted: doc.deleted === true,
         };
       });
 
@@ -198,7 +198,7 @@ export function generateConvexRxFunctions(config: {
         const realMasterState = currentDoc
           ? {
               ...currentDoc,
-              deleted: currentDoc.deleted || false,
+              deleted: currentDoc.deleted === true,
             }
           : null;
 
