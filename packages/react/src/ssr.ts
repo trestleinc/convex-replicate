@@ -97,12 +97,27 @@ export async function preloadConvexRxData<TData extends SyncedDocument>(
 ): Promise<TData[]> {
   const { convexUrl, convexApi, batchSize = 300 } = config;
 
+  if (!convexUrl || typeof convexUrl !== 'string') {
+    throw new Error(
+      'convexUrl is required for SSR preloading. ' +
+        'Make sure to pass your Convex deployment URL (e.g., process.env.VITE_CONVEX_URL)'
+    );
+  }
+
+  try {
+    new URL(convexUrl);
+  } catch {
+    throw new Error(
+      `Invalid convexUrl: "${convexUrl}". ` +
+        'Must be a valid URL (e.g., https://your-deployment.convex.cloud)'
+    );
+  }
+
   const logger = getLogger('ssr-preload', true);
 
   try {
     logger.info('Preloading Convex data for SSR via HTTP', { convexUrl, batchSize });
 
-    // Create HTTP client for server-side fetching
     const httpClient = new ConvexHttpClient(convexUrl);
 
     // Pull all documents from beginning (checkpoint 0)

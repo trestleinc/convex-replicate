@@ -164,6 +164,10 @@ export function generateConvexRxFunctions(config: {
   // ========================================
   // 3. PUSH DOCUMENTS
   // ========================================
+  //
+  // Convex mutations are atomic - either all database operations succeed or all fail.
+  // However, conflict detection happens per-document, so some documents may succeed
+  // while others return conflicts that need to be re-synced.
 
   const pushDocuments = mutationBuilder({
     args: {

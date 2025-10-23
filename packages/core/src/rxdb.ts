@@ -215,6 +215,22 @@ const configSchema = z.object({
 // MAIN API: CREATE CONVEX RXDB
 // ========================================
 
+/**
+ * Create a ConvexRx sync instance bridging RxDB and Convex.
+ *
+ * This is the main entry point for the ConvexRx library. It creates:
+ * - RxDB database for local storage
+ * - Bidirectional replication with Convex
+ * - WebSocket change stream for real-time updates
+ * - Automatic conflict resolution
+ *
+ * @template T - Document type extending ConvexRxDocument
+ * @param config - Configuration object
+ * @returns Instance with RxDB primitives and cleanup function
+ *
+ * @throws {Error} If config validation fails
+ * @throws {Error} If database/collection creation fails
+ */
 export async function createConvexRxDB<T extends ConvexRxDocument>(
   config: ConvexRxDBConfig<T>
 ): Promise<ConvexRxDBInstance<T>> {
