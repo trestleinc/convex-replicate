@@ -88,13 +88,9 @@ export function getStorage(config: StorageConfig = {}): RxStorage<any, any> {
   if (config.customStorage) {
     baseStorage = config.customStorage;
   } else {
-    // Get base storage by type
-    const type = config.type || StorageType.DEXIE; // Default to Dexie.js
+    const type = config.type ?? StorageType.DEXIE;
 
-    // Validate storage type with Zod
-    const validatedType = storageTypeSchema.parse(type);
-
-    switch (validatedType) {
+    switch (type) {
       case StorageType.DEXIE:
         baseStorage = getRxStorageDexie();
         break;

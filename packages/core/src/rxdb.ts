@@ -306,7 +306,10 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
     logger.info('Setting up Convex change stream', { retryCount });
 
     try {
-      const changeWatch = convexClient.watchQuery(convexApi.changeStream, {});
+      const changeWatch = convexClient.watchQuery<{ timestamp: number; count: number }>(
+        convexApi.changeStream,
+        {}
+      );
 
       const unsubscribe = changeWatch.onUpdate(() => {
         retryCount = 0; // Reset on successful connection
@@ -429,10 +432,6 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
       stream$: pullStream$.asObservable(),
       // Transform Convex's 'deleted' field to RxDB's '_deleted' field
       modifier: (doc: any) => {
-        if (!doc) {
-          logger.warn('Received null/undefined document in pull modifier');
-          return undefined; // Return undefined to skip document
-        }
         const { deleted, ...rest } = doc;
         const transformed = {
           ...rest,
@@ -491,17 +490,11 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
       batchSize: validateBatchSize(config.pushBatchSize, 100),
       // Transform RxDB's '_deleted' field to Convex's 'deleted' field before sending
       modifier: (doc: any) => {
-        if (!doc) {
-          logger.warn('Received null/undefined document in push modifier');
-          return undefined;
-        }
         const { _deleted, ...rest } = doc;
-
-        // Validate and normalize _deleted to boolean
-        const deleted = typeof _deleted === 'boolean' ? _deleted : false;
+        const deleted = _deleted === true;
 
         if (typeof _deleted !== 'boolean' && _deleted !== undefined) {
-          logger.warn('Invalid _deleted field type', {
+          logger.warn('Invalid _deleted field type - schema mismatch', {
             id: doc.id,
             _deleted,
             type: typeof _deleted,

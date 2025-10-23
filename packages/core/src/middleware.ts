@@ -199,13 +199,13 @@ export function setupSyncErrorMiddleware(
   middleware?: MiddlewareConfig<any>
 ): () => void {
   if (!middleware?.onSyncError) {
-    return () => {}; // Return no-op function instead of null
+    return () => {};
   }
 
+  const onSyncError = middleware.onSyncError;
+
   const subscription = replicationState.error$.subscribe((error) => {
-    if (error && middleware.onSyncError) {
-      middleware.onSyncError(error instanceof Error ? error : new Error(String(error)));
-    }
+    onSyncError(error instanceof Error ? error : new Error(String(error)));
   });
 
   return () => subscription.unsubscribe();

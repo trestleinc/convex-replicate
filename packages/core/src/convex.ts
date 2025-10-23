@@ -106,7 +106,7 @@ export function generateConvexRxFunctions(config: {
     ) => {
       let docs: any;
 
-      if (!args.checkpoint || (args.checkpoint.id === '' && args.checkpoint.updatedTime === 0)) {
+      if (!args.checkpoint) {
         // Initial pull - get most recent documents
         docs = await ctx.db.query(tableName).order('desc').take(args.limit);
       } else {

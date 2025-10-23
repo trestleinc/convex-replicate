@@ -1,10 +1,8 @@
-import type { ConvexRxDocument, RxJsonSchema } from './types';
+import type { ConvexRxDocument, RxJsonSchema, PropertySchema, PropertyType } from './types';
 
 // ========================================
 // SCHEMA BUILDER TYPES
 // ========================================
-
-type PropertyType = 'string' | 'number' | 'boolean' | 'object' | 'array';
 
 interface PropertyDefinition {
   type: PropertyType;
@@ -149,8 +147,8 @@ export function createSchema<T extends Record<string, any>>(
 /**
  * Converts simple property definition to RxDB property schema
  */
-function convertPropertyDefinition(propDef: PropertyDefinition): any {
-  const schema: any = {
+function convertPropertyDefinition(propDef: PropertyDefinition): PropertySchema {
+  const schema: Partial<PropertySchema> = {
     type: propDef.type,
   };
 
@@ -172,7 +170,7 @@ function convertPropertyDefinition(propDef: PropertyDefinition): any {
     schema.required = propDef.required;
   }
 
-  return schema;
+  return schema as PropertySchema;
 }
 
 // ========================================

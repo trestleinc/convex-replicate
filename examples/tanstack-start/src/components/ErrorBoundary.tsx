@@ -1,4 +1,7 @@
 import React from 'react';
+import { getLogger } from '@convex-rx/core';
+
+const logger = getLogger('error-boundary', true);
 
 interface Props {
   children: React.ReactNode;
@@ -24,7 +27,7 @@ export class ConvexRxErrorBoundary extends React.Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error('ConvexRx Error Boundary caught error:', error, errorInfo);
+    logger.error('Error Boundary caught error', { error, errorInfo });
   }
 
   handleReset = () => {

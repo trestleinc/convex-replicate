@@ -14,33 +14,67 @@ export interface ConvexRxDocument {
 }
 
 /**
+ * Property types for RxDB schemas.
+ * Using const object pattern instead of enum for better TypeScript practices.
+ */
+export const PropertyType = {
+  String: 'string',
+  Number: 'number',
+  Boolean: 'boolean',
+  Object: 'object',
+  Array: 'array',
+  Integer: 'integer',
+} as const;
+
+export type PropertyType = (typeof PropertyType)[keyof typeof PropertyType];
+
+/**
+ * Property schema definition for RxDB schemas
+ */
+export interface PropertySchema {
+  type: PropertyType;
+  maxLength?: number;
+  minimum?: number;
+  maximum?: number;
+  multipleOf?: number;
+  minItems?: number;
+  maxItems?: number;
+  items?: PropertySchema;
+  properties?: Record<string, PropertySchema>;
+  required?: string[];
+  additionalProperties?: boolean;
+}
+
+/**
  * RxDB JSON Schema type for defining collection schemas
  */
-export interface RxJsonSchema<T = any> {
+export interface RxJsonSchema<T = Record<string, unknown>> {
   title: string;
   version: number;
   type: 'object';
   primaryKey: keyof T & string;
-  properties: Record<string, any>;
+  properties: Record<string, PropertySchema>;
   required: string[];
   indexes?: string[][];
 }
 
 /**
  * Convex client interface for type safety
+ * Note: Using unknown for function references as Convex's FunctionReference
+ * type requires specific imports that may not be available
  */
 export interface ConvexClient {
-  query: <T>(query: any, args?: any) => Promise<T>;
-  mutation: <T>(mutation: any, args?: any) => Promise<T>;
-  watchQuery: (query: any, args?: any) => ConvexWatch;
+  query: <T>(query: unknown, args?: unknown) => Promise<T>;
+  mutation: <T>(mutation: unknown, args?: unknown) => Promise<T>;
+  watchQuery: <T = unknown>(query: unknown, args?: unknown) => ConvexWatch<T>;
   close?: () => Promise<void>;
 }
 
 /**
  * Convex watch query return type
  */
-export interface ConvexWatch {
-  localQueryResult: () => any;
+export interface ConvexWatch<T = unknown> {
+  localQueryResult: () => T | undefined;
   onUpdate: (callback: () => void) => () => void;
 }
 
@@ -48,14 +82,11 @@ export interface ConvexWatch {
  * Utility to format errors consistently
  */
 export function formatError(error: unknown): string {
-  if (error === null) {
-    return 'Error: null (no error information available)';
-  }
-  if (error === undefined) {
-    return 'Error: undefined (no error information available)';
-  }
   if (error instanceof Error) {
     return error.message;
+  }
+  if (error == null) {
+    return 'Error: no error information available';
   }
   return String(error);
 }

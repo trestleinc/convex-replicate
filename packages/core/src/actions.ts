@@ -105,11 +105,11 @@ export function createBaseActions<TData extends SyncedDocument>(
         throw new Error('Failed to generate unique UUID after multiple attempts');
       }
 
-      const fullDoc: TData = {
+      const fullDoc = {
         ...doc,
         id,
         updatedTime: getAdjustedTime(),
-      } as unknown as TData;
+      } as TData;
 
       await context.insertFn(fullDoc);
       return id;

@@ -7,6 +7,8 @@
  * Framework-agnostic - works with any reactive system.
  */
 
+import { getLogger } from './logger';
+
 /**
  * Generic subscription builder type.
  * Framework packages can specialize this with their own context types.
@@ -75,22 +77,13 @@ export function buildSubscriptions<
 export function normalizeUnsubscribe(
   subscription: (() => void) | { unsubscribe: () => void } | null | undefined
 ): () => void {
-  // Handle null/undefined - return no-op
   if (!subscription) {
     return () => {};
   }
 
-  // Handle function
   if (typeof subscription === 'function') {
     return subscription;
   }
 
-  // Handle object with unsubscribe method
-  if (typeof subscription.unsubscribe === 'function') {
-    return () => subscription.unsubscribe();
-  }
-
-  // Invalid input - warn and return no-op
-  console.warn('Invalid subscription object provided to normalizeUnsubscribe:', subscription);
-  return () => {};
+  return () => subscription.unsubscribe();
 }
