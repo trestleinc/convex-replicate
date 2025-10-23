@@ -181,9 +181,7 @@ function TasksContent() {
 
       {/* Task List */}
       <div className="space-y-2">
-        {data
-          .filter((task) => !task._deleted)
-          .map((task) => (
+        {data.map((task) => (
             <div
               key={task.id}
               className="flex items-center gap-3 p-3 border border-rose-pine-muted rounded"
@@ -248,7 +246,7 @@ function TasksContent() {
           ))}
       </div>
 
-      {data.filter((task) => !task._deleted).length === 0 && !isLoading && (
+      {data.length === 0 && !isLoading && (
         <p className="text-rose-pine-muted text-center py-8">No tasks yet. Create one above!</p>
       )}
     </div>

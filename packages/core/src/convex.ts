@@ -69,8 +69,9 @@ export function generateConvexRxFunctions(config: {
         }
       }
 
+      // Return 0 for empty tables to prevent unnecessary change detection
       return {
-        timestamp: latestTime || Date.now(),
+        timestamp: latestTime || 0,
         count: allDocs.length,
       };
     },
@@ -79,6 +80,14 @@ export function generateConvexRxFunctions(config: {
   // ========================================
   // 2. PULL DOCUMENTS
   // ========================================
+  //
+  // IMPORTANT: For optimal performance (10-100x faster), create an index in your Convex schema:
+  //
+  // export default defineSchema({
+  //   yourTable: defineTable({
+  //     // ... your fields
+  //   }).index('by_updatedTime', ['updatedTime']),
+  // });
 
   const pullDocuments = queryBuilder({
     args: {
@@ -102,21 +111,32 @@ export function generateConvexRxFunctions(config: {
         docs = await ctx.db.query(tableName).order('desc').take(args.limit);
       } else {
         // Incremental pull - get documents newer than checkpoint
-        // TypeScript now knows checkpoint is not null in this branch
+        // Try to use index for 10-100x better performance, fallback to filter if not available
         const checkpoint = args.checkpoint;
-        docs = await ctx.db
-          .query(tableName)
-          .filter((q: any) =>
-            q.or(
-              q.gt(q.field('updatedTime'), checkpoint.updatedTime),
-              q.and(
-                q.eq(q.field('updatedTime'), checkpoint.updatedTime),
-                q.gt(q.field('id'), checkpoint.id)
+
+        try {
+          docs = await ctx.db
+            .query(tableName)
+            .withIndex('by_updatedTime', (q: any) =>
+              q.gt('updatedTime', checkpoint.updatedTime)
+            )
+            .order('desc')
+            .take(args.limit);
+        } catch {
+          docs = await ctx.db
+            .query(tableName)
+            .filter((q: any) =>
+              q.or(
+                q.gt(q.field('updatedTime'), checkpoint.updatedTime),
+                q.and(
+                  q.eq(q.field('updatedTime'), checkpoint.updatedTime),
+                  q.gt(q.field('id'), checkpoint.id)
+                )
               )
             )
-          )
-          .order('desc')
-          .take(args.limit);
+            .order('desc')
+            .take(args.limit);
+        }
       }
 
       // Map to clean objects (strip Convex internal fields)

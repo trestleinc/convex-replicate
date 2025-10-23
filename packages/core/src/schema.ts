@@ -12,9 +12,12 @@ interface PropertyDefinition {
   minimum?: number;
   maximum?: number;
   multipleOf?: number;
-  required?: boolean;
+  required?: boolean | string[];
   items?: PropertyDefinition;
   properties?: Record<string, PropertyDefinition>;
+  minItems?: number;
+  maxItems?: number;
+  additionalProperties?: boolean;
 }
 
 export type SimpleSchema<T> = {
@@ -36,7 +39,16 @@ export const property = {
   number(options?: { min?: number; max?: number; integer?: boolean }): PropertyDefinition {
     return {
       type: 'number',
-      minimum: options?.min ?? 0,
+      minimum: options?.min,
+      maximum: options?.max ?? Number.MAX_SAFE_INTEGER,
+      multipleOf: options?.integer ? 1 : undefined,
+    };
+  },
+
+  positiveNumber(options?: { max?: number; integer?: boolean }): PropertyDefinition {
+    return {
+      type: 'number',
+      minimum: 0,
       maximum: options?.max ?? Number.MAX_SAFE_INTEGER,
       multipleOf: options?.integer ? 1 : undefined,
     };
@@ -46,12 +58,28 @@ export const property = {
     return { type: 'boolean' };
   },
 
-  array(items: PropertyDefinition): PropertyDefinition {
-    return { type: 'array', items };
+  array(
+    items: PropertyDefinition,
+    options?: { minItems?: number; maxItems?: number }
+  ): PropertyDefinition {
+    return {
+      type: 'array',
+      items,
+      minItems: options?.minItems,
+      maxItems: options?.maxItems,
+    };
   },
 
-  object(properties: Record<string, PropertyDefinition>): PropertyDefinition {
-    return { type: 'object', properties };
+  object(
+    properties: Record<string, PropertyDefinition>,
+    options?: { required?: string[]; additionalProperties?: boolean }
+  ): PropertyDefinition {
+    return {
+      type: 'object',
+      properties,
+      required: options?.required,
+      additionalProperties: options?.additionalProperties ?? true,
+    };
   },
 };
 
@@ -130,12 +158,18 @@ function convertPropertyDefinition(propDef: PropertyDefinition): any {
   if (propDef.minimum !== undefined) schema.minimum = propDef.minimum;
   if (propDef.maximum !== undefined) schema.maximum = propDef.maximum;
   if (propDef.multipleOf !== undefined) schema.multipleOf = propDef.multipleOf;
+  if (propDef.minItems !== undefined) schema.minItems = propDef.minItems;
+  if (propDef.maxItems !== undefined) schema.maxItems = propDef.maxItems;
+  if (propDef.additionalProperties !== undefined) schema.additionalProperties = propDef.additionalProperties;
   if (propDef.items) schema.items = convertPropertyDefinition(propDef.items);
   if (propDef.properties) {
     schema.properties = {};
     for (const [key, value] of Object.entries(propDef.properties)) {
       schema.properties[key] = convertPropertyDefinition(value);
     }
+  }
+  if (Array.isArray(propDef.required)) {
+    schema.required = propDef.required;
   }
 
   return schema;
@@ -145,18 +179,6 @@ function convertPropertyDefinition(propDef: PropertyDefinition): any {
 // QUICK SCHEMA HELPERS
 // ========================================
 
-/**
- * Infers a basic schema from a TypeScript type using smart defaults.
- * Only works for simple types (string, number, boolean).
- *
- * For complex types or custom constraints, use `createSchema()` instead.
- *
- * @example
- * ```typescript
- * type Task = { text: string; isCompleted: boolean; priority: number };
- * const schema = inferBasicSchema<Task>('tasks', ['text', 'isCompleted', 'priority']);
- * ```
- */
 export function inferBasicSchema<T extends Record<string, any>>(
   title: string,
   fields: (keyof Omit<T, 'id' | 'updatedTime'>)[],
@@ -174,9 +196,7 @@ export function inferBasicSchema<T extends Record<string, any>>(
     },
   };
 
-  // Add user fields with smart defaults
   for (const field of fields) {
-    // Use generic string type as default - user can override with createSchema
     properties[field as string] = {
       type: 'string',
       maxLength: 1000,
