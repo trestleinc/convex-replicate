@@ -1,20 +1,20 @@
-import { createSchema, property, useConvexRx } from '@convex-rx/react';
+import { createSchema, property, useConvexRx, type SyncedDocument } from '@convex-rx/react';
 import { api } from '../convex/_generated/api';
 
 // ========================================
 // TASK TYPE AND SCHEMA
 // ========================================
 
-// Define your data type - that's it!
-// Note: createSchema automatically adds id, updatedTime, _deleted fields
-export type Task = {
+// Full task type including required sync fields (id, updatedTime, _deleted)
+// Using interface extends (not type intersection) to avoid index signature issues
+export interface Task extends SyncedDocument {
   text: string;
   isCompleted: boolean;
-};
+}
 
 // Create schema using the simple builder API
-// Auto-adds required fields: id, updatedTime, _deleted
-const taskSchema = createSchema<Task>('tasks', {
+// Pass just the custom fields - sync fields are added automatically
+const taskSchema = createSchema<Omit<Task, keyof SyncedDocument>>('tasks', {
   text: property.string(),
   isCompleted: property.boolean(),
 });
@@ -74,40 +74,3 @@ export function useTasks(initialData?: Task[]) {
     }),
   });
 }
-
-// ========================================
-// THAT'S IT! NOW WITH EXTENSIBILITY
-// ========================================
-//
-// What you get:
-// - Automatic schema generation with type safety
-// - Built-in singleton management (no race conditions)
-// - Automatic conflict resolution (last-write-wins)
-// - Real-time sync via WebSocket change stream
-// - Offline-first writes with automatic retry
-// - Cross-tab synchronization
-// - Type-safe base CRUD operations: insert, update, delete
-// - Type-safe custom actions: toggle, completeAll
-// - Type-safe custom queries: getCompleted, getIncomplete, count
-//
-// Usage in components:
-//
-// const { data, status, actions, queries } = useTasks();
-//
-// // Base CRUD (always available in actions)
-// actions.insert({ text: 'New task', isCompleted: false });
-// actions.update(id, { isCompleted: true });
-// actions.delete(id);
-//
-// // Custom actions (fully typed!)
-// actions.toggle(id);
-// actions.completeAll();
-//
-// // Custom queries (fully typed!)
-// const completed = queries.getCompleted();
-// const incomplete = queries.getIncomplete();
-// const count = queries.count();
-//
-// // Access raw data
-// data.map(task => ...)
-//

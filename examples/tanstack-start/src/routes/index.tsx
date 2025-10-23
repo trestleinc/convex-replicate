@@ -6,7 +6,7 @@ import { useTasks, type Task } from '../useTasks';
 import { api } from '../../convex/_generated/api';
 
 export const Route = createFileRoute('/')({
-  loader: async () => {
+  loader: async (_ctx) => {
     // SSR: Fetch data via HTTP on the server
     const tasks = await preloadConvexRxData<Task>({
       convexUrl: import.meta.env.VITE_CONVEX_URL,
@@ -14,7 +14,7 @@ export const Route = createFileRoute('/')({
         pullDocuments: api.tasks.pullDocuments,
       },
     });
-    return { tasks };
+    return { tasks } as { tasks: Task[] };
   },
   component: HomeComponent,
 });
@@ -44,7 +44,8 @@ function TasksContent() {
   const [editText, setEditText] = useState('');
 
   // Get SSR data from loader
-  const { tasks: initialTasks } = Route.useLoaderData();
+  const loaderData = Route.useLoaderData();
+  const initialTasks = loaderData?.tasks;
 
   // Pass SSR data to hook for instant hydration
   const { data, status, actions, purgeStorage } = useTasks(initialTasks);
@@ -143,14 +144,6 @@ function TasksContent() {
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
-      {/* Subtle replication indicator - only shown during background replication */}
-      {status.isReplicating && (
-        <div className="mb-4 text-center text-xs text-rose-pine-muted">
-          <span>Syncing...</span>
-        </div>
-      )}
-
-      {/* Create Task Form */}
       <form onSubmit={handleCreateTask} className="mb-6">
         <div className="flex gap-2">
           <input
