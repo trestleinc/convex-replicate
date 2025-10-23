@@ -2,20 +2,20 @@
 
 A complete offline-first sync solution combining **Convex** (real-time backend), **RxDB** (local database), and **TanStack DB** (reactive state) with full TypeScript type safety.
 
-## 🚀 Features
+## Features
 
-- ✅ **Offline-first** - Works without internet, syncs when reconnected
-- ✅ **Real-time sync** - Convex WebSocket-based bidirectional synchronization
-- ✅ **Type-safe** - Full TypeScript support with zero `any` types
-- ✅ **Auto-generated Convex functions** - No manual replication code needed
-- ✅ **Flexible conflict resolution** - Server-wins, client-wins, last-write-wins, or custom merge
-- ✅ **Cross-tab sync** - Changes sync instantly across browser tabs
-- ✅ **SSR support** - Server-side rendering with data preloading
-- ✅ **Clock skew handling** - Automatic time synchronization across clients
-- ✅ **Network resilience** - Automatic retry with exponential backoff
-- ✅ **Extensible** - Custom actions, queries, subscriptions, and middleware
+- **Offline-first** - Works without internet, syncs when reconnected
+- **Real-time sync** - Convex WebSocket-based bidirectional synchronization
+- **Type-safe** - Full TypeScript support with zero `any` types
+- **Auto-generated Convex functions** - No manual replication code needed
+- **Flexible conflict resolution** - Server-wins, client-wins, last-write-wins, or custom merge
+- **Cross-tab sync** - Changes sync instantly across browser tabs
+- **SSR support** - Server-side rendering with data preloading
+- **Clock skew handling** - Automatic time synchronization across clients
+- **Network resilience** - Automatic retry with exponential backoff
+- **Extensible** - Custom actions, queries, subscriptions, and middleware
 
-## 📦 Packages
+## Packages
 
 ### `@convex-rx/core`
 Framework-agnostic sync engine (614 lines):
@@ -34,7 +34,7 @@ React hooks with TanStack DB integration (550 lines):
 - Custom actions, queries, and subscriptions
 - SSR data preloading
 
-## 🏗️ Architecture
+## Architecture
 
 ```mermaid
 graph TB
@@ -59,7 +59,7 @@ graph TB
     style I fill:#3178c6
 ```
 
-## 📦 Quick Start
+## Quick Start
 
 ### 1. Install Dependencies
 
@@ -203,7 +203,7 @@ export function TaskList() {
 }
 ```
 
-## 🎯 Advanced Features
+## Advanced Features
 
 ### Conflict Resolution Strategies
 
@@ -413,7 +413,7 @@ function TasksPage() {
 }
 ```
 
-## 🔍 How It Works
+## How It Works
 
 ### Real-Time Sync Flow
 
@@ -441,18 +441,18 @@ sequenceDiagram
 
 ### Offline Behavior
 
-- ✅ **Writes** - Queue locally in RxDB, sync when online
-- ✅ **Reads** - Always work from local RxDB cache
-- ✅ **UI** - Fully functional with optimistic updates
-- ✅ **Conflicts** - Auto-resolved when reconnected
+- **Writes** - Queue locally in RxDB, sync when online
+- **Reads** - Always work from local RxDB cache
+- **UI** - Fully functional with optimistic updates
+- **Conflicts** - Auto-resolved when reconnected
 
 ### Cross-Tab Sync
 
-- ✅ **Local changes** - Instant sync via RxDB's multiInstance mode
-- ✅ **Remote changes** - WebSocket streams propagate to all tabs
-- ✅ **Single database** - One RxDB instance shared across tabs
+- **Local changes** - Instant sync via RxDB's multiInstance mode
+- **Remote changes** - WebSocket streams propagate to all tabs
+- **Single database** - One RxDB instance shared across tabs
 
-## 📋 API Reference
+## API Reference
 
 ### `useConvexRx<T>(config)`
 
@@ -562,7 +562,7 @@ createCustomMergeHandler<T>(
 )
 ```
 
-## 🛠️ Development
+## Development
 
 ### Building Packages
 
@@ -592,24 +592,24 @@ bun run check:fix     # Auto-fix all issues
 bun run dev:example   # Start example app + Convex
 ```
 
-## 📚 Examples
+## Examples
 
 See `examples/tanstack-start/` for a complete implementation:
 - `src/hooks/useTasks.ts` - Hook with custom actions and queries
 - `src/routes/index.tsx` - Component usage
 - `convex/tasks.ts` - Auto-generated Convex functions
 
-## 🎓 TypeScript Best Practices
+## TypeScript Best Practices
 
 This library follows strict TypeScript standards:
-- ✅ Zero `any` types - use `unknown` for truly unknown values
-- ✅ Const object pattern instead of enums
-- ✅ Explicit return types on exported functions
-- ✅ Trust TypeScript - no redundant runtime checks
-- ✅ Proper generic constraints
+- Zero `any` types - use `unknown` for truly unknown values
+- Const object pattern instead of enums
+- Explicit return types on exported functions
+- Trust TypeScript - no redundant runtime checks
+- Proper generic constraints
 
 See `CLAUDE.md` for detailed coding standards.
 
-## 📄 License
+## License
 
 MIT License - see LICENSE file for details

@@ -49,7 +49,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Code Quality (Biome v2)
 - `bun run check` - Run lint + format checks (dry run, no changes)
-- `bun run check:fix` - **Auto-fix all lint and format issues** ⭐ **Run before committing**
+- `bun run check:fix` - **Auto-fix all lint and format issues** (Run before committing)
 - `bun run lint` - Lint all files (dry run)
 - `bun run lint:fix` - Auto-fix lint issues only
 - `bun run format` - Format all files
@@ -62,6 +62,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 1. Fix all auto-fixable linting issues
 2. Format all files according to Biome config
 3. Report any remaining issues
+
+### Code Style
+**NEVER use emojis** in code, comments, documentation, or commit messages. Keep all content professional and text-only.
 
 ### Dev Server Management
 - **Do NOT run dev servers manually** - The development server is managed by another process
@@ -585,13 +588,14 @@ export type { SyncedDocument, ConvexClient } from './types';
 
 ## Common Pitfalls to Avoid
 
-1. ❌ Using `any` instead of `unknown` or specific types
-2. ❌ Using enums instead of const objects
-3. ❌ Adding runtime checks that duplicate TypeScript
-4. ❌ Using `console.*` instead of LogTape
-5. ❌ Double type assertions (`as unknown as`)
-6. ❌ Hard deletes instead of soft deletes
-7. ❌ Creating multiple database instances instead of singletons
-8. ❌ Validating internal TypeScript types with Zod
-9. ❌ Missing explicit return types on exported functions
-10. ❌ Not using Context7 for library documentation
+1. Using `any` instead of `unknown` or specific types
+2. Using enums instead of const objects
+3. Adding runtime checks that duplicate TypeScript
+4. Using `console.*` instead of LogTape
+5. Double type assertions (`as unknown as`)
+6. Hard deletes instead of soft deletes
+7. Creating multiple database instances instead of singletons
+8. Validating internal TypeScript types with Zod
+9. Missing explicit return types on exported functions
+10. Not using Context7 for library documentation
+11. Using emojis in code, comments, or documentation
