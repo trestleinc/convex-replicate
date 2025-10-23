@@ -7,15 +7,37 @@
  * This eliminates the need to manually write replication logic for each table.
  */
 
+import type { RegisteredMutation, RegisteredQuery } from 'convex/server';
+
 // ========================================
-// TYPE DEFINITIONS
+// TYPE ALIASES FOR OPTION 1
 // ========================================
 
-export interface ConvexRxTableFunctions {
-  changeStream: any; // Convex query function
-  pullDocuments: any; // Convex query function
-  pushDocuments: any; // Convex mutation function
-}
+/**
+ * Type alias for the changeStream query.
+ * Use this to annotate exports and preserve types through module boundaries.
+ */
+export type ConvexRxChangeStream = RegisteredQuery<
+  'public',
+  Record<string, never>,
+  { timestamp: number; count: number }
+>;
+
+/**
+ * Type alias for the pullDocuments query.
+ * Use this to annotate exports and preserve types through module boundaries.
+ */
+export type ConvexRxPullDocuments = RegisteredQuery<
+  'public',
+  { checkpoint: any; limit: number },
+  { documents: any[]; checkpoint: any }
+>;
+
+/**
+ * Type alias for the pushDocuments mutation.
+ * Use this to annotate exports and preserve types through module boundaries.
+ */
+export type ConvexRxPushDocuments = RegisteredMutation<'public', { changeRows: any[] }, any[]>;
 
 // ========================================
 // FUNCTION TEMPLATES
@@ -49,7 +71,19 @@ export function generateConvexRxFunctions(config: {
   query: any;
   mutation: any;
   v: any;
-}): ConvexRxTableFunctions {
+}): {
+  changeStream: RegisteredQuery<
+    'public',
+    Record<string, never>,
+    { timestamp: number; count: number }
+  >;
+  pullDocuments: RegisteredQuery<
+    'public',
+    { checkpoint: any; limit: number },
+    { documents: any[]; checkpoint: any }
+  >;
+  pushDocuments: RegisteredMutation<'public', { changeRows: any[] }, any[]>;
+} {
   const { tableName, query: queryBuilder, mutation: mutationBuilder, v } = config;
 
   // ========================================
@@ -231,9 +265,66 @@ export function generateConvexRxFunctions(config: {
   });
 
   return {
-    changeStream,
-    pullDocuments,
-    pushDocuments,
+    changeStream: changeStream as RegisteredQuery<
+      'public',
+      Record<string, never>,
+      { timestamp: number; count: number }
+    >,
+    pullDocuments: pullDocuments as RegisteredQuery<
+      'public',
+      { checkpoint: any; limit: number },
+      { documents: any[]; checkpoint: any }
+    >,
+    pushDocuments: pushDocuments as RegisteredMutation<'public', { changeRows: any[] }, any[]>,
+  };
+}
+
+// ========================================
+// EXPORT HELPER FOR OPTION 2
+// ========================================
+
+/**
+ * Helper function that generates Convex functions with proper type assertions.
+ * This preserves types through module boundaries automatically.
+ *
+ * Usage (Option 2 - Single-line export):
+ * ```typescript
+ * import { exportConvexRxFunctions } from '@convex-rx/core';
+ * import { query, mutation } from './_generated/server';
+ * import { v } from 'convex/values';
+ *
+ * export const { changeStream, pullDocuments, pushDocuments } = exportConvexRxFunctions({
+ *   tableName: 'tasks',
+ *   query,
+ *   mutation,
+ *   v,
+ * });
+ * ```
+ */
+export function exportConvexRxFunctions(config: {
+  tableName: string;
+  query: any;
+  mutation: any;
+  v: any;
+}): {
+  changeStream: RegisteredQuery<
+    'public',
+    Record<string, never>,
+    { timestamp: number; count: number }
+  >;
+  pullDocuments: RegisteredQuery<
+    'public',
+    { checkpoint: any; limit: number },
+    { documents: any[]; checkpoint: any }
+  >;
+  pushDocuments: RegisteredMutation<'public', { changeRows: any[] }, any[]>;
+} {
+  const fns = generateConvexRxFunctions(config);
+
+  return {
+    changeStream: fns.changeStream as ConvexRxChangeStream,
+    pullDocuments: fns.pullDocuments as ConvexRxPullDocuments,
+    pushDocuments: fns.pushDocuments as ConvexRxPushDocuments,
   };
 }
 
@@ -258,7 +349,23 @@ export function defineConvexRxTable(tableName: string) {
     /**
      * Call this with your Convex query/mutation/v imports to generate functions
      */
-    withConvex(query: any, mutation: any, v: any) {
+    withConvex(
+      query: any,
+      mutation: any,
+      v: any
+    ): {
+      changeStream: RegisteredQuery<
+        'public',
+        Record<string, never>,
+        { timestamp: number; count: number }
+      >;
+      pullDocuments: RegisteredQuery<
+        'public',
+        { checkpoint: any; limit: number },
+        { documents: any[]; checkpoint: any }
+      >;
+      pushDocuments: RegisteredMutation<'public', { changeRows: any[] }, any[]>;
+    } {
       return generateConvexRxFunctions({ tableName, query, mutation, v });
     },
   };

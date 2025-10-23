@@ -46,8 +46,8 @@ export type { SimpleSchema } from './schema';
 // CONVEX FUNCTION GENERATORS
 // ========================================
 
-export { defineConvexRxTable, generateConvexRxFunctions } from './convex';
-export type { ConvexRxTableFunctions } from './convex';
+export { defineConvexRxTable, generateConvexRxFunctions, exportConvexRxFunctions } from './convex';
+export type { ConvexRxChangeStream, ConvexRxPullDocuments, ConvexRxPushDocuments } from './convex';
 
 // ========================================
 // SINGLETON MANAGEMENT

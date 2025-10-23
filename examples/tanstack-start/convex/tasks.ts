@@ -1,4 +1,5 @@
 import { generateConvexRxFunctions } from '@convex-rx/core';
+import type { RegisteredMutation, RegisteredQuery } from 'convex/server';
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
 
@@ -6,10 +7,7 @@ import { mutation, query } from './_generated/server';
 // AUTO-GENERATED CONVEX FUNCTIONS
 // ========================================
 
-// This single call generates all 3 required functions:
-// - changeStream: Detects changes for real-time sync
-// - pullDocuments: Pulls documents from server
-// - pushDocuments: Pushes local changes to server
+// Generate the functions
 const taskFunctions = generateConvexRxFunctions({
   tableName: 'tasks',
   query,
@@ -17,6 +15,20 @@ const taskFunctions = generateConvexRxFunctions({
   v,
 });
 
-export const changeStream = taskFunctions.changeStream;
-export const pullDocuments = taskFunctions.pullDocuments;
-export const pushDocuments = taskFunctions.pushDocuments;
+// Export with explicit type annotations to preserve types through Convex's FilterApi
+// This is required because TypeScript doesn't preserve literal type properties
+// (isConvexFunction: true) through destructured exports or type aliases
+export const changeStream: RegisteredQuery<
+  'public',
+  Record<string, never>,
+  { timestamp: number; count: number }
+> = taskFunctions.changeStream;
+
+export const pullDocuments: RegisteredQuery<
+  'public',
+  { checkpoint: any; limit: number },
+  { documents: any[]; checkpoint: any }
+> = taskFunctions.pullDocuments;
+
+export const pushDocuments: RegisteredMutation<'public', { changeRows: any[] }, any[]> =
+  taskFunctions.pushDocuments;
