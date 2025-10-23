@@ -58,6 +58,14 @@ export interface RxJsonSchema<T = Record<string, unknown>> {
   properties: Record<string, PropertySchema>;
   required: string[];
   indexes?: string[][];
+  /**
+   * CRDT configuration for conflict-free replication.
+   * When set, RxDB uses its built-in CRDT conflict handler.
+   * @see https://rxdb.info/crdt.html
+   */
+  crdt?: {
+    field: string;
+  };
 }
 
 /**

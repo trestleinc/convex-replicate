@@ -17,6 +17,9 @@ export default defineSchema({
     updatedTime: v.number(), // Last update timestamp (for sync)
     deleted: v.optional(v.boolean()), // Soft delete flag
 
+    // CRDT support field (stores operations for conflict-free replication)
+    crdts: v.optional(v.any()),
+
     // Application fields
     text: v.string(),
     isCompleted: v.boolean(),

@@ -221,6 +221,75 @@ export function createCustomMergeHandler<T extends ConvexRxDocument>(
   };
 }
 
+/**
+ * Field-level merge strategy: Merges changes from both client and server
+ * by detecting which fields were modified and combining them.
+ *
+ * This prevents data loss when two clients modify different fields of the
+ * same document simultaneously.
+ *
+ * @example Two clients editing same document
+ * ```typescript
+ * // Client A modifies isCompleted
+ * // Client B modifies text
+ * // Result: Both changes preserved ✅
+ * ```
+ */
+export function createFieldLevelMergeHandler<T extends ConvexRxDocument>(
+  enableLogging = false
+): RxConflictHandler<T> {
+  const logger = getLogger('conflict-handler', enableLogging);
+
+  return {
+    isEqual(docA, docB) {
+      return docA.updatedTime === docB.updatedTime && docA.id === docB.id;
+    },
+    resolve(input) {
+      const { realMasterState, assumedMasterState, newDocumentState } = input;
+
+      if (!assumedMasterState) {
+        logger.debug('Field-level merge: no assumed state, using server state', {
+          documentId: realMasterState.id,
+        });
+        return realMasterState;
+      }
+
+      // Build merged document field by field
+      const merged = { ...realMasterState };
+
+      for (const key in newDocumentState) {
+        if (key === 'id' || key === 'creationTime') {
+          // Never change these fields
+          continue;
+        }
+
+        // Check if client changed this field
+        const clientChangedField = newDocumentState[key] !== assumedMasterState[key];
+
+        if (clientChangedField) {
+          // Client changed it, use client's value
+          merged[key] = newDocumentState[key];
+          logger.debug('Field-level merge: using client value', {
+            documentId: realMasterState.id,
+            field: key,
+            clientValue: newDocumentState[key],
+            serverValue: realMasterState[key],
+          });
+        }
+      }
+
+      // Always use the latest updatedTime
+      merged.updatedTime = Math.max(realMasterState.updatedTime, newDocumentState.updatedTime);
+
+      logger.info('Field-level merge complete', {
+        documentId: merged.id,
+      });
+
+      return merged as T;
+    },
+  };
+}
+
 // ========================================
 // DEFAULT CONFLICT HANDLER
 // ========================================

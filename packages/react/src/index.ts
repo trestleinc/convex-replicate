@@ -104,10 +104,15 @@ export type { RxConflictHandler, RxConflictHandlerInput } from '@convex-rx/core'
 export {
   createClientWinsHandler,
   createCustomMergeHandler,
+  createFieldLevelMergeHandler,
   createLastWriteWinsHandler,
   createServerWinsHandler,
   defaultConflictHandler,
 } from '@convex-rx/core';
+
+/** CRDT support for conflict-free replication */
+export { addCRDTToSchema, createCRDTActions, getCRDTSchemaPart } from '@convex-rx/core';
+export type { CRDTActions } from '@convex-rx/core';
 
 /** Schema builder utilities */
 export { createSchema, inferBasicSchema, property } from '@convex-rx/core';

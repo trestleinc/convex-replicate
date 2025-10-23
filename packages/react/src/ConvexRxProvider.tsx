@@ -1,4 +1,5 @@
 import React from 'react';
+import { configureLogging } from '@convex-rx/core';
 import type { ConvexRxConfig, ConvexRxContextValue } from './types';
 
 // ========================================
@@ -56,6 +57,11 @@ export function ConvexRxProvider({ children, ...config }: ConvexRxProviderProps)
         '<ConvexRxProvider convexClient={convexClient}>...</ConvexRxProvider>'
     );
   }
+
+  // Configure LogTape on mount
+  React.useEffect(() => {
+    configureLogging(config.enableLogging ?? true);
+  }, [config.enableLogging]);
 
   const contextValue = React.useMemo<ConvexRxContextValue>(
     () => ({

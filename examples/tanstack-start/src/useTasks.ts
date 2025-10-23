@@ -1,11 +1,17 @@
-import { createSchema, property, useConvexRx, type SyncedDocument } from '@convex-rx/react';
+import {
+  createSchema,
+  property,
+  useConvexRx,
+  addCRDTToSchema,
+  type SyncedDocument,
+} from '@convex-rx/react';
 import { api } from '../convex/_generated/api';
 
 // ========================================
 // TASK TYPE AND SCHEMA
 // ========================================
 
-// Full task type including required sync fields (id, updatedTime, _deleted)
+// Full task type including required sync fields (id, creationTime, updatedTime, _deleted)
 // Using interface extends (not type intersection) to avoid index signature issues
 export interface Task extends SyncedDocument {
   text: string;
@@ -14,10 +20,13 @@ export interface Task extends SyncedDocument {
 
 // Create schema using the simple builder API
 // Pass just the custom fields - sync fields are added automatically
-const taskSchema = createSchema<Omit<Task, keyof SyncedDocument>>('tasks', {
+const baseSchema = createSchema<Omit<Task, keyof SyncedDocument>>('tasks', {
   text: property.string(),
   isCompleted: property.boolean(),
 });
+
+// Add CRDT support for conflict-free replication
+const taskSchema = addCRDTToSchema(baseSchema);
 
 // ========================================
 // EFFORTLESS HOOK - NEW UNIFIED API
@@ -44,20 +53,26 @@ export function useTasks(initialData?: Task[]) {
     // No configuration needed!
     // Note: convexClient and enableLogging are provided by ConvexRxProvider
 
-    // Optional: Add custom actions
+    // Base actions automatically use CRDT when schema has CRDT enabled
+    // No need for custom CRDT wrappers - it's all handled intelligently!
     actions: (base, ctx) => ({
-      // Toggle completion status
+      ...base, // insert, update, delete automatically use CRDT
+
+      // Optional convenience methods
       toggle: async (id: string) => {
         const task = await ctx.rxCollection.findOne(id).exec();
         if (task) {
-          await base.update(id, { isCompleted: !task.isCompleted });
+          await base.update(id, { isCompleted: !task.isCompleted } as Partial<Task>);
         }
       },
 
-      // Complete all tasks
       completeAll: async () => {
-        const tasks = ctx.collection.toArray;
-        await Promise.all(tasks.map((task) => base.update(task.id, { isCompleted: true })));
+        const tasks = await ctx.rxCollection.find().exec();
+        if (tasks) {
+          await Promise.all(
+            tasks.map((task) => base.update(task.id, { isCompleted: true } as Partial<Task>))
+          );
+        }
       },
     }),
 

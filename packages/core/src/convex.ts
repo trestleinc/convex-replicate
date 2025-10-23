@@ -20,7 +20,7 @@ import type { RegisteredMutation, RegisteredQuery } from 'convex/server';
 export type ConvexRxChangeStream = RegisteredQuery<
   'public',
   Record<string, never>,
-  { timestamp: number; count: number }
+  { timestamp: number; checksum: number; count: number }
 >;
 
 /**
@@ -75,7 +75,7 @@ export function generateConvexRxFunctions(config: {
   changeStream: RegisteredQuery<
     'public',
     Record<string, never>,
-    { timestamp: number; count: number }
+    { timestamp: number; checksum: number; count: number }
   >;
   pullDocuments: RegisteredQuery<
     'public',
@@ -96,14 +96,17 @@ export function generateConvexRxFunctions(config: {
       const allDocs = await ctx.db.query(tableName).collect();
 
       let latestTime = 0;
+      let checksum = 0;
       for (const doc of allDocs) {
         if (doc.updatedTime > latestTime) {
           latestTime = doc.updatedTime;
         }
+        checksum += doc.updatedTime;
       }
 
       return {
         timestamp: latestTime || 0,
+        checksum: checksum,
         count: allDocs.length,
       };
     },
@@ -283,7 +286,7 @@ export function generateConvexRxFunctions(config: {
     changeStream: changeStream as RegisteredQuery<
       'public',
       Record<string, never>,
-      { timestamp: number; count: number }
+      { timestamp: number; checksum: number; count: number }
     >,
     pullDocuments: pullDocuments as RegisteredQuery<
       'public',

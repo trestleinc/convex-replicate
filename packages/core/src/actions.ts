@@ -84,10 +84,16 @@ export interface ActionContext<TData extends SyncedDocument> {
 export function createBaseActions<TData extends SyncedDocument>(
   context: ActionContext<TData>
 ): BaseActions<TData> {
+  // Detect if CRDT is enabled on the schema
+  const hasCRDT = !!(context.rxCollection.schema as any).jsonSchema?.crdt;
+  const logger = getLogger('actions', false);
+
+  if (hasCRDT) {
+    logger.debug('CRDT detected - using CRDT operations for update/delete');
+  }
+
   return {
     insert: async (doc: Omit<TData, keyof SyncedDocument>): Promise<string> => {
-      const logger = getLogger('actions', false);
-
       let id = crypto.randomUUID();
       let attempts = 0;
       const maxAttempts = 3;
@@ -113,7 +119,13 @@ export function createBaseActions<TData extends SyncedDocument>(
         updatedTime: timestamp,
       } as TData;
 
-      await context.insertFn(fullDoc);
+      if (hasCRDT) {
+        // Use RxDB's native insert for CRDT support
+        await context.rxCollection.insert(fullDoc);
+      } else {
+        // Use framework-specific insert for non-CRDT
+        await context.insertFn(fullDoc);
+      }
       return id;
     },
 
@@ -121,24 +133,55 @@ export function createBaseActions<TData extends SyncedDocument>(
       id: string,
       updates: Partial<Omit<TData, keyof SyncedDocument>>
     ): Promise<void> => {
-      await context.updateFn(id, (draft: TData) => {
-        Object.assign(draft, updates);
-        draft.updatedTime = getAdjustedTime();
-      });
+      if (hasCRDT) {
+        // Use CRDT operations for conflict-free updates
+        const doc = await context.rxCollection.findOne(id).exec();
+        if (!doc) {
+          throw new Error(`Document ${id} not found`);
+        }
+
+        await (doc as any).updateCRDT({
+          ifMatch: {
+            $set: {
+              ...updates,
+              updatedTime: getAdjustedTime(),
+            },
+          },
+        });
+      } else {
+        // Use regular update for non-CRDT schemas
+        await context.updateFn(id, (draft: TData) => {
+          Object.assign(draft, updates);
+          draft.updatedTime = getAdjustedTime();
+        });
+      }
     },
 
     delete: async (id: string): Promise<void> => {
       const doc = await context.rxCollection.findOne(id).exec();
 
-      if (doc) {
+      if (!doc) {
+        throw new Error(`Document ${id} not found`);
+      }
+
+      if (hasCRDT) {
+        // Use CRDT operations for conflict-free soft delete
+        await (doc as any).updateCRDT({
+          ifMatch: {
+            $set: {
+              _deleted: true,
+              updatedTime: getAdjustedTime(),
+            },
+          },
+        });
+      } else {
+        // Use regular update for non-CRDT schemas
         await doc.update({
           $set: {
             _deleted: true,
             updatedTime: getAdjustedTime(),
           },
         });
-      } else {
-        throw new Error(`Document ${id} not found`);
       }
     },
   };

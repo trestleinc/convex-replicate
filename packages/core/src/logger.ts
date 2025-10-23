@@ -7,7 +7,7 @@
  * @see https://github.com/dahlia/logtape
  */
 
-import { type Logger, getLogger as getLogTapeLogger } from '@logtape/logtape';
+import { type Logger, getLogger as getLogTapeLogger, configure, getConsoleSink } from '@logtape/logtape';
 
 // Re-export LogTape types and utilities for advanced users
 export type { Logger } from '@logtape/logtape';
@@ -19,6 +19,43 @@ export {
   getConsoleSink,
   getLogger as getLogTapeLogger,
 } from '@logtape/logtape';
+
+// Track if LogTape has been configured
+let isConfigured = false;
+
+/**
+ * Initialize LogTape configuration for ConvexRx.
+ * This must be called before any logging occurs.
+ * Safe to call multiple times - only configures once.
+ *
+ * @param enableLogging - Whether to enable logging (default: true)
+ *
+ * @example
+ * ```typescript
+ * // In your app entry point or provider
+ * await configureLogging(true);
+ * ```
+ */
+export async function configureLogging(enableLogging = true): Promise<void> {
+  if (isConfigured) {
+    return; // Already configured
+  }
+
+  await configure({
+    sinks: {
+      console: getConsoleSink(),
+    },
+    loggers: [
+      {
+        category: ['convex-rx'],
+        lowestLevel: enableLogging ? 'debug' : 'error',
+        sinks: ['console'],
+      },
+    ],
+  });
+
+  isConfigured = true;
+}
 
 /**
  * Get a logger for a ConvexRx component.

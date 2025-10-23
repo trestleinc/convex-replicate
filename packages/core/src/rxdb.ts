@@ -75,10 +75,16 @@ export interface ConvexRxDBConfig<T extends ConvexRxDocument> {
    * Optional conflict handler for resolving document conflicts during replication.
    * If not provided, uses defaultConflictHandler (last-write-wins strategy).
    *
-   * Available strategies:
+   * **IMPORTANT**: This option is IGNORED when using CRDT schemas.
+   * If your schema has `crdt: { field: 'crdts' }` configured (via `addCRDTToSchema()`),
+   * RxDB's built-in CRDT conflict handler will be used automatically and this setting
+   * has no effect. CRDTs provide automatic, operation-based conflict resolution.
+   *
+   * Available strategies (for non-CRDT schemas):
    * - createServerWinsHandler() - Always use server state
    * - createClientWinsHandler() - Always use client state (can cause data loss)
    * - createLastWriteWinsHandler() - Use newest updatedTime (default)
+   * - createFieldLevelMergeHandler() - Merge changes field-by-field
    * - createCustomMergeHandler() - Custom merge logic
    */
   conflictHandler?: RxConflictHandler<T>;
@@ -276,12 +282,28 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
     },
   } as RxJsonSchema<T & { _deleted?: boolean }>;
 
+  // Detect if schema has CRDT enabled
+  // When CRDTs are enabled, RxDB requires using its built-in CRDT conflict handler
+  const hasCRDT = !!schemaWithDeleted.crdt;
+
+  if (hasCRDT) {
+    logger.info('Using CRDT conflict handler (custom conflictHandler ignored)');
+  } else {
+    logger.info('Using custom conflict handler');
+  }
+
+  // Only pass conflictHandler if CRDT is NOT enabled
+  // RxDB throws CRDT3 error if conflictHandler is provided with CRDT schemas
   const collections = await db.addCollections({
-    [collectionName]: {
-      schema: schemaWithDeleted,
-      // Type cast: RxConflictHandler<T> satisfies RxDB's internal conflict handler interface
-      conflictHandler: conflictHandler as any,
-    },
+    [collectionName]: hasCRDT
+      ? {
+          schema: schemaWithDeleted,
+        }
+      : {
+          schema: schemaWithDeleted,
+          // Type cast: RxConflictHandler<T> satisfies RxDB's internal conflict handler interface
+          conflictHandler: conflictHandler as any,
+        },
   });
 
   const rxCollection = collections[collectionName];
@@ -289,7 +311,7 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
   logger.info('RxDB collection created');
 
   const pullStream$ = new Subject<'RESYNC' | any>();
-  let lastKnownState: { timestamp: number; count: number } | null = null;
+  let lastKnownState: { timestamp: number; checksum: number; count: number } | null = null;
   let unsubscribeChangeStream: (() => void) | null = null;
   let retryCount = 0;
   const maxRetries = 10;
@@ -298,26 +320,39 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
     logger.info('Setting up Convex change stream', { retryCount });
 
     try {
-      const changeWatch = convexClient.watchQuery<{ timestamp: number; count: number }>(
-        convexApi.changeStream,
-        {}
-      );
+      const changeWatch = convexClient.watchQuery<{
+        timestamp: number;
+        checksum: number;
+        count: number;
+      }>(convexApi.changeStream, {});
 
       const unsubscribe = changeWatch.onUpdate(() => {
-        retryCount = 0; // Reset on successful connection
+        retryCount = 0;
         const data = changeWatch.localQueryResult();
 
         if (data) {
           if (lastKnownState === null) {
-            lastKnownState = { timestamp: data.timestamp, count: data.count };
+            lastKnownState = {
+              timestamp: data.timestamp,
+              checksum: data.checksum,
+              count: data.count,
+            };
             pullStream$.next('RESYNC');
             logger.info('Initial change stream state', { data });
             return;
           }
 
-          if (data.timestamp !== lastKnownState.timestamp || data.count !== lastKnownState.count) {
-            logger.info('Change detected', { data });
-            lastKnownState = { timestamp: data.timestamp, count: data.count };
+          if (
+            data.timestamp !== lastKnownState.timestamp ||
+            data.checksum !== lastKnownState.checksum ||
+            data.count !== lastKnownState.count
+          ) {
+            logger.info('Change detected', { data, lastKnownState });
+            lastKnownState = {
+              timestamp: data.timestamp,
+              checksum: data.checksum,
+              count: data.count,
+            };
             pullStream$.next('RESYNC');
           }
         }
@@ -417,6 +452,26 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
       stream$: pullStream$.asObservable(),
       modifier: (doc: any) => {
         const { deleted, ...rest } = doc;
+
+        // Parse CRDT field from JSON string back to object
+        // Convex stores it as string, RxDB needs it as object
+        if (hasCRDT && schemaWithDeleted.crdt) {
+          const crdtField = schemaWithDeleted.crdt.field;
+          const crdtString = rest[crdtField];
+
+          logger.debug('Parsing CRDT field from pull', {
+            documentId: doc.id,
+            crdtField,
+            hasCrdtString: !!crdtString,
+          });
+
+          return {
+            ...rest,
+            [crdtField]: crdtString ? JSON.parse(crdtString) : undefined,
+            _deleted: deleted || false,
+          };
+        }
+
         const transformed = {
           ...rest,
           _deleted: deleted || false,
@@ -445,6 +500,10 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
         lastPushTime = Date.now();
 
         logger.info(`Pushing ${changeRows.length} changes`);
+        logger.debug('Push changeRows', {
+          count: changeRows.length,
+          sample: changeRows[0] // Log first document to see structure
+        });
 
         try {
           const conflicts = await convexClient.mutation<any[]>(convexApi.pushDocuments, {
@@ -452,12 +511,46 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
           });
 
           if (conflicts && conflicts.length > 0) {
-            logger.info('Conflicts detected', { conflictCount: conflicts.length });
+            logger.info('Conflicts detected', {
+              conflictCount: conflicts.length,
+              conflictIds: conflicts.map((c) => c.id),
+            });
+
+            // Transform conflicts from Convex format (deleted) to RxDB format (_deleted)
+            // This matches the pull modifier transformation
+            const transformedConflicts = conflicts.map((conflict) => {
+              const { deleted, ...rest } = conflict;
+              const transformed = {
+                ...rest,
+                _deleted: deleted || false,
+              };
+
+              logger.debug('Transformed push conflict', {
+                from: conflict,
+                to: transformed,
+              });
+
+              return transformed;
+            });
+
+            return transformedConflicts;
           }
 
-          return conflicts || [];
+          return [];
         } catch (error) {
-          logger.error('Push error', { error });
+          console.error('=== PUSH ERROR START ===');
+          console.error('Error object:', error);
+          console.error('Error message:', error instanceof Error ? error.message : 'Not an Error object');
+          console.error('Error type:', error?.constructor?.name);
+          console.error('Error stringified:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+          console.error('=== PUSH ERROR END ===');
+
+          logger.error('Push error details', {
+            message: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+            errorType: error?.constructor?.name,
+            fullError: error,
+          });
 
           const convexError = toConvexRxError(error);
           if (convexError.category === ErrorCategory.NETWORK) {
@@ -480,6 +573,25 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
             _deleted,
             type: typeof _deleted,
           });
+        }
+
+        // Serialize CRDT field to JSON string for Convex compatibility
+        // Convex rejects field names starting with $ (like $set, $inc)
+        if (hasCRDT && schemaWithDeleted.crdt) {
+          const crdtField = schemaWithDeleted.crdt.field;
+          const { [crdtField]: crdtData, ...restWithoutCrdt } = rest;
+
+          logger.debug('Serializing CRDT field for push', {
+            documentId: doc.id,
+            crdtField,
+            hasCrdtData: !!crdtData,
+          });
+
+          return {
+            ...restWithoutCrdt,
+            [crdtField]: crdtData ? JSON.stringify(crdtData) : undefined,
+            deleted,
+          };
         }
 
         return {

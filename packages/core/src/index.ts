@@ -22,10 +22,18 @@ export type { RxConflictHandler, RxConflictHandlerInput } from './conflictHandle
 export {
   createClientWinsHandler,
   createCustomMergeHandler,
+  createFieldLevelMergeHandler,
   createLastWriteWinsHandler,
   createServerWinsHandler,
   defaultConflictHandler,
 } from './conflictHandler';
+
+// ========================================
+// CRDT SUPPORT
+// ========================================
+
+export { addCRDTToSchema, createCRDTActions, getCRDTSchemaPart } from './crdt';
+export type { CRDTActions } from './crdt';
 
 // ========================================
 // STORAGE CONFIGURATION
@@ -87,7 +95,7 @@ export type { ActionContext } from './actions';
 // LOGGER UTILITIES (LogTape Integration)
 // ========================================
 
-export { configure, getConsoleSink, getLogger, getLogTapeLogger } from './logger';
+export { configure, configureLogging, getConsoleSink, getLogger, getLogTapeLogger } from './logger';
 export type { Config, LogLevel, Logger, Sink } from './logger';
 
 // ========================================
