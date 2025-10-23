@@ -243,7 +243,10 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
   const collections = await db.addCollections({
     [collectionName]: {
       schema: schemaWithDeleted,
-      conflictHandler: conflictHandler as any, // Type cast needed for RxDB's generic types
+      // Type cast needed due to RxDB's complex generic types
+      // RxConflictHandler<T> vs RxDB's expected internal type
+      // This is safe as our conflict handlers follow RxDB's interface
+      conflictHandler: conflictHandler as any,
     },
   });
 

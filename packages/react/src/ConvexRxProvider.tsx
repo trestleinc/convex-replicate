@@ -19,17 +19,27 @@ export interface ConvexRxProviderProps extends ConvexRxConfig {
  * Provider component for ConvexRx configuration.
  * Wrap your app with this to configure all ConvexRx hooks at once.
  *
+ * IMPORTANT: For optimal performance, wrap handler functions in useCallback
+ * to prevent unnecessary re-renders of all hooks.
+ *
  * @example
  * ```typescript
  * import { ConvexRxProvider } from '@convex-rx/react';
  * import { convexClient } from './convex';
  *
  * function App() {
+ *   // Wrap handlers in useCallback for stability
+ *   const conflictHandler = React.useCallback(
+ *     createLastWriteWinsHandler(),
+ *     []
+ *   );
+ *
  *   return (
  *     <ConvexRxProvider
  *       convexClient={convexClient}
  *       databaseName="myapp"
  *       enableLogging={process.env.NODE_ENV === 'development'}
+ *       conflictHandler={conflictHandler}
  *     >
  *       <YourApp />
  *     </ConvexRxProvider>

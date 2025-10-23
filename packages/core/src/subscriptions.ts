@@ -62,8 +62,8 @@ export function buildSubscriptions<
  *
  * This utility ensures a consistent interface for cleanup.
  *
- * @param subscription - Subscription result (function or object)
- * @returns Normalized unsubscribe function
+ * @param subscription - Subscription result (function or object, or null/undefined)
+ * @returns Normalized unsubscribe function (no-op if subscription is null/undefined)
  *
  * @example
  * ```typescript
@@ -73,10 +73,24 @@ export function buildSubscriptions<
  * ```
  */
 export function normalizeUnsubscribe(
-  subscription: (() => void) | { unsubscribe: () => void }
+  subscription: (() => void) | { unsubscribe: () => void } | null | undefined
 ): () => void {
+  // Handle null/undefined - return no-op
+  if (!subscription) {
+    return () => {};
+  }
+
+  // Handle function
   if (typeof subscription === 'function') {
     return subscription;
   }
-  return () => subscription.unsubscribe();
+
+  // Handle object with unsubscribe method
+  if (typeof subscription.unsubscribe === 'function') {
+    return () => subscription.unsubscribe();
+  }
+
+  // Invalid input - warn and return no-op
+  console.warn('Invalid subscription object provided to normalizeUnsubscribe:', subscription);
+  return () => {};
 }

@@ -87,11 +87,27 @@ export function isNetworkError(error: unknown): boolean {
  * Base type for all synced documents.
  * Extends ConvexRxDocument with soft delete support.
  * Standardized to use _deleted (with underscore) for soft deletes.
+ *
+ * Note: The index signature [key: string]: unknown allows for flexible
+ * document schemas but reduces type safety. This is necessary for
+ * RxDB's dynamic schema system and cross-collection compatibility.
+ *
+ * For better TypeScript support in your app, create specific interfaces
+ * that extend SyncedDocument with your exact fields (without index signature).
+ *
+ * @example
+ * ```typescript
+ * interface Task extends SyncedDocument {
+ *   text: string;
+ *   isCompleted: boolean;
+ *   // No index signature - full type safety in your app
+ * }
+ * ```
  */
 export interface SyncedDocument extends ConvexRxDocument {
   /** Soft delete flag - when true, document is hidden from queries */
   _deleted?: boolean;
-  /** Index signature for compatibility with Record<string, unknown> */
+  /** Index signature for compatibility with RxDB's dynamic schema system */
   [key: string]: unknown;
 }
 

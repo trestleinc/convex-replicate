@@ -130,7 +130,21 @@ export interface UseConvexRxConfig<
   /** RxDB JSON schema for the collection */
   schema: RxJsonSchema<TData>;
 
-  /** Convex API functions for sync */
+  /**
+   * Convex API functions for sync.
+   * For better type safety, use FunctionReference from 'convex/server'.
+   *
+   * @example
+   * ```typescript
+   * import { api } from './convex/_generated/api';
+   *
+   * convexApi: {
+   *   changeStream: api.tasks.changeStream,
+   *   pullDocuments: api.tasks.pullDocuments,
+   *   pushDocuments: api.tasks.pushDocuments,
+   * }
+   * ```
+   */
   convexApi: {
     changeStream: any;
     pullDocuments: any;

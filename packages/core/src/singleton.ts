@@ -144,7 +144,17 @@ export function clearAllSingletons(): void {
  * @param databaseName - Database name
  * @param collectionName - Collection/table name
  * @returns Unique key string
+ * @throws Error if either parameter is empty
  */
 export function createSingletonKey(databaseName: string, collectionName: string): string {
+  // Validate inputs to prevent collisions from empty strings
+  if (!databaseName || !collectionName) {
+    throw new Error(
+      'createSingletonKey requires non-empty databaseName and collectionName. ' +
+        `Received: databaseName="${databaseName}", collectionName="${collectionName}"`
+    );
+  }
+
+  // Use delimiter that's validated in config to prevent name collisions
   return `${databaseName}_${collectionName}`;
 }

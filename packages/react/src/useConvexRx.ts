@@ -110,7 +110,12 @@ export function useConvexRx<
     config.batchSize,
     config.enableLogging,
     config.conflictHandler,
-    contextConfig,
+    // Individual context properties instead of entire object
+    contextConfig.convexClient,
+    contextConfig.databaseName,
+    contextConfig.batchSize,
+    contextConfig.enableLogging,
+    contextConfig.conflictHandler,
   ]);
 
   // ========================================
@@ -212,7 +217,7 @@ export function useConvexRx<
         subscription.unsubscribe();
       }
     };
-  }, [syncInstance, config.table, mergedConfig.enableLogging]);
+  }, [syncInstance, config.table, config.initialData, mergedConfig.enableLogging]);
 
   // ========================================
   // 4. CREATE BASE ACTIONS
@@ -243,6 +248,7 @@ export function useConvexRx<
         collection.insert(doc);
       },
       updateFn: async (id, updater) => {
+        // Type assertion needed for TanStack DB's update signature (WritableDeep compatibility)
         collection.update(id, updater as any);
       },
     });
@@ -293,7 +299,7 @@ export function useConvexRx<
     }
 
     return config.actions(wrappedActions, extensionContext);
-  }, [config, wrappedActions, extensionContext]);
+  }, [config.actions, wrappedActions, extensionContext]);
 
   // ========================================
   // 9. BUILD CUSTOM QUERIES
@@ -305,7 +311,7 @@ export function useConvexRx<
     }
 
     return config.queries(extensionContext);
-  }, [config, extensionContext]);
+  }, [config.queries, extensionContext]);
 
   // ========================================
   // 10. BUILD CUSTOM SUBSCRIPTIONS
