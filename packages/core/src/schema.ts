@@ -1,4 +1,4 @@
-import type { ConvexRxDocument, RxJsonSchema, PropertySchema, PropertyType } from './types';
+import type { SyncedDocument, RxJsonSchema, PropertySchema, PropertyType } from './types';
 
 // ========================================
 // SCHEMA BUILDER TYPES
@@ -102,7 +102,7 @@ export function createSchema<T extends Record<string, any>>(
     version?: number;
     additionalIndexes?: string[][];
   }
-): RxJsonSchema<T & ConvexRxDocument> {
+): RxJsonSchema<T & SyncedDocument> {
   const rxProperties: Record<string, any> = {
     id: {
       type: 'string',
@@ -113,6 +113,9 @@ export function createSchema<T extends Record<string, any>>(
       minimum: 0,
       maximum: 8640000000000000, // JavaScript Date max value
       multipleOf: 1,
+    },
+    _deleted: {
+      type: 'boolean',
     },
   };
 
@@ -136,7 +139,7 @@ export function createSchema<T extends Record<string, any>>(
     properties: rxProperties,
     required,
     indexes,
-  } as RxJsonSchema<T & ConvexRxDocument>;
+  } as RxJsonSchema<T & SyncedDocument>;
 }
 
 /**
@@ -179,7 +182,7 @@ export function inferBasicSchema<T extends Record<string, any>>(
   options?: {
     version?: number;
   }
-): RxJsonSchema<T & ConvexRxDocument> {
+): RxJsonSchema<T & SyncedDocument> {
   const properties: Record<string, any> = {
     id: { type: 'string', maxLength: 100 },
     updatedTime: {
@@ -187,6 +190,9 @@ export function inferBasicSchema<T extends Record<string, any>>(
       minimum: 0,
       maximum: 8640000000000000,
       multipleOf: 1,
+    },
+    _deleted: {
+      type: 'boolean',
     },
   };
 
@@ -205,5 +211,5 @@ export function inferBasicSchema<T extends Record<string, any>>(
     properties,
     required: ['id', 'updatedTime', ...(fields as string[])],
     indexes: [['updatedTime', 'id']],
-  } as RxJsonSchema<T & ConvexRxDocument>;
+  } as RxJsonSchema<T & SyncedDocument>;
 }
