@@ -502,7 +502,7 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
         logger.info(`Pushing ${changeRows.length} changes`);
         logger.debug('Push changeRows', {
           count: changeRows.length,
-          sample: changeRows[0] // Log first document to see structure
+          sample: changeRows[0], // Log first document to see structure
         });
 
         try {
