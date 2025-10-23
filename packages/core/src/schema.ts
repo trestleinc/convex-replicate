@@ -108,6 +108,12 @@ export function createSchema<T extends Record<string, any>>(
       type: 'string',
       maxLength: 100,
     },
+    creationTime: {
+      type: 'number',
+      minimum: 0,
+      maximum: 8640000000000000, // JavaScript Date max value
+      multipleOf: 1,
+    },
     updatedTime: {
       type: 'number',
       minimum: 0,
@@ -127,7 +133,7 @@ export function createSchema<T extends Record<string, any>>(
     .filter(([_, propDef]) => propDef.required !== false)
     .map(([key]) => key);
 
-  const required = ['id', 'updatedTime', ...userRequiredFields];
+  const required = ['id', 'creationTime', 'updatedTime', ...userRequiredFields];
 
   const indexes = [['updatedTime', 'id'], ...(options?.additionalIndexes || [])];
 
@@ -178,13 +184,19 @@ function convertPropertyDefinition(propDef: PropertyDefinition): PropertySchema 
 
 export function inferBasicSchema<T extends Record<string, any>>(
   title: string,
-  fields: (keyof Omit<T, 'id' | 'updatedTime'>)[],
+  fields: (keyof Omit<T, 'id' | 'creationTime' | 'updatedTime'>)[],
   options?: {
     version?: number;
   }
 ): RxJsonSchema<T & SyncedDocument> {
   const properties: Record<string, any> = {
     id: { type: 'string', maxLength: 100 },
+    creationTime: {
+      type: 'number',
+      minimum: 0,
+      maximum: 8640000000000000,
+      multipleOf: 1,
+    },
     updatedTime: {
       type: 'number',
       minimum: 0,
@@ -209,7 +221,7 @@ export function inferBasicSchema<T extends Record<string, any>>(
     type: 'object',
     primaryKey: 'id',
     properties,
-    required: ['id', 'updatedTime', ...(fields as string[])],
+    required: ['id', 'creationTime', 'updatedTime', ...(fields as string[])],
     indexes: [['updatedTime', 'id']],
   } as RxJsonSchema<T & SyncedDocument>;
 }

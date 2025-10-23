@@ -408,9 +408,14 @@ export function useConvexRx<
   // ========================================
 
   // Derive data from collection instead of duplicating in state
+  // Sort by creationTime descending (newest first) for stable, consistent ordering
   const data = database
-    ? database.collection.toArray.filter((item) => !item._deleted)
-    : ((config.initialData || []) as TData[]);
+    ? database.collection.toArray
+        .filter((item) => !item._deleted)
+        .sort((a, b) => (b.creationTime || 0) - (a.creationTime || 0))
+    : ((config.initialData || []) as TData[]).sort(
+        (a, b) => (b.creationTime || 0) - (a.creationTime || 0)
+      );
 
   // Consolidated status object
   const isReady = database?.collection.isReady() ?? false;

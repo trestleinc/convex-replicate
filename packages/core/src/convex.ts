@@ -113,12 +113,14 @@ export function generateConvexRxFunctions(config: {
   // 2. PULL DOCUMENTS
   // ========================================
   //
-  // IMPORTANT: For optimal performance (10-100x faster), create an index in your Convex schema:
+  // IMPORTANT: For optimal performance (10-100x faster), create these indexes in your Convex schema:
   //
   // export default defineSchema({
   //   yourTable: defineTable({
   //     // ... your fields
-  //   }).index('by_updatedTime', ['updatedTime']),
+  //   })
+  //     .index('by_creationTime', ['creationTime'])  // For stable display ordering
+  //     .index('by_updatedTime', ['updatedTime']),   // For efficient sync
   // });
 
   const pullDocuments = queryBuilder({
@@ -139,7 +141,17 @@ export function generateConvexRxFunctions(config: {
       let docs: any;
 
       if (!args.checkpoint) {
-        docs = await ctx.db.query(tableName).order('desc').take(args.limit);
+        // Initial pull: Order by creationTime for stable, consistent ordering
+        try {
+          docs = await ctx.db
+            .query(tableName)
+            .withIndex('by_creationTime')
+            .order('desc')
+            .take(args.limit);
+        } catch {
+          // Fallback if by_creationTime index doesn't exist
+          docs = await ctx.db.query(tableName).order('desc').take(args.limit);
+        }
       } else {
         const checkpoint = args.checkpoint;
 
@@ -245,14 +257,17 @@ export function generateConvexRxFunctions(config: {
           const { deleted, ...docWithoutDeleted } = newDocumentState;
 
           if (currentDoc) {
+            // UPDATE: Preserve existing creationTime, never modify it
             await ctx.db.patch(currentDoc._id, {
               ...docWithoutDeleted,
               updatedTime: timestamp,
               deleted: deleted || false,
             });
           } else {
+            // INSERT: Use client's creationTime or fall back to updatedTime for backwards compat
             await ctx.db.insert(tableName, {
               ...docWithoutDeleted,
+              creationTime: newDocumentState.creationTime || timestamp,
               updatedTime: timestamp,
               deleted: deleted || false,
             });

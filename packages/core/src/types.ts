@@ -9,7 +9,9 @@
 export interface ConvexRxDocument {
   /** Client-generated UUID */
   id: string;
-  /** Timestamp for replication tracking (auto-managed) */
+  /** Creation timestamp - set once on insert, never modified (auto-managed) */
+  creationTime: number;
+  /** Update timestamp for replication tracking (auto-managed) */
   updatedTime: number;
 }
 
