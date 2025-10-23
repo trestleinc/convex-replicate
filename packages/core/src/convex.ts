@@ -61,7 +61,6 @@ export function generateConvexRxFunctions(config: {
     handler: async (ctx: any) => {
       const allDocs = await ctx.db.query(tableName).collect();
 
-      // Find latest updatedTime using deterministic for-loop
       let latestTime = 0;
       for (const doc of allDocs) {
         if (doc.updatedTime > latestTime) {
@@ -69,7 +68,6 @@ export function generateConvexRxFunctions(config: {
         }
       }
 
-      // Return 0 for empty tables to prevent unnecessary change detection
       return {
         timestamp: latestTime || 0,
         count: allDocs.length,
@@ -107,19 +105,14 @@ export function generateConvexRxFunctions(config: {
       let docs: any;
 
       if (!args.checkpoint) {
-        // Initial pull - get most recent documents
         docs = await ctx.db.query(tableName).order('desc').take(args.limit);
       } else {
-        // Incremental pull - get documents newer than checkpoint
-        // Try to use index for 10-100x better performance, fallback to filter if not available
         const checkpoint = args.checkpoint;
 
         try {
           docs = await ctx.db
             .query(tableName)
-            .withIndex('by_updatedTime', (q: any) =>
-              q.gt('updatedTime', checkpoint.updatedTime)
-            )
+            .withIndex('by_updatedTime', (q: any) => q.gt('updatedTime', checkpoint.updatedTime))
             .order('desc')
             .take(args.limit);
         } catch {
@@ -139,7 +132,6 @@ export function generateConvexRxFunctions(config: {
         }
       }
 
-      // Map to clean objects (strip Convex internal fields)
       const documents = docs.map((doc: any) => {
         const { _id, _creationTime, ...cleanDoc } = doc;
         return {
@@ -148,7 +140,6 @@ export function generateConvexRxFunctions(config: {
         };
       });
 
-      // Calculate new checkpoint from returned documents
       const newCheckpoint =
         documents.length > 0
           ? { id: documents[0].id, updatedTime: documents[0].updatedTime }
@@ -192,13 +183,11 @@ export function generateConvexRxFunctions(config: {
       for (const changeRow of args.changeRows) {
         const { newDocumentState, assumedMasterState } = changeRow;
 
-        // Find current document state on server
         const currentDoc = await ctx.db
           .query(tableName)
           .filter((q: any) => q.eq(q.field('id'), newDocumentState.id))
           .first();
 
-        // Convert current doc to client format for comparison
         const realMasterState = currentDoc
           ? {
               ...currentDoc,
@@ -214,25 +203,20 @@ export function generateConvexRxFunctions(config: {
             realMasterState.updatedTime !== assumedMasterState.updatedTime);
 
         if (hasConflict) {
-          // Conflict detected - return server state
           const { _id, _creationTime, ...cleanDoc } = realMasterState;
           conflicts.push(cleanDoc);
         } else {
-          // No conflict - apply the change
           const timestamp = newDocumentState.updatedTime || Date.now();
 
-          // Remove client-side fields before writing to Convex
           const { deleted, ...docWithoutDeleted } = newDocumentState;
 
           if (currentDoc) {
-            // Update existing document
             await ctx.db.patch(currentDoc._id, {
               ...docWithoutDeleted,
               updatedTime: timestamp,
               deleted: deleted || false,
             });
           } else {
-            // Insert new document
             await ctx.db.insert(tableName, {
               ...docWithoutDeleted,
               updatedTime: timestamp,

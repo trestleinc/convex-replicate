@@ -103,9 +103,7 @@ export function createSchema<T extends Record<string, any>>(
     additionalIndexes?: string[][];
   }
 ): RxJsonSchema<T & ConvexRxDocument> {
-  // Build property definitions
   const rxProperties: Record<string, any> = {
-    // Required ConvexRx fields
     id: {
       type: 'string',
       maxLength: 100,
@@ -118,19 +116,16 @@ export function createSchema<T extends Record<string, any>>(
     },
   };
 
-  // Add user-defined properties
   for (const [key, propDef] of Object.entries(properties)) {
     rxProperties[key] = convertPropertyDefinition(propDef);
   }
 
-  // Determine required fields
   const userRequiredFields = Object.entries(properties)
     .filter(([_, propDef]) => propDef.required !== false)
     .map(([key]) => key);
 
   const required = ['id', 'updatedTime', ...userRequiredFields];
 
-  // Build indexes (always include updatedTime + id for replication)
   const indexes = [['updatedTime', 'id'], ...(options?.additionalIndexes || [])];
 
   return {
@@ -158,7 +153,8 @@ function convertPropertyDefinition(propDef: PropertyDefinition): PropertySchema 
   if (propDef.multipleOf !== undefined) schema.multipleOf = propDef.multipleOf;
   if (propDef.minItems !== undefined) schema.minItems = propDef.minItems;
   if (propDef.maxItems !== undefined) schema.maxItems = propDef.maxItems;
-  if (propDef.additionalProperties !== undefined) schema.additionalProperties = propDef.additionalProperties;
+  if (propDef.additionalProperties !== undefined)
+    schema.additionalProperties = propDef.additionalProperties;
   if (propDef.items) schema.items = convertPropertyDefinition(propDef.items);
   if (propDef.properties) {
     schema.properties = {};

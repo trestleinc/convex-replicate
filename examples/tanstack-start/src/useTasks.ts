@@ -28,7 +28,7 @@ const taskSchema = createSchema<Task>('tasks', {
  * Uses the new unified useConvexRx hook.
  *
  * @param initialData - Optional SSR data for instant hydration
- * Returns: { data, isLoading, error, insert, update, delete, actions, queries, subscribe, purgeStorage }
+ * Returns: { data, status, actions, queries, subscribe, purgeStorage }
  */
 export function useTasks(initialData?: Task[]) {
   return useConvexRx({
@@ -92,22 +92,22 @@ export function useTasks(initialData?: Task[]) {
 //
 // Usage in components:
 //
-// const tasks = useTasks();
+// const { data, status, actions, queries } = useTasks();
 //
-// // Base CRUD (always available)
-// tasks.insert({ text: 'New task', isCompleted: false });
-// tasks.update(id, { isCompleted: true });
-// tasks.delete(id);
+// // Base CRUD (always available in actions)
+// actions.insert({ text: 'New task', isCompleted: false });
+// actions.update(id, { isCompleted: true });
+// actions.delete(id);
 //
 // // Custom actions (fully typed!)
-// tasks.actions.toggle(id);
-// tasks.actions.completeAll();
+// actions.toggle(id);
+// actions.completeAll();
 //
 // // Custom queries (fully typed!)
-// const completed = tasks.queries.getCompleted();
-// const incomplete = tasks.queries.getIncomplete();
-// const count = tasks.queries.count();
+// const completed = queries.getCompleted();
+// const incomplete = queries.getIncomplete();
+// const count = queries.count();
 //
 // // Access raw data
-// tasks.data.map(task => ...)
+// data.map(task => ...)
 //

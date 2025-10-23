@@ -304,6 +304,169 @@ logger.info('Document synced', {
 logger.info(`Document ${doc.id} synced to ${table}`);
 ```
 
+## Comment Guidelines
+
+### Philosophy: Most Code is Self-Explanatory
+
+Good code should be self-documenting through clear naming, simple logic, and proper structure. Comments should only be added when they provide meaningful insight that cannot be derived from reading the code itself.
+
+### When to Write Comments
+
+**DO write comments that explain:**
+
+1. **WHY, not WHAT** - Explain the reasoning behind non-obvious decisions
+   ```typescript
+   // Use deterministic for-loop instead of reduce() to avoid Convex non-determinism issues
+   let latestTime = 0;
+   for (const doc of allDocs) {
+     if (doc.updatedTime > latestTime) {
+       latestTime = doc.updatedTime;
+     }
+   }
+   ```
+
+2. **Non-obvious consequences or side effects**
+   ```typescript
+   // RxDBUpdatePlugin enables soft deletes via doc.update() in actions.ts
+   addRxPlugin(RxDBUpdatePlugin);
+   ```
+
+3. **Workarounds for bugs or limitations**
+   ```typescript
+   // Type cast: RxConflictHandler<T> satisfies RxDB's internal conflict handler interface
+   conflictHandler: conflictHandler as any,
+   ```
+
+4. **Complex algorithms or business logic**
+   ```typescript
+   // Exponential backoff with 30s cap prevents overwhelming the server during outages
+   const delay = Math.min(1000 * 2 ** retryCount, 30000);
+   ```
+
+5. **Edge cases being handled**
+   ```typescript
+   // Return 0 for empty collections to prevent unnecessary change detection on initial load
+   return { timestamp: latestTime || 0, count: allDocs.length };
+   ```
+
+6. **Performance considerations**
+   ```typescript
+   // withIndex provides 10-100x better performance than filter for large collections
+   docs = await ctx.db
+     .query(tableName)
+     .withIndex('by_updatedTime', (q) => q.gt('updatedTime', checkpoint.updatedTime))
+   ```
+
+### When NOT to Write Comments
+
+**DO NOT write comments that:**
+
+1. **Restate what the code obviously does**
+   ```typescript
+   // ❌ Bad
+   // Create RxDB database
+   const db = await createRxDatabase({ ... });
+
+   // ✅ Good (no comment needed)
+   const db = await createRxDatabase({ ... });
+   ```
+
+2. **Repeat function/variable names**
+   ```typescript
+   // ❌ Bad
+   // Update an existing document
+   update: async (id, updates) => { ... }
+
+   // ✅ Good (JSDoc if needed for API documentation)
+   /**
+    * @param id - Document identifier
+    * @param updates - Partial updates to merge (automatically adds updatedTime)
+    */
+   update: async (id, updates) => { ... }
+   ```
+
+3. **Number steps that are self-evident**
+   ```typescript
+   // ❌ Bad
+   // Step 1: Get user input
+   const input = getUserInput();
+   // Step 2: Validate input
+   const valid = validate(input);
+   // Step 3: Save to database
+   await save(valid);
+
+   // ✅ Good (code flow is clear)
+   const input = getUserInput();
+   const valid = validate(input);
+   await save(valid);
+   ```
+
+4. **Describe language features**
+   ```typescript
+   // ❌ Bad
+   // Loop through all documents
+   for (const doc of documents) { ... }
+
+   // ✅ Good (no comment needed)
+   for (const doc of documents) { ... }
+   ```
+
+5. **Separate obvious UI sections**
+   ```typescript
+   // ❌ Bad
+   {/* Task List */}
+   <div className="space-y-2">
+     {tasks.map(task => <TaskItem key={task.id} task={task} />)}
+   </div>
+
+   // ✅ Good (component name and structure are clear)
+   <div className="space-y-2">
+     {tasks.map(task => <TaskItem key={task.id} task={task} />)}
+   </div>
+   ```
+
+### Special Cases
+
+**Section Headers in Large Files:**
+For very large files (>300 lines), section header comments can help with navigation:
+```typescript
+// ========================================
+// PLUGIN INITIALIZATION
+// ========================================
+```
+
+Use these sparingly and only when the file is too large to easily comprehend at once. Consider refactoring into smaller modules instead.
+
+**JSDoc for Public APIs:**
+Always document exported functions, types, and components with JSDoc:
+```typescript
+/**
+ * Create a ConvexRx sync instance bridging RxDB and Convex.
+ *
+ * This is the main entry point for the ConvexRx library. It creates:
+ * - RxDB database for local storage
+ * - Bidirectional replication with Convex
+ * - WebSocket change stream for real-time updates
+ *
+ * @template T - Document type extending ConvexRxDocument
+ * @param config - Configuration object
+ * @returns Instance with RxDB primitives and cleanup function
+ * @throws {Error} If config validation fails
+ */
+export async function createConvexRxDB<T extends ConvexRxDocument>(
+  config: ConvexRxDBConfig<T>
+): Promise<ConvexRxDBInstance<T>> { ... }
+```
+
+### Before Adding a Comment, Ask:
+
+1. Can I make the code clearer instead? (Better naming, simpler logic, extracted function)
+2. Would this be obvious to someone reading the code?
+3. Am I explaining WHY, or just repeating WHAT?
+4. Will this comment still be accurate in 6 months?
+
+**Remember:** Code changes, but comments often don't. Outdated comments are worse than no comments.
+
 ## Validation Standards
 
 ### When to Use Zod vs TypeScript
@@ -599,3 +762,4 @@ export type { SyncedDocument, ConvexClient } from './types';
 9. Missing explicit return types on exported functions
 10. Not using Context7 for library documentation
 11. Using emojis in code, comments, or documentation
+12. Writing comments that restate obvious code (explain WHY, not WHAT)

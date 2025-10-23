@@ -115,10 +115,6 @@ export function createBaseActions<TData extends SyncedDocument>(
       return id;
     },
 
-    /**
-     * Update an existing document.
-     * Merges updates, updates timestamp, calls wrapper's update function.
-     */
     update: async (
       id: string,
       updates: Partial<Omit<TData, keyof SyncedDocument>>
@@ -129,11 +125,6 @@ export function createBaseActions<TData extends SyncedDocument>(
       });
     },
 
-    /**
-     * Soft delete a document.
-     * Uses RxDB directly to set _deleted flag.
-     * This ensures soft deletes work consistently across all frameworks.
-     */
     delete: async (id: string): Promise<void> => {
       const doc = await context.rxCollection.findOne(id).exec();
 

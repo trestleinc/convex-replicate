@@ -12,9 +12,9 @@ import { Subject } from 'rxjs';
 import { z } from 'zod';
 import { defaultConflictHandler, type RxConflictHandler } from './conflictHandler';
 import { getLogger } from './logger';
+import { ErrorCategory, toConvexRxError } from './lib';
 import { getStorage, type StorageConfig } from './storage';
 import type { ConvexClient, ConvexRxDocument, RxJsonSchema } from './types';
-import { isNetworkError } from './types';
 
 // ========================================
 // ENVIRONMENT DETECTION
@@ -37,11 +37,9 @@ function isDevelopment(): boolean {
 // PLUGIN INITIALIZATION
 // ========================================
 
-// Add required plugins
-// Note: RxDBUpdatePlugin is used for soft deletes via doc.update() in actions.ts
+// RxDBUpdatePlugin enables soft deletes via doc.update() in actions.ts
 addRxPlugin(RxDBUpdatePlugin);
 
-// Conditionally add dev mode plugin
 if (isDevelopment()) {
   addRxPlugin(RxDBDevModePlugin);
 }
@@ -259,7 +257,6 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
 
   logger.info('Creating RxDB database', { databaseName });
 
-  // 1. Create RxDB database
   const db = await createRxDatabase({
     name: databaseName,
     storage: getStorage(config.storage),
@@ -268,8 +265,6 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
     ignoreDuplicate: isDevelopment(),
   });
 
-  // 2. Add collection with schema
-  // Extend schema to include _deleted field for soft deletes
   const schemaWithDeleted = {
     ...schema,
     keyCompression: config.keyCompression ?? true,
@@ -284,9 +279,7 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
   const collections = await db.addCollections({
     [collectionName]: {
       schema: schemaWithDeleted,
-      // Type cast needed due to RxDB's complex generic types
-      // RxConflictHandler<T> vs RxDB's expected internal type
-      // This is safe as our conflict handlers follow RxDB's interface
+      // Type cast: RxConflictHandler<T> satisfies RxDB's internal conflict handler interface
       conflictHandler: conflictHandler as any,
     },
   });
@@ -295,7 +288,6 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
 
   logger.info('RxDB collection created');
 
-  // 3. Set up WebSocket stream for real-time updates
   const pullStream$ = new Subject<'RESYNC' | any>();
   let lastKnownState: { timestamp: number; count: number } | null = null;
   let unsubscribeChangeStream: (() => void) | null = null;
@@ -316,7 +308,6 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
         const data = changeWatch.localQueryResult();
 
         if (data) {
-          // First update - initialize state
           if (lastKnownState === null) {
             lastKnownState = { timestamp: data.timestamp, count: data.count };
             pullStream$.next('RESYNC');
@@ -324,7 +315,6 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
             return;
           }
 
-          // Subsequent updates - check for changes
           if (data.timestamp !== lastKnownState.timestamp || data.count !== lastKnownState.count) {
             logger.info('Change detected', { data });
             lastKnownState = { timestamp: data.timestamp, count: data.count };
@@ -337,9 +327,8 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
     } catch (error) {
       logger.error('Failed to setup change stream', { error });
 
-      // Retry with exponential backoff
       if (retryCount < maxRetries) {
-        const delay = Math.min(1000 * 2 ** retryCount, 30000); // Cap at 30s
+        const delay = Math.min(1000 * 2 ** retryCount, 30000);
         retryCount++;
         logger.info(`Retrying change stream in ${delay}ms (attempt ${retryCount}/${maxRetries})`);
         setTimeout(setupChangeStream, delay);
@@ -351,10 +340,8 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
 
   setupChangeStream();
 
-  // 4. Set up RxDB replication using native replicateRxCollection
-  // Add rate limiting state
   let lastPushTime = 0;
-  const MIN_PUSH_INTERVAL = 100; // 100ms = max 10 pushes/sec
+  const MIN_PUSH_INTERVAL = 100;
 
   const replicationState = replicateRxCollection({
     collection: rxCollection,
@@ -379,7 +366,6 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
             limit: batchSize,
           });
 
-          // Validate documents before inserting into RxDB
           const validDocuments = result.documents.filter((doc, index) => {
             try {
               pullDocumentSchema.parse(doc);
@@ -414,13 +400,12 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
         } catch (error) {
           logger.error('Pull error', { error });
 
-          // Network errors should be thrown to trigger RxDB retry
-          if (isNetworkError(error)) {
+          const convexError = toConvexRxError(error);
+          if (convexError.category === ErrorCategory.NETWORK) {
             logger.info('Network error detected, triggering RxDB retry');
-            throw error; // RxDB will retry with retryTime
+            throw error;
           }
 
-          // Non-network errors: skip batch, keep checkpoint
           logger.info('Non-network error, skipping batch but keeping checkpoint');
           return {
             documents: [],
@@ -430,7 +415,6 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
       },
       batchSize: validateBatchSize(config.batchSize, 300),
       stream$: pullStream$.asObservable(),
-      // Transform Convex's 'deleted' field to RxDB's '_deleted' field
       modifier: (doc: any) => {
         const { deleted, ...rest } = doc;
         const transformed = {
@@ -451,7 +435,6 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
 
     push: {
       async handler(changeRows) {
-        // Rate limiting
         const now = Date.now();
         const timeSinceLastPush = now - lastPushTime;
         if (timeSinceLastPush < MIN_PUSH_INTERVAL) {
@@ -476,19 +459,17 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
         } catch (error) {
           logger.error('Push error', { error });
 
-          // Network errors should be thrown to trigger retry
-          if (isNetworkError(error)) {
+          const convexError = toConvexRxError(error);
+          if (convexError.category === ErrorCategory.NETWORK) {
             logger.info('Network error detected, triggering RxDB retry');
             throw error;
           }
 
-          // Non-network errors: return empty conflicts
           logger.info('Non-network error, returning empty conflicts');
           return [];
         }
       },
       batchSize: validateBatchSize(config.pushBatchSize, 100),
-      // Transform RxDB's '_deleted' field to Convex's 'deleted' field before sending
       modifier: (doc: any) => {
         const { _deleted, ...rest } = doc;
         const deleted = _deleted === true;
@@ -509,8 +490,6 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
     },
   });
 
-  // 5. Monitor replication state
-  // Track all subscriptions for proper cleanup
   const subscriptions: Array<{ unsubscribe: () => void }> = [];
 
   subscriptions.push(
@@ -545,7 +524,6 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
     })
   );
 
-  // 6. Wait for initial replication with timeout
   try {
     logger.info('Waiting for initial replication...');
 
@@ -558,15 +536,12 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
     logger.info('Initial replication complete!');
   } catch (error) {
     logger.error('Initial replication failed', { error });
-    // Continue anyway - live sync will catch up
     logger.info('Falling back to optimistic UI');
   }
 
-  // 7. Cleanup function to purge all storage
   let isCleaningUp = false;
 
   const cleanup = async () => {
-    // Prevent concurrent cleanup execution
     if (isCleaningUp) {
       logger.warn('Cleanup already in progress, skipping');
       return;
@@ -576,7 +551,6 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
     logger.info('Cleaning up and removing storage...');
 
     try {
-      // Step 1: Unsubscribe from all RxJS subscriptions
       logger.info('Unsubscribing from RxJS subscriptions...');
       for (const subscription of subscriptions) {
         try {
@@ -586,7 +560,6 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
         }
       }
 
-      // Step 2: Unsubscribe from Convex change stream
       logger.info('Unsubscribing from Convex change stream...');
       if (unsubscribeChangeStream) {
         try {
@@ -596,7 +569,6 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
         }
       }
 
-      // Step 3: Cancel replication
       logger.info('Cancelling replication...');
       try {
         await replicationState.cancel();
@@ -604,7 +576,6 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
         logger.error('Failed to cancel replication', { error });
       }
 
-      // Step 4: Close ConvexClient connection if available
       logger.info('Closing ConvexClient connection...');
       if (convexClient && typeof convexClient.close === 'function') {
         try {
@@ -614,7 +585,6 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
         }
       }
 
-      // Step 5: Remove the database completely (this closes it and removes all data)
       logger.info('Removing database...');
       try {
         await db.remove();
@@ -622,7 +592,6 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
         logger.error('Failed to remove database', { error });
       }
 
-      // Step 6: Also remove from storage layer to ensure complete cleanup
       logger.info('Removing from storage layer...');
       try {
         await removeRxDatabase(databaseName, getStorage(config.storage));
@@ -632,7 +601,6 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
 
       logger.info('Storage removed successfully');
     } finally {
-      // Always reset flag, even if cleanup fails
       isCleaningUp = false;
     }
   };

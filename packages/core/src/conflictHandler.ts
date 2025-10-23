@@ -46,14 +46,12 @@ export function createServerWinsHandler<T extends ConvexRxDocument>(
 
   return {
     isEqual(docA, docB) {
-      // Compare updatedTime for efficient conflict detection
       return docA.updatedTime === docB.updatedTime;
     },
     resolve(input) {
       logger.debug('Server-wins conflict resolution', {
         documentId: input.realMasterState.id,
       });
-      // Always use server state
       return input.realMasterState;
     },
   };
@@ -77,7 +75,6 @@ export function createClientWinsHandler<T extends ConvexRxDocument>(
       logger.debug('Client-wins conflict resolution', {
         documentId: input.newDocumentState.id,
       });
-      // Always use client state
       return input.newDocumentState;
     },
   };
@@ -198,7 +195,6 @@ export function createCustomMergeHandler<T extends ConvexRxDocument>(
           newDocumentTime: input.newDocumentState.updatedTime,
         });
 
-        // Call error callback if provided (support async)
         if (options?.onError) {
           try {
             await Promise.resolve(options.onError(err, input));
@@ -212,7 +208,7 @@ export function createCustomMergeHandler<T extends ConvexRxDocument>(
         // Fallback strategy with safer null coalescing
         const fallbackDoc =
           fallback === 'server-wins'
-            ? input.realMasterState ?? input.newDocumentState
+            ? (input.realMasterState ?? input.newDocumentState)
             : input.newDocumentState;
 
         logger.warn(`Falling back to ${fallback} strategy`, {

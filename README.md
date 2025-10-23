@@ -172,14 +172,14 @@ export function useTasks() {
 import { useTasks } from '../hooks/useTasks';
 
 export function TaskList() {
-  const { data, isLoading, error, insert, update, delete: remove } = useTasks();
+  const { data, status, actions } = useTasks();
 
-  if (error) return <div>Error: {error}</div>;
-  if (isLoading) return <div>Loading...</div>;
+  if (status.error) return <div>Error: {status.error.message}</div>;
+  if (status.isLoading) return <div>Loading...</div>;
 
   return (
     <div>
-      <button onClick={() => insert({
+      <button onClick={() => actions.insert({
         text: 'New task',
         isCompleted: false,
         priority: 'medium'
@@ -192,10 +192,10 @@ export function TaskList() {
           <input
             type="checkbox"
             checked={task.isCompleted}
-            onChange={() => update(task.id, { isCompleted: !task.isCompleted })}
+            onChange={() => actions.update(task.id, { isCompleted: !task.isCompleted })}
           />
           <span>{task.text}</span>
-          <button onClick={() => remove(task.id)}>Delete</button>
+          <button onClick={() => actions.delete(task.id)}>Delete</button>
         </div>
       ))}
     </div>
@@ -204,6 +204,56 @@ export function TaskList() {
 ```
 
 ## Advanced Features
+
+### Error Handling
+
+ConvexRx provides strongly-typed error objects for robust error handling:
+
+```typescript
+import { ErrorType } from '@convex-rx/react';
+
+function TaskList() {
+  const { data, status, actions } = useTasks();
+
+  if (status.error) {
+    // Type-safe error handling with switch statement
+    switch (status.error.type) {
+      case ErrorType.INITIALIZATION:
+        return <div>Failed to initialize database. Please reload.</div>;
+
+      case ErrorType.NETWORK:
+        return <div>Network error. Check your connection.</div>;
+
+      case ErrorType.REPLICATION:
+        return <div>Sync error. Your changes are saved locally.</div>;
+
+      case ErrorType.VALIDATION:
+        return <div>Invalid data: {status.error.message}</div>;
+
+      default:
+        return <div>Error: {status.error.message}</div>;
+    }
+  }
+
+  // ... rest of component
+}
+```
+
+**Error Types:**
+- `ErrorType.INITIALIZATION` - Database setup failed
+- `ErrorType.REPLICATION` - Sync error between local and cloud
+- `ErrorType.NETWORK` - Network connectivity issue
+- `ErrorType.VALIDATION` - Schema validation failed
+- `ErrorType.UNKNOWN` - Uncategorized error
+
+**Error Object:**
+```typescript
+interface ConvexRxError {
+  type: ErrorType;        // Category for type-safe handling
+  message: string;        // Human-readable message
+  cause?: unknown;        // Original error for debugging
+}
+```
 
 ### Conflict Resolution Strategies
 
@@ -272,6 +322,13 @@ export function useTasks() {
 
 // Usage
 const { actions } = useTasks();
+
+// Base actions (always available)
+await actions.insert({ text: 'New', isCompleted: false });
+await actions.update('task-id', { isCompleted: true });
+await actions.delete('task-id');
+
+// Custom actions
 await actions.toggleComplete('task-id');
 await actions.completeAll();
 ```
@@ -405,7 +462,7 @@ export const Route = createFileRoute('/tasks')({
 function TasksPage() {
   const { initialTasks } = Route.useLoaderData();
 
-  const { data, isLoading } = useTasks({
+  const { data, status } = useTasks({
     initialData: initialTasks, // No loading state on first render!
   });
 
@@ -489,16 +546,25 @@ interface UseConvexRxConfig<T> {
 interface UseConvexRxResult<T> {
   // Data
   data: T[];
-  isLoading: boolean;
-  error: string | null;
 
-  // Base Actions
-  insert: (doc: Omit<T, 'id' | 'updatedTime' | '_deleted'>) => Promise<string>;
-  update: (id: string, updates: Partial<Omit<T, 'id' | 'updatedTime' | '_deleted'>>) => Promise<void>;
-  delete: (id: string) => Promise<void>;
+  // Status
+  status: {
+    isLoading: boolean;
+    isReady: boolean;
+    isReplicating: boolean;
+    error: ConvexRxError | null;
+  };
 
-  // Custom Extensions
-  actions: TActions;
+  // Actions (base + custom merged)
+  actions: {
+    // Base actions (always available)
+    insert: (doc: Omit<T, 'id' | 'updatedTime' | '_deleted'>) => Promise<string>;
+    update: (id: string, updates: Partial<Omit<T, 'id' | 'updatedTime' | '_deleted'>>) => Promise<void>;
+    delete: (id: string) => Promise<void>;
+    // ...plus any custom actions
+  };
+
+  // Queries and subscriptions
   queries: TQueries;
   subscribe: TSubscriptions;
 

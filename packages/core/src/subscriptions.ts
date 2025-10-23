@@ -7,8 +7,6 @@
  * Framework-agnostic - works with any reactive system.
  */
 
-import { getLogger } from './logger';
-
 /**
  * Generic subscription builder type.
  * Framework packages can specialize this with their own context types.

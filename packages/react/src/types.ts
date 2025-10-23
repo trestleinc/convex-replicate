@@ -7,6 +7,7 @@
 
 import type {
   ConvexClient,
+  ConvexRxError,
   RxConflictHandler,
   RxJsonSchema,
   SyncedDocument,
@@ -199,12 +200,34 @@ export interface UseConvexRxConfig<
 }
 
 // ========================================
+// STATUS TYPES
+// ========================================
+
+/**
+ * Consolidated status object for ConvexRx hook.
+ * Groups all state information in one place for better DX.
+ */
+export interface ConvexRxStatus {
+  /** Loading state - true when database is initializing */
+  isLoading: boolean;
+
+  /** Ready state - true when collection is ready */
+  isReady: boolean;
+
+  /** Background replication state - true when RxDB is actively replicating with Convex */
+  isReplicating: boolean;
+
+  /** Strongly-typed error object if initialization or replication fails */
+  error: ConvexRxError | null;
+}
+
+// ========================================
 // HOOK RESULT
 // ========================================
 
 /**
  * Result returned by useConvexRx hook.
- * Combines data, loading state, base actions, and any custom extensions.
+ * Combines data, status, actions, and custom extensions.
  */
 export interface UseConvexRxResult<
   TData extends SyncedDocument,
@@ -220,27 +243,13 @@ export interface UseConvexRxResult<
   /** Array of synced documents (filtered to exclude _deleted: true) */
   data: TData[];
 
-  /** Loading state - true while initializing or syncing */
-  isLoading: boolean;
+  /** Consolidated status object with all state information */
+  status: ConvexRxStatus;
 
-  /** Error message if initialization or sync fails */
-  error: string | null;
+  // ========== Actions ==========
 
-  // ========== Base Actions (Always Available) ==========
-
-  /** Insert a new document */
-  insert: BaseActions<TData>['insert'];
-
-  /** Update an existing document */
-  update: BaseActions<TData>['update'];
-
-  /** Delete a document (soft delete) */
-  delete: BaseActions<TData>['delete'];
-
-  // ========== Custom Extensions ==========
-
-  /** Custom actions (if provided via config.actions) */
-  actions: TActions;
+  /** All actions: base CRUD (insert, update, delete) + custom actions */
+  actions: BaseActions<TData> & TActions;
 
   /** Custom queries (if provided via config.queries) */
   queries: TQueries;

@@ -26,5 +26,8 @@
   "devDependencies": {
     "@biomejs/biome": "latest",
     "typescript": "latest"
+  },
+  "dependencies": {
+    "zod": "4.1.12"
   }
 }

@@ -89,3 +89,40 @@ export type { ActionContext } from './actions';
 
 export { configure, getConsoleSink, getLogger, getLogTapeLogger } from './logger';
 export type { Config, LogLevel, Logger, Sink } from './logger';
+
+// ========================================
+// ERROR HANDLING
+// ========================================
+
+export type {
+  ConvexRxError,
+  InitializationError,
+  SchemaError,
+  NetworkError,
+  ReplicationError,
+  ConflictError,
+  ValidationError,
+  StorageError,
+  UnknownError,
+  ErrorHandlerConfig,
+} from './lib';
+
+export {
+  ErrorCategory,
+  ErrorSeverity,
+  RecoveryStrategy,
+  ConvexRxErrorHandler,
+  createInitializationError,
+  createSchemaError,
+  createNetworkError,
+  createReplicationError,
+  createConflictError,
+  createValidationError,
+  createStorageError,
+  createUnknownError,
+  toConvexRxError,
+  isConvexRxError,
+  withErrorHandling,
+  withRetry,
+  convexRxErrorSchema,
+} from './lib';

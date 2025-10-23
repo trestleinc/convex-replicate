@@ -42,7 +42,46 @@ export type { PreloadConvexRxDataConfig } from './ssr';
 // ========================================
 
 /** Hook configuration types (React-specific) */
-export type { ConvexRxConfig, HookContext, UseConvexRxConfig, UseConvexRxResult } from './types';
+export type {
+  ConvexRxConfig,
+  ConvexRxStatus,
+  HookContext,
+  UseConvexRxConfig,
+  UseConvexRxResult,
+} from './types';
+
+/** Error handling types and utilities (re-exported from core) */
+export type {
+  ConvexRxError,
+  InitializationError,
+  SchemaError,
+  NetworkError,
+  ReplicationError,
+  ConflictError,
+  ValidationError,
+  StorageError,
+  UnknownError,
+  ErrorHandlerConfig,
+} from '@convex-rx/core';
+
+export {
+  ErrorCategory,
+  ErrorSeverity,
+  RecoveryStrategy,
+  ConvexRxErrorHandler,
+  createInitializationError,
+  createSchemaError,
+  createNetworkError,
+  createReplicationError,
+  createConflictError,
+  createValidationError,
+  createStorageError,
+  createUnknownError,
+  toConvexRxError,
+  isConvexRxError,
+  withErrorHandling,
+  withRetry,
+} from '@convex-rx/core';
 
 // Note: BaseActions, MiddlewareConfig, and SyncedDocument are now in @convex-rx/core
 // Import them directly from '@convex-rx/core' instead

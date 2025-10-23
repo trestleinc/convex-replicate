@@ -84,6 +84,7 @@ export class ConvexRxErrorBoundary extends React.Component<Props, State> {
             </details>
           )}
           <button
+            type="button"
             onClick={this.handleReset}
             style={{
               marginTop: '1rem',

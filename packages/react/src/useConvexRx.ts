@@ -42,6 +42,9 @@ import {
   type ConvexRxDBConfig,
   type BaseActions,
   type SyncedDocument,
+  createInitializationError,
+  ErrorSeverity,
+  RecoveryStrategy,
   getLogger,
   getSingletonInstance,
   removeSingletonInstance,
@@ -119,13 +122,15 @@ export function useConvexRx<
   ]);
 
   // ========================================
-  // 2. INITIALIZE SYNC INSTANCE (SINGLETON)
+  // 2. INITIALIZE DATABASE INSTANCE (SINGLETON)
   // ========================================
 
-  const [syncInstance, setSyncInstance] = React.useState<Awaited<
+  const [database, setDatabase] = React.useState<Awaited<
     ReturnType<typeof createConvexRx<TData>>
   > | null>(null);
-  const [initError, setInitError] = React.useState<string | null>(null);
+  const [initError, setInitError] = React.useState<ReturnType<
+    typeof createInitializationError
+  > | null>(null);
 
   React.useEffect(() => {
     const abortController = new AbortController();
@@ -138,12 +143,22 @@ export function useConvexRx<
         });
 
         if (!abortController.signal.aborted) {
-          setSyncInstance(instance);
+          setDatabase(instance);
           setInitError(null);
         }
       } catch (error) {
         if (!abortController.signal.aborted) {
-          setInitError(error instanceof Error ? error.message : String(error));
+          setInitError(
+            createInitializationError({
+              message: error instanceof Error ? error.message : String(error),
+              severity: ErrorSeverity.FATAL,
+              recovery: RecoveryStrategy.MANUAL,
+              phase: 'database',
+              databaseName: mergedConfig.databaseName,
+              collectionName: mergedConfig.collectionName,
+              cause: error,
+            })
+          );
         }
       }
     };
@@ -159,11 +174,11 @@ export function useConvexRx<
   // 3. SUBSCRIBE TO COLLECTION CHANGES
   // ========================================
 
-  const [data, setData] = React.useState<TData[]>(config.initialData || []);
-  const [isLoading, setIsLoading] = React.useState(!config.initialData);
+  const [, forceUpdate] = React.useReducer((x) => x + 1, 0);
+  const [isReplicating, setIsSyncing] = React.useState(false);
 
   React.useEffect(() => {
-    if (!syncInstance) return;
+    if (!database) return;
 
     let mounted = true;
     let subscription: { unsubscribe: () => void } | null = null;
@@ -172,39 +187,21 @@ export function useConvexRx<
 
     const subscribe = () => {
       try {
-        const { collection } = syncInstance;
+        const { collection } = database;
 
-        // Subscribe to collection changes using TanStack API
         subscription = collection.subscribeChanges(
           () => {
             if (!mounted) return;
-
-            try {
-              // Access collection data (toArray is a getter, not a method)
-              const items: TData[] = collection.toArray;
-
-              logger.debug('Collection items', { itemCount: items.length });
-
-              // Filter out soft-deleted items (_deleted: true)
-              const activeItems = items.filter((item) => !item._deleted);
-
-              logger.debug('Active items after filtering', { activeItemCount: activeItems.length });
-
-              setData(activeItems);
-              setIsLoading(false);
-            } catch (accessError) {
-              logger.error('Failed to access collection data', { error: accessError });
-              setIsLoading(false);
-            }
+            logger.debug('Collection changed, triggering re-render');
+            forceUpdate();
           },
           {
-            includeInitialState: true, // Get initial state immediately
+            includeInitialState: true,
           }
         );
       } catch (subscribeError) {
         if (mounted) {
           logger.error('Failed to subscribe', { error: subscribeError });
-          setIsLoading(false);
         }
       }
     };
@@ -217,14 +214,33 @@ export function useConvexRx<
         subscription.unsubscribe();
       }
     };
-  }, [syncInstance, config.table, config.initialData, mergedConfig.enableLogging]);
+  }, [database, config.table, mergedConfig.enableLogging]);
+
+  // ========================================
+  // 3B. TRACK BACKGROUND SYNC STATE
+  // ========================================
+
+  React.useEffect(() => {
+    if (!database) return;
+
+    const { replicationState } = database;
+
+    // Subscribe to replication active state
+    const subscription = replicationState.active$.subscribe((isActive) => {
+      setIsSyncing(isActive);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [database]);
 
   // ========================================
   // 4. CREATE BASE ACTIONS
   // ========================================
 
   const baseActions = React.useMemo<BaseActions<TData>>(() => {
-    if (!syncInstance) {
+    if (!database) {
       // Return disabled actions if not initialized
       return {
         insert: async () => {
@@ -239,7 +255,7 @@ export function useConvexRx<
       };
     }
 
-    const { collection, rxCollection } = syncInstance;
+    const { collection, rxCollection } = database;
 
     // Use core action factory with TanStack DB collection wrapper
     return createBaseActions<TData>({
@@ -252,7 +268,7 @@ export function useConvexRx<
         collection.update(id, updater as any);
       },
     });
-  }, [syncInstance]);
+  }, [database]);
 
   // ========================================
   // 5. APPLY MIDDLEWARE TO BASE ACTIONS
@@ -267,39 +283,42 @@ export function useConvexRx<
   // ========================================
 
   React.useEffect(() => {
-    if (!syncInstance || !config.middleware?.onSyncError) return;
+    if (!database || !config.middleware?.onSyncError) return;
 
-    const cleanup = setupSyncErrorMiddleware(syncInstance.replicationState, config.middleware);
+    const cleanup = setupSyncErrorMiddleware(database.replicationState, config.middleware);
 
     return cleanup; // No need for null check - always returns a function
-  }, [syncInstance, config.middleware]);
+  }, [database, config.middleware]);
 
   // ========================================
   // 7. BUILD EXTENSION CONTEXT
   // ========================================
 
   const extensionContext = React.useMemo<HookContext<TData> | null>(() => {
-    if (!syncInstance) return null;
+    if (!database) return null;
 
     return {
-      collection: syncInstance.collection,
-      rxCollection: syncInstance.rxCollection,
-      database: syncInstance.database,
-      replicationState: syncInstance.replicationState,
+      collection: database.collection,
+      rxCollection: database.rxCollection,
+      database: database.database,
+      replicationState: database.replicationState,
     };
-  }, [syncInstance]);
+  }, [database]);
 
   // ========================================
-  // 8. BUILD CUSTOM ACTIONS
+  // 8. BUILD MERGED ACTIONS (BASE + CUSTOM)
   // ========================================
 
-  const customActions = React.useMemo<TActions>(() => {
+  const mergedActions = React.useMemo<BaseActions<TData> & TActions>(() => {
     if (!config.actions || !extensionContext) {
-      return {} as TActions;
+      // Return only base actions if no custom actions
+      return wrappedActions as BaseActions<TData> & TActions;
     }
 
-    return config.actions(wrappedActions, extensionContext);
-  }, [config.actions, wrappedActions, extensionContext]);
+    // Merge base actions with custom actions
+    const customActions = config.actions(wrappedActions, extensionContext);
+    return { ...wrappedActions, ...customActions };
+  }, [config.actions, wrappedActions, extensionContext, config]);
 
   // ========================================
   // 9. BUILD CUSTOM QUERIES
@@ -311,7 +330,7 @@ export function useConvexRx<
     }
 
     return config.queries(extensionContext);
-  }, [config.queries, extensionContext]);
+  }, [config.queries, extensionContext, config]);
 
   // ========================================
   // 10. BUILD CUSTOM SUBSCRIPTIONS
@@ -330,10 +349,10 @@ export function useConvexRx<
   // ========================================
 
   const purgeStorage = React.useCallback(async () => {
-    if (!syncInstance) return;
+    if (!database) return;
 
     try {
-      await syncInstance.cleanup();
+      await database.cleanup();
       removeSingletonInstance(
         createSingletonKey(mergedConfig.databaseName, mergedConfig.collectionName)
       );
@@ -345,7 +364,7 @@ export function useConvexRx<
       window.location.reload();
     }
   }, [
-    syncInstance,
+    database,
     mergedConfig.databaseName,
     mergedConfig.collectionName,
     config.table,
@@ -356,26 +375,38 @@ export function useConvexRx<
   // 12. RETURN UNIFIED RESULT
   // ========================================
 
+  // Derive data from collection instead of duplicating in state
+  const data = database
+    ? database.collection.toArray.filter((item) => !item._deleted)
+    : config.initialData || [];
+
+  // Consolidated status object
+  const isReady = database?.collection.isReady() ?? false;
+  const status = {
+    isLoading: !isReady,
+    isReady,
+    isReplicating,
+    error: initError,
+  };
+
   return {
     // Data
     data,
-    isLoading: !syncInstance || isLoading,
-    error: initError,
 
-    // Base actions (always available)
-    insert: wrappedActions.insert,
-    update: wrappedActions.update,
-    delete: wrappedActions.delete,
+    // Status
+    status,
 
-    // Custom extensions
-    actions: customActions,
+    // Actions (base + custom)
+    actions: mergedActions,
+
+    // Queries and subscriptions
     queries: customQueries,
     subscribe: customSubscriptions,
 
     // Advanced access
-    collection: syncInstance?.collection || null,
-    rxCollection: syncInstance?.rxCollection || null,
-    replicationState: syncInstance?.replicationState || null,
+    collection: database?.collection || null,
+    rxCollection: database?.rxCollection || null,
+    replicationState: database?.replicationState || null,
     purgeStorage,
   };
 }

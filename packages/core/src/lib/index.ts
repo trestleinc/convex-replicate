@@ -1,0 +1,32 @@
+export type {
+  ConvexRxError,
+  InitializationError,
+  SchemaError,
+  NetworkError,
+  ReplicationError,
+  ConflictError,
+  ValidationError,
+  StorageError,
+  UnknownError,
+  ErrorHandlerConfig,
+} from './errors';
+
+export {
+  ErrorCategory,
+  ErrorSeverity,
+  RecoveryStrategy,
+  ConvexRxErrorHandler,
+  createInitializationError,
+  createSchemaError,
+  createNetworkError,
+  createReplicationError,
+  createConflictError,
+  createValidationError,
+  createStorageError,
+  createUnknownError,
+  toConvexRxError,
+  isConvexRxError,
+  withErrorHandling,
+  withRetry,
+  convexRxErrorSchema,
+} from './errors';

@@ -3,6 +3,9 @@
   "workspaces": {
     "": {
       "name": "tanstack-router-react-example-quickstart-rspack-file-based",
+      "dependencies": {
+        "zod": "4.1.12",
+      },
       "devDependencies": {
         "@biomejs/biome": "latest",
         "typescript": "latest",

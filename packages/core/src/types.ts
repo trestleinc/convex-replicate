@@ -78,38 +78,6 @@ export interface ConvexWatch<T = unknown> {
   onUpdate: (callback: () => void) => () => void;
 }
 
-/**
- * Utility to format errors consistently
- */
-export function formatError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  if (error == null) {
-    return 'Error: no error information available';
-  }
-  return String(error);
-}
-
-/**
- * Check if an error is a network-related error
- */
-export function isNetworkError(error: unknown): boolean {
-  if (error instanceof TypeError) {
-    return true;
-  }
-  if (error instanceof Error && error.message) {
-    const message = error.message.toLowerCase();
-    return (
-      message.includes('network') ||
-      message.includes('fetch') ||
-      message.includes('connection') ||
-      message.includes('timeout')
-    );
-  }
-  return false;
-}
-
 // ========================================
 // SYNCED DOCUMENT TYPE
 // ========================================
