@@ -538,18 +538,10 @@ export async function createConvexRxDB<T extends ConvexRxDocument>(
 
           return [];
         } catch (error) {
-          console.error('=== PUSH ERROR START ===');
-          console.error('Error object:', error);
-          console.error('Error message:', error instanceof Error ? error.message : 'Not an Error object');
-          console.error('Error type:', error?.constructor?.name);
-          console.error('Error stringified:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
-          console.error('=== PUSH ERROR END ===');
-
-          logger.error('Push error details', {
+          logger.error('Push failed: {message}', {
             message: error instanceof Error ? error.message : String(error),
-            stack: error instanceof Error ? error.stack : undefined,
             errorType: error?.constructor?.name,
-            fullError: error,
+            stack: error instanceof Error ? error.stack : undefined,
           });
 
           const convexError = toConvexRxError(error);

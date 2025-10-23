@@ -7,7 +7,13 @@
  * @see https://github.com/dahlia/logtape
  */
 
-import { type Logger, getLogger as getLogTapeLogger, configure, getConsoleSink } from '@logtape/logtape';
+import {
+  type Logger,
+  type LogRecord,
+  getLogger as getLogTapeLogger,
+  configure,
+  getConsoleSink,
+} from '@logtape/logtape';
 
 // Re-export LogTape types and utilities for advanced users
 export type { Logger } from '@logtape/logtape';
@@ -43,7 +49,34 @@ export async function configureLogging(enableLogging = true): Promise<void> {
 
   await configure({
     sinks: {
-      console: getConsoleSink(),
+      console: getConsoleSink({
+        formatter(record: LogRecord): readonly unknown[] {
+          // Build message with placeholders replaced by %o for objects
+          let msg = '';
+          const values: unknown[] = [];
+          for (let i = 0; i < record.message.length; i++) {
+            if (i % 2 === 0) {
+              msg += record.message[i];
+            } else {
+              msg += '%o';
+              values.push(record.message[i]);
+            }
+          }
+
+          // Add structured properties if present
+          const hasProperties = Object.keys(record.properties).length > 0;
+          const propertyMsg = hasProperties ? ' %o' : '';
+          const propertyValue = hasProperties ? [record.properties] : [];
+
+          return [
+            `${record.level.toUpperCase()} %c${record.category.join('·')} %c${msg}${propertyMsg}`,
+            'color: gray;',
+            'color: default;',
+            ...values,
+            ...propertyValue,
+          ];
+        },
+      }),
     },
     loggers: [
       {
