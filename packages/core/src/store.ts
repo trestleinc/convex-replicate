@@ -1,5 +1,6 @@
 import * as Automerge from '@automerge/automerge';
 import { IndexedDBStorageAdapter } from '@automerge/automerge-repo-storage-indexeddb';
+import { getConvexReplicateLogger } from './logger';
 
 type DeletableDocument = { _deleted?: boolean };
 
@@ -9,8 +10,9 @@ export class AutomergeDocumentStore<T extends { id: string }> {
   private listeners = new Set<(docs: T[]) => void>();
   private isInitialized = false;
   private storage: IndexedDBStorageAdapter;
+  private logger = getConvexReplicateLogger(['store']);
 
-  constructor(collectionName: string) {
+  constructor(private readonly collectionName: string) {
     this.storage = new IndexedDBStorageAdapter(`convex-replicate-${collectionName}`);
   }
 
@@ -20,6 +22,11 @@ export class AutomergeDocumentStore<T extends { id: string }> {
     try {
       const chunks = await this.storage.loadRange([]);
 
+      this.logger.debug('Loading persisted documents from IndexedDB', {
+        collection: this.collectionName,
+        chunkCount: chunks.length,
+      });
+
       for (const chunk of chunks) {
         const [id] = chunk.key;
         if (!id || !chunk.data) continue;
@@ -27,12 +34,24 @@ export class AutomergeDocumentStore<T extends { id: string }> {
         try {
           const doc = Automerge.load<T>(chunk.data);
           this.docs.set(id, doc);
-        } catch {
-          // Skip corrupted data
+        } catch (error) {
+          this.logger.warn('Failed to load document from IndexedDB', {
+            collection: this.collectionName,
+            documentId: id,
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
       }
-    } catch {
-      // If storage fails (e.g., SSR), continue without persistence
+
+      this.logger.info('Initialized document store from IndexedDB', {
+        collection: this.collectionName,
+        documentCount: this.docs.size,
+      });
+    } catch (error) {
+      this.logger.warn('IndexedDB storage unavailable, continuing without persistence', {
+        collection: this.collectionName,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
 
     this.isInitialized = true;
@@ -42,8 +61,12 @@ export class AutomergeDocumentStore<T extends { id: string }> {
   private async persistToIndexedDB(id: string, bytes: Uint8Array): Promise<void> {
     try {
       await this.storage.save([id], bytes);
-    } catch {
-      // Ignore persistence errors (e.g., in SSR)
+    } catch (error) {
+      this.logger.debug('Failed to persist document to IndexedDB', {
+        collection: this.collectionName,
+        documentId: id,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
