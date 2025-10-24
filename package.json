@@ -7,11 +7,13 @@
     "examples/*"
   ],
   "scripts": {
-    "build": "bun run build:core && bun run build:react",
+    "build": "bun run build:storage && bun run build:core && bun run build:react",
+    "build:storage": "cd packages/storage && bun run build",
     "build:core": "cd packages/core && bun run build",
     "build:react": "cd packages/react && bun run build",
     "clean": "rm -rf packages/*/dist",
-    "typecheck": "bun run typecheck:core && bun run typecheck:react",
+    "typecheck": "bun run typecheck:storage && bun run typecheck:core && bun run typecheck:react",
+    "typecheck:storage": "cd packages/storage && bun run typecheck",
     "typecheck:core": "cd packages/core && tsc --noEmit",
     "typecheck:react": "cd packages/react && tsc --noEmit",
     "dev:example": "cd examples/tanstack-start && bun run dev",

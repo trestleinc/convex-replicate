@@ -1,51 +1,52 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
-import { AutomergeDocumentStore, SyncAdapter, type StorageAPI } from '@convex-rx/core';
+import {
+  AutomergeDocumentStore,
+  SyncAdapter,
+  configureLogger,
+  type StorageAPI,
+} from '@convex-rx/core';
 import { useConvexClient } from './provider';
+import { AutomergeCollection } from './collection';
 
-export interface UseConvexReplicateConfig<T extends { id: string }> {
+export interface UseConvexReplicateConfig {
   collectionName: string;
   api: StorageAPI;
-  initialData?: T[];
+  enableLogging?: boolean;
 }
 
-export function useConvexReplicate<T extends { id: string }>(config: UseConvexReplicateConfig<T>) {
+export function useConvexReplicate<T extends { id: string }>(
+  config: UseConvexReplicateConfig
+): AutomergeCollection<T> {
   const client = useConvexClient();
 
-  const store = useMemo(
-    () => new AutomergeDocumentStore<T>(config.collectionName),
-    [config.collectionName]
-  );
+  const collection = useMemo(() => {
+    const store = new AutomergeDocumentStore<T>(config.collectionName);
+    const col = new AutomergeCollection(store);
+
+    void configureLogger(config.enableLogging);
+    void col.initialize();
+
+    return col;
+  }, [config.collectionName, config.enableLogging]);
 
   const adapter = useMemo(
-    () => new SyncAdapter(store, client, config.api, config.collectionName),
-    [store, client, config.api, config.collectionName]
+    () => new SyncAdapter(collection.store, client as never, config.api, config.collectionName),
+    [collection.store, client, config.api, config.collectionName]
   );
 
   useEffect(() => {
     void adapter.start();
-    return () => adapter.stop();
-  }, [adapter]);
+    return () => {
+      adapter.stop();
+      collection.cleanup();
+    };
+  }, [adapter, collection]);
 
-  const data = useSyncExternalStore(
-    (callback) => store.subscribe(callback),
-    () => store.toArray(),
-    () => config.initialData || []
+  useSyncExternalStore(
+    (callback) => collection.subscribe(callback),
+    () => collection.toArray,
+    () => []
   );
 
-  const actions = useMemo(
-    () => ({
-      create: (id: string, data: Omit<T, 'id'>) => {
-        store.create(id, data);
-      },
-      update: (id: string, updateFn: (draft: T) => void) => {
-        store.change(id, updateFn);
-      },
-      remove: (id: string) => {
-        store.remove(id);
-      },
-    }),
-    [store]
-  );
-
-  return { data, actions };
+  return collection;
 }

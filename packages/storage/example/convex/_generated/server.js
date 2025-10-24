@@ -16,7 +16,6 @@ import {
   internalActionGeneric,
   internalMutationGeneric,
   internalQueryGeneric,
-  componentsGeneric,
 } from 'convex/server';
 
 /**

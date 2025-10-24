@@ -2,7 +2,7 @@ import { TanStackDevtools } from '@tanstack/react-devtools';
 import type { QueryClient } from '@tanstack/react-query';
 import { createRootRouteWithContext, HeadContent, Scripts } from '@tanstack/react-router';
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools';
-import { ConvexRxProvider } from '@convex-rx/react';
+import { ConvexReplicateProvider } from '@convex-rx/react';
 import { convexClient } from '../router';
 import { ConvexRxErrorBoundary } from '../components/ErrorBoundary';
 
@@ -45,7 +45,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       </head>
       <body>
         <ConvexRxErrorBoundary>
-          <ConvexRxProvider convexClient={convexClient} enableLogging={true}>
+          <ConvexReplicateProvider client={convexClient}>
             {children}
             <TanStackDevtools
               config={{
@@ -58,7 +58,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
                 },
               ]}
             />
-          </ConvexRxProvider>
+          </ConvexReplicateProvider>
         </ConvexRxErrorBoundary>
         <Scripts />
       </body>

@@ -1,69 +1,32 @@
-import { ClientOnly, createFileRoute } from '@tanstack/react-router';
-import { DatabaseZap, Delete, Diamond, DiamondPlus } from 'lucide-react';
+import { createFileRoute } from '@tanstack/react-router';
+import { Delete, Diamond, DiamondPlus } from 'lucide-react';
 import { useState } from 'react';
-import { ErrorCategory, preloadConvexRxData } from '@convex-rx/react';
-import { useTasks, type Task } from '../useTasks';
-import { api } from '../../convex/_generated/api';
+import { useTasks } from '../useTasks';
 
 export const Route = createFileRoute('/')({
-  loader: async (_ctx) => {
-    // SSR: Fetch data via HTTP on the server
-    const tasks = await preloadConvexRxData<Task>({
-      convexUrl: import.meta.env.VITE_CONVEX_URL,
-      convexApi: {
-        pullDocuments: api.tasks.pullDocuments,
-      },
-    });
-    return { tasks } as { tasks: Task[] };
-  },
   component: HomeComponent,
 });
 
 function HomeComponent() {
-  return (
-    <ClientOnly fallback={<LoadingFallback />}>
-      <TasksContent />
-    </ClientOnly>
-  );
-}
-
-function LoadingFallback() {
-  return (
-    <div className="p-6 max-w-2xl mx-auto">
-      <div className="mb-4 text-center">
-        <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-rose-pine-gold"></div>
-        <span className="ml-2 text-rose-pine-muted">Loading...</span>
-      </div>
-    </div>
-  );
-}
-
-function TasksContent() {
   const [newTaskText, setNewTaskText] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
 
-  // Get SSR data from loader
-  const loaderData = Route.useLoaderData();
-  const initialTasks = loaderData?.tasks;
+  const collection = useTasks();
 
-  // Pass SSR data to hook for instant hydration
-  const { data, status, actions, purgeStorage } = useTasks(initialTasks);
-
-  const handleCreateTask = async (e: React.FormEvent) => {
+  const handleCreateTask = (e: React.FormEvent) => {
     e.preventDefault();
     if (newTaskText.trim()) {
-      try {
-        await actions.insert({ text: newTaskText.trim(), isCompleted: false });
-        setNewTaskText('');
-      } catch (_error) {}
+      const id = crypto.randomUUID();
+      collection.insert({ id, text: newTaskText.trim(), isCompleted: false });
+      setNewTaskText('');
     }
   };
 
-  const handleToggleComplete = async (id: string, isCompleted: boolean) => {
-    try {
-      await actions.update(id, { isCompleted: !isCompleted });
-    } catch (_error) {}
+  const handleToggleComplete = (id: string, isCompleted: boolean) => {
+    collection.update(id, (draft) => {
+      draft.isCompleted = !isCompleted;
+    });
   };
 
   const handleEditStart = (id: string, text: string) => {
@@ -71,12 +34,12 @@ function TasksContent() {
     setEditText(text);
   };
 
-  const handleEditSave = async (id: string) => {
+  const handleEditSave = (id: string) => {
     if (editText.trim()) {
-      try {
-        await actions.update(id, { text: editText.trim() });
-        setEditingId(null);
-      } catch (_error) {}
+      collection.update(id, (draft) => {
+        draft.text = editText.trim();
+      });
+      setEditingId(null);
     }
   };
 
@@ -85,62 +48,40 @@ function TasksContent() {
     setEditText('');
   };
 
-  const handleDelete = async (id: string) => {
-    try {
-      await actions.delete(id);
-    } catch (_error) {}
+  const handleDelete = (id: string) => {
+    collection.delete(id);
   };
 
-  const handlePurgeStorage = async () => {
-    if (confirm('Are you sure you want to delete all local data? This will reload the page.')) {
-      try {
-        await purgeStorage();
-      } catch (_error) {}
-    }
-  };
-
-  if (status.error) {
+  if (collection.isError) {
     return (
       <div className="p-6 max-w-2xl mx-auto">
         <div className="bg-rose-pine-surface border-2 border-rose-pine-rose text-rose-pine-text px-6 py-4 rounded-lg shadow-md">
-          <h2 className="text-lg font-semibold text-rose-pine-rose mb-2">
-            {status.error.category === ErrorCategory.INITIALIZATION
-              ? 'Initialization Error'
-              : 'Sync Error'}
-          </h2>
-          <p className="text-rose-pine-muted mb-4">
-            {status.error.category === ErrorCategory.INITIALIZATION
-              ? 'Failed to initialize the database. Please try reloading.'
-              : 'Failed to sync tasks with the server. Your local changes are safe.'}
-          </p>
-          <details className="mb-4">
-            <summary className="cursor-pointer text-rose-pine-text hover:text-rose-pine-rose">
-              Error details
-            </summary>
-            <pre className="mt-2 p-3 bg-rose-pine-base rounded text-sm overflow-auto">
-              {status.error.message}
-            </pre>
-          </details>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              className="px-4 py-2 bg-rose-pine-rose text-rose-pine-base rounded hover:bg-rose-pine-rose/80 transition-colors"
-            >
-              Retry
-            </button>
-            <button
-              type="button"
-              onClick={handlePurgeStorage}
-              className="px-4 py-2 border border-rose-pine-rose text-rose-pine-text rounded hover:bg-rose-pine-rose hover:text-rose-pine-base transition-colors"
-            >
-              Clear Local Data & Retry
-            </button>
-          </div>
+          <h2 className="text-lg font-semibold text-rose-pine-rose mb-2">Error</h2>
+          <p className="text-rose-pine-muted mb-4">Failed to load tasks. Please try reloading.</p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-rose-pine-rose text-rose-pine-base rounded hover:bg-rose-pine-rose/80 transition-colors"
+          >
+            Retry
+          </button>
         </div>
       </div>
     );
   }
+
+  if (collection.isLoading) {
+    return (
+      <div className="p-6 max-w-2xl mx-auto">
+        <div className="mb-4 text-center">
+          <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-rose-pine-gold"></div>
+          <span className="ml-2 text-rose-pine-muted">Loading...</span>
+        </div>
+      </div>
+    );
+  }
+
+  const tasks = collection.toArray;
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
@@ -155,47 +96,33 @@ function TasksContent() {
           />
           <button
             type="submit"
-            disabled={!newTaskText.trim() || status.isLoading}
+            disabled={!newTaskText.trim()}
             className="px-4 py-2 border border-rose-pine-rose text-rose-pine-text rounded hover:bg-rose-pine-rose hover:text-rose-pine-base disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Add
           </button>
-          <button
-            type="button"
-            onClick={handlePurgeStorage}
-            disabled={status.isLoading}
-            className="px-4 py-2 border border-rose-pine-rose text-rose-pine-text rounded hover:bg-rose-pine-rose hover:text-rose-pine-base disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            aria-label="Delete all local data"
-          >
-            <DatabaseZap className="w-5 h-5" />
-          </button>
         </div>
       </form>
 
-      {/* Task List */}
       <div className="space-y-2">
-        {data.map((task) => (
+        {tasks.map((task) => (
           <div
             key={task.id}
             className="flex items-center gap-3 p-3 border border-rose-pine-muted rounded"
           >
-            {/* Delete Button */}
             <button
               type="button"
               onClick={() => handleDelete(task.id)}
-              disabled={status.isLoading}
-              className="text-rose-pine-rose hover:text-rose-pine-rose/80 transition-colors disabled:opacity-50"
+              className="text-rose-pine-rose hover:text-rose-pine-rose/80 transition-colors"
               aria-label="Delete task"
             >
               <Delete className="w-5 h-5" />
             </button>
 
-            {/* Toggle Completion Checkbox */}
             <button
               type="button"
               onClick={() => handleToggleComplete(task.id, task.isCompleted)}
-              disabled={status.isLoading}
-              className={`transition-colors disabled:opacity-50 ${
+              className={`transition-colors ${
                 task.isCompleted
                   ? 'text-blue hover:text-rose-pine-gold'
                   : 'text-rose-pine-gold hover:text-blue'
@@ -209,7 +136,6 @@ function TasksContent() {
               )}
             </button>
 
-            {/* Task Text */}
             {editingId === task.id ? (
               <div className="flex-1 flex gap-2">
                 <input
@@ -239,7 +165,7 @@ function TasksContent() {
         ))}
       </div>
 
-      {data.length === 0 && !status.isLoading && (
+      {tasks.length === 0 && (
         <p className="text-rose-pine-muted text-center py-8">No tasks yet. Create one above!</p>
       )}
     </div>
