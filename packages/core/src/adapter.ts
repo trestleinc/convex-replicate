@@ -4,7 +4,7 @@ import type { AutomergeDocumentStore } from './store';
 
 export interface StorageAPI {
   pullChanges: FunctionReference<'query'>;
-  submitChange: FunctionReference<'mutation'>;
+  submitBatch: FunctionReference<'mutation'>;
   changeStream: FunctionReference<'query'>;
 }
 
@@ -38,36 +38,38 @@ export class SyncAdapter<T extends { id: string }> {
   }
 
   private async pull(): Promise<void> {
-    const result = (await this.client.query(this.api.pullChanges, {
-      collectionName: this.collectionName,
-      checkpoint: this.checkpoint,
-      limit: 100,
-    })) as {
-      changes: Array<{ documentId: string; data: ArrayBuffer }>;
-      checkpoint: { lastModified: number };
-    };
+    try {
+      const result = await this.client.query(this.api.pullChanges, {
+        collectionName: this.collectionName,
+        checkpoint: this.checkpoint,
+        limit: 100,
+      });
 
-    for (const change of result.changes) {
-      this.store.merge(change.documentId, new Uint8Array(change.data));
-    }
+      for (const change of result.changes) {
+        this.store.merge(change.documentId, new Uint8Array(change.data));
+      }
 
-    this.checkpoint = result.checkpoint;
+      this.checkpoint = result.checkpoint;
+    } catch {}
   }
 
   private async push(): Promise<void> {
     const dirty = this.store.getDirty();
     if (dirty.length === 0) return;
 
-    await this.client.mutation(this.api.submitChange, {
-      collectionName: this.collectionName,
-      changes: dirty.map(({ id, bytes }) => ({
-        documentId: id,
-        data: bytes,
-      })),
-    });
+    try {
+      await this.client.mutation(this.api.submitBatch, {
+        operations: dirty.map(({ id, bytes }) => ({
+          collectionName: this.collectionName,
+          documentId: id,
+          type: 'snapshot' as const,
+          data: bytes,
+        })),
+      });
 
-    for (const { id } of dirty) {
-      this.store.clearDirty(id);
-    }
+      for (const { id } of dirty) {
+        this.store.clearDirty(id);
+      }
+    } catch {}
   }
 }
