@@ -17,10 +17,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@automerge/automerge": "3.1.2",
+    "@automerge/automerge-repo-storage-indexeddb": "2.4.0",
     "@logtape/logtape": "1.1.2",
-    "dexie": "4.2.1",
-    "rxdb": "~16.19.0",
-    "rxjs": "7.8.2",
     "zod": "4.1.12"
   },
   "peerDependencies": {
