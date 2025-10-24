@@ -11,8 +11,14 @@ export interface ChangeMessage<T> {
 export class AutomergeCollection<T extends { id: string }> {
   private _status: CollectionStatus = 'idle';
   private listeners = new Set<() => void>();
+  private _cachedArray: T[] = [];
 
-  constructor(public readonly store: AutomergeDocumentStore<T>) {}
+  constructor(public readonly store: AutomergeDocumentStore<T>) {
+    this.store.subscribe(() => {
+      this.updateCache();
+      this.notifyListeners();
+    });
+  }
 
   async initialize(): Promise<void> {
     this._status = 'loading';
@@ -21,6 +27,7 @@ export class AutomergeCollection<T extends { id: string }> {
     try {
       await this.store.initialize();
       this._status = 'ready';
+      this.updateCache();
     } catch {
       this._status = 'error';
     }
@@ -30,14 +37,18 @@ export class AutomergeCollection<T extends { id: string }> {
 
   get state(): Map<string, T> {
     const map = new Map<string, T>();
-    for (const item of this.store.toArray()) {
+    for (const item of this._cachedArray) {
       map.set(item.id, item);
     }
     return map;
   }
 
   get toArray(): T[] {
-    return this.store.toArray();
+    return this._cachedArray;
+  }
+
+  private updateCache(): void {
+    this._cachedArray = this.store.toArray();
   }
 
   get status(): CollectionStatus {
@@ -45,7 +56,7 @@ export class AutomergeCollection<T extends { id: string }> {
   }
 
   get size(): number {
-    return this.store.toArray().length;
+    return this._cachedArray.length;
   }
 
   get isIdle(): boolean {

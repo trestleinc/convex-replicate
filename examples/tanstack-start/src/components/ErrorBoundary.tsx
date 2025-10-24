@@ -1,7 +1,7 @@
 import React from 'react';
-import { getLogger } from '@convex-rx/core';
+import { getLogger } from '../lib/logger';
 
-const logger = getLogger('error-boundary', true);
+const logger = getLogger('error-boundary');
 
 interface Props {
   children: React.ReactNode;

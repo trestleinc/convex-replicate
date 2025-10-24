@@ -16,8 +16,8 @@
   "type": "module",
   "scripts": {
     "build": "npm run build:esm && npm run build:cjs",
-    "build:esm": "tsc --project ./esm.json && echo '{\\n  \"type\": \"module\"\\n}' > dist/esm/package.json",
-    "build:cjs": "tsc --project ./commonjs.json && echo '{\\n  \"type\": \"commonjs\"\\n}' > dist/commonjs/package.json",
+    "build:esm": "tsc --project ./esm.json && echo '{\"type\":\"module\"}' > dist/esm/package.json",
+    "build:cjs": "tsc --project ./commonjs.json && echo '{\"type\":\"commonjs\"}' > dist/commonjs/package.json",
     "dev": "cd example; npm run dev",
     "typecheck": "tsc --noEmit",
     "prepare": "npm run build",

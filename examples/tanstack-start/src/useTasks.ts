@@ -11,6 +11,5 @@ export function useTasks() {
   return useConvexReplicate<Task>({
     collectionName: 'tasks',
     api: components.storage.public,
-    enableLogging: false,
   });
 }

@@ -1,17 +1,11 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
-import {
-  AutomergeDocumentStore,
-  SyncAdapter,
-  configureLogger,
-  type StorageAPI,
-} from '@convex-rx/core';
+import { AutomergeDocumentStore, SyncAdapter, type StorageAPI } from '@convex-rx/core';
 import { useConvexClient } from './provider';
 import { AutomergeCollection } from './collection';
 
 export interface UseConvexReplicateConfig {
   collectionName: string;
   api: StorageAPI;
-  enableLogging?: boolean;
 }
 
 export function useConvexReplicate<T extends { id: string }>(
@@ -23,11 +17,10 @@ export function useConvexReplicate<T extends { id: string }>(
     const store = new AutomergeDocumentStore<T>(config.collectionName);
     const col = new AutomergeCollection(store);
 
-    void configureLogger(config.enableLogging);
     void col.initialize();
 
     return col;
-  }, [config.collectionName, config.enableLogging]);
+  }, [config.collectionName]);
 
   const adapter = useMemo(
     () => new SyncAdapter(collection.store, client as never, config.api, config.collectionName),
