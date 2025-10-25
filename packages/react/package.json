@@ -18,7 +18,8 @@
   },
   "dependencies": {
     "@convex-rx/core": "workspace:*",
-    "@tanstack/react-db": "0.1.33"
+    "@tanstack/db": "0.4.13",
+    "@tanstack/react-db": "0.1.35"
   },
   "peerDependencies": {
     "convex": "1.28.0",

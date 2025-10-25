@@ -5,14 +5,11 @@ export default defineSchema({
   documents: defineTable({
     collectionName: v.string(),
     documentId: v.string(),
-    type: v.union(v.literal('snapshot'), v.literal('change')),
-    hash: v.string(),
-    data: v.bytes(),
+    document: v.any(),
+    version: v.number(),
     timestamp: v.number(),
-    size: v.number(),
   })
     .index('by_collection', ['collectionName'])
-    .index('by_document', ['collectionName', 'documentId'])
-    .index('by_hash', ['hash'])
+    .index('by_collection_document', ['collectionName', 'documentId'])
     .index('by_timestamp', ['collectionName', 'timestamp']),
 });

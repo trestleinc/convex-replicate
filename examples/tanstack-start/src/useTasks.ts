@@ -1,5 +1,7 @@
-import { useConvexReplicate } from '@convex-rx/react';
-import { components } from '../convex/_generated/api';
+import { createCollection } from '@tanstack/react-db';
+import { convexAutomergeCollectionOptions } from '@convex-rx/core';
+import { api } from '../convex/_generated/api';
+import { convexClient } from './router';
 
 export interface Task {
   id: string;
@@ -7,9 +9,15 @@ export interface Task {
   isCompleted: boolean;
 }
 
-export function useTasks() {
-  return useConvexReplicate<Task>({
+export const tasksCollection = createCollection(
+  convexAutomergeCollectionOptions<Task>({
+    convexClient,
+    api: api.tasks,
     collectionName: 'tasks',
-    api: components.storage.public,
-  });
+    getKey: (task) => task.id,
+  })
+);
+
+export function useTasks() {
+  return tasksCollection;
 }

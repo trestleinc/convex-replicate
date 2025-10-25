@@ -1,7 +1,7 @@
 import { QueryClient } from '@tanstack/react-query';
 import { createRouter } from '@tanstack/react-router';
 import { routerWithQueryClient } from '@tanstack/react-router-with-query';
-import { ConvexReactClient } from 'convex/react';
+import { ConvexClient } from 'convex/browser';
 
 // Import the generated route tree
 import { routeTree } from './routeTree.gen';
@@ -11,7 +11,7 @@ const convexUrl = import.meta.env.VITE_CONVEX_URL;
 if (!convexUrl) {
   throw new Error('VITE_CONVEX_URL environment variable is required');
 }
-export const convexClient = new ConvexReactClient(convexUrl);
+export const convexClient = new ConvexClient(convexUrl);
 
 // Export queryClient so other modules can use it
 export let queryClient: QueryClient;

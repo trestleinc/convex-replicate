@@ -4,9 +4,9 @@ import type { AutomergeDocumentStore } from './store';
 import { getConvexReplicateLogger } from './logger';
 
 export interface StorageAPI {
-  pullChanges: FunctionReference<'query'>;
-  submitBatch: FunctionReference<'mutation'>;
-  changeStream: FunctionReference<'query'>;
+  pullChanges: FunctionReference<'query', 'public' | 'internal'>;
+  submitDocument: FunctionReference<'mutation', 'public' | 'internal'>;
+  changeStream: FunctionReference<'query', 'public' | 'internal'>;
 }
 
 export class SyncAdapter<T extends { id: string }> {
@@ -28,8 +28,8 @@ export class SyncAdapter<T extends { id: string }> {
     this.pushInterval = setInterval(() => void this.push(), 5000);
 
     this.unsubscribe = this.client.onUpdate(
-      this.api.changeStream,
-      { collectionName: this.collectionName },
+      this.api.changeStream as any,
+      {},
       () => void this.pull()
     );
   }
@@ -41,8 +41,7 @@ export class SyncAdapter<T extends { id: string }> {
 
   private async pull(): Promise<void> {
     try {
-      const result = await this.client.query(this.api.pullChanges, {
-        collectionName: this.collectionName,
+      const result = await this.client.query(this.api.pullChanges as any, {
         checkpoint: this.checkpoint,
         limit: 100,
       });
@@ -70,7 +69,7 @@ export class SyncAdapter<T extends { id: string }> {
   }
 
   private async push(): Promise<void> {
-    const dirty = this.store.getDirty();
+    const dirty = this.store.getDirtyMaterialized();
     if (dirty.length === 0) return;
 
     this.logger.debug('Pushing changes to server', {
@@ -79,14 +78,15 @@ export class SyncAdapter<T extends { id: string }> {
     });
 
     try {
-      await this.client.mutation(this.api.submitBatch, {
-        operations: dirty.map(({ id, bytes }) => ({
-          collectionName: this.collectionName,
-          documentId: id,
-          type: 'snapshot' as const,
-          data: bytes,
-        })),
-      });
+      await Promise.all(
+        dirty.map(({ id, document, version }) =>
+          this.client.mutation(this.api.submitDocument as any, {
+            id,
+            document,
+            version,
+          })
+        )
+      );
 
       for (const { id } of dirty) {
         this.store.clearDirty(id);

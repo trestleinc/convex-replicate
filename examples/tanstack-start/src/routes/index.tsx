@@ -52,7 +52,7 @@ function HomeComponent() {
     collection.delete(id);
   };
 
-  if (collection.isError) {
+  if (collection.status === 'error') {
     return (
       <div className="p-6 max-w-2xl mx-auto">
         <div className="bg-rose-pine-surface border-2 border-rose-pine-rose text-rose-pine-text px-6 py-4 rounded-lg shadow-md">
@@ -70,7 +70,7 @@ function HomeComponent() {
     );
   }
 
-  if (collection.isLoading) {
+  if (collection.status === 'loading') {
     return (
       <div className="p-6 max-w-2xl mx-auto">
         <div className="mb-4 text-center">

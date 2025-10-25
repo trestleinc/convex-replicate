@@ -9,48 +9,56 @@ export class AutomergeDocumentStore<T extends { id: string }> {
   private dirtyDocs = new Set<string>();
   private listeners = new Set<(docs: T[]) => void>();
   private isInitialized = false;
-  private storage: IndexedDBStorageAdapter;
+  private storage: IndexedDBStorageAdapter | null = null;
   private logger = getConvexReplicateLogger(['store']);
 
   constructor(private readonly collectionName: string) {
-    this.storage = new IndexedDBStorageAdapter(`convex-replicate-${collectionName}`);
+    if (typeof indexedDB !== 'undefined') {
+      this.storage = new IndexedDBStorageAdapter(`convex-replicate-${collectionName}`);
+    }
   }
 
   async initialize(): Promise<void> {
     if (this.isInitialized) return;
 
-    try {
-      const chunks = await this.storage.loadRange([]);
+    if (this.storage) {
+      try {
+        const chunks = await this.storage.loadRange([]);
 
-      this.logger.debug('Loading persisted documents from IndexedDB', {
-        collection: this.collectionName,
-        chunkCount: chunks.length,
-      });
+        this.logger.debug('Loading persisted documents from IndexedDB', {
+          collection: this.collectionName,
+          chunkCount: chunks.length,
+        });
 
-      for (const chunk of chunks) {
-        const [id] = chunk.key;
-        if (!id || !chunk.data) continue;
+        for (const chunk of chunks) {
+          const [id] = chunk.key;
+          if (!id || !chunk.data) continue;
 
-        try {
-          const doc = Automerge.load<T>(chunk.data);
-          this.docs.set(id, doc);
-        } catch (error) {
-          this.logger.warn('Failed to load document from IndexedDB', {
-            collection: this.collectionName,
-            documentId: id,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          try {
+            const doc = Automerge.load<T>(chunk.data);
+            this.docs.set(id, doc);
+          } catch (error) {
+            this.logger.warn('Failed to load document from IndexedDB', {
+              collection: this.collectionName,
+              documentId: id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
-      }
 
-      this.logger.info('Initialized document store from IndexedDB', {
+        this.logger.info('Initialized document store from IndexedDB', {
+          collection: this.collectionName,
+          documentCount: this.docs.size,
+        });
+      } catch (error) {
+        this.logger.warn('IndexedDB storage unavailable, continuing without persistence', {
+          collection: this.collectionName,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    } else {
+      this.logger.debug('IndexedDB not available (SSR), skipping persistence', {
         collection: this.collectionName,
-        documentCount: this.docs.size,
-      });
-    } catch (error) {
-      this.logger.warn('IndexedDB storage unavailable, continuing without persistence', {
-        collection: this.collectionName,
-        error: error instanceof Error ? error.message : String(error),
       });
     }
 
@@ -59,6 +67,8 @@ export class AutomergeDocumentStore<T extends { id: string }> {
   }
 
   private async persistToIndexedDB(id: string, bytes: Uint8Array): Promise<void> {
+    if (!this.storage) return;
+
     try {
       await this.storage.save([id], bytes);
     } catch (error) {
@@ -123,6 +133,54 @@ export class AutomergeDocumentStore<T extends { id: string }> {
 
   clearDirty(id: string): void {
     this.dirtyDocs.delete(id);
+  }
+
+  getMaterialized(id: string): T | undefined {
+    const doc = this.docs.get(id);
+    if (!doc) return undefined;
+
+    const materialized = { ...doc };
+    const deletable = materialized as T & DeletableDocument;
+    if (deletable._deleted) return undefined;
+
+    return materialized;
+  }
+
+  getDirtyMaterialized(): Array<{ id: string; document: T; version: number }> {
+    return Array.from(this.dirtyDocs)
+      .map((id) => {
+        const doc = this.docs.get(id);
+        if (!doc) return null;
+
+        const materialized = { ...doc };
+        const deletable = materialized as T & DeletableDocument;
+        if (deletable._deleted) return null;
+
+        return {
+          id,
+          document: materialized,
+          version: Automerge.getHeads(doc).length,
+        };
+      })
+      .filter((item): item is { id: string; document: T; version: number } => item !== null);
+  }
+
+  mergeFromMaterialized(id: string, remoteDoc: Partial<T>): void {
+    let doc = this.docs.get(id);
+
+    if (!doc) {
+      doc = Automerge.from(remoteDoc as T);
+      this.docs.set(id, doc);
+    } else {
+      doc = Automerge.change(doc, (draft) => {
+        Object.assign(draft, remoteDoc);
+      });
+      this.docs.set(id, doc);
+    }
+
+    const bytes = Automerge.save(doc);
+    void this.persistToIndexedDB(id, bytes);
+    this.notify();
   }
 
   toArray(): T[] {
