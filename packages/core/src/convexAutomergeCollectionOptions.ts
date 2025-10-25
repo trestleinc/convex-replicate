@@ -11,6 +11,8 @@ interface ConvexAutomergeCollectionConfig<TItem extends { id: string }> {
   getKey: (item: TItem) => string | number;
   id?: string;
   schema?: unknown;
+  initialData?: ReadonlyArray<TItem>;
+  enableReplicate?: boolean;
 }
 
 export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
@@ -31,6 +33,27 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
       timestamp: number;
     }> = [];
     let isInitialSyncComplete = false;
+
+    if (config.initialData && config.initialData.length > 0) {
+      logger.debug('Writing initial data for SSR hydration', {
+        itemCount: config.initialData.length,
+      });
+      begin();
+      for (const item of config.initialData) {
+        const key = String(config.getKey(item));
+        write({ type: 'insert', value: item });
+        trackedItems.add(key);
+      }
+      commit();
+      logger.debug('Initial data written for hydration');
+    }
+
+    const shouldEnableReplicate = config.enableReplicate ?? true;
+    if (!shouldEnableReplicate) {
+      logger.info('Replication disabled, skipping WebSocket setup');
+      markReady();
+      return () => {};
+    }
 
     const unsubscribe = config.convexClient.onUpdate(config.api.changeStream as any, {}, () => {
       void pullChanges();
@@ -101,20 +124,49 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
 
         await store.initialize();
 
-        const initialData = store.toArray();
+        const localData = store.toArray();
         logger.debug('Loaded local data from IndexedDB', {
-          documentCount: initialData.length,
+          documentCount: localData.length,
         });
 
-        if (initialData.length > 0) {
+        if (config.initialData && config.initialData.length > 0) {
+          logger.debug('Merging initial data with local CRDTs', {
+            initialDataCount: config.initialData.length,
+            localDataCount: localData.length,
+          });
+
+          for (const serverItem of config.initialData) {
+            const id = String(config.getKey(serverItem));
+            store.mergeFromMaterialized(id, serverItem);
+          }
+
+          const mergedData = store.toArray();
+          logger.debug('Merged data ready', {
+            mergedCount: mergedData.length,
+          });
+
+          if (mergedData.length > 0) {
+            begin();
+            for (const item of mergedData) {
+              const key = String(config.getKey(item));
+              const writeType = trackedItems.has(key) ? 'update' : 'insert';
+              write({ type: writeType, value: item });
+              trackedItems.add(key);
+            }
+            commit();
+            logger.debug('Wrote merged data to TanStack DB', {
+              documentCount: mergedData.length,
+            });
+          }
+        } else if (localData.length > 0) {
           begin();
-          for (const item of initialData) {
+          for (const item of localData) {
             write({ type: 'insert', value: item });
             trackedItems.add(String(config.getKey(item)));
           }
           commit();
           logger.debug('Wrote local data to TanStack DB', {
-            documentCount: initialData.length,
+            documentCount: localData.length,
           });
         }
 

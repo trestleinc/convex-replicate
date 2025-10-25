@@ -12,7 +12,7 @@ export interface Task {
 
 let tasksCollection: ReturnType<typeof createCollection<Task>> | null = null;
 
-export function useTasks() {
+export function useTasks(initialData?: ReadonlyArray<Task>) {
   return useMemo(() => {
     if (!tasksCollection) {
       tasksCollection = createCollection(
@@ -21,9 +21,10 @@ export function useTasks() {
           api: api.tasks,
           collectionName: 'tasks',
           getKey: (task) => task.id,
+          initialData,
         })
       );
     }
     return tasksCollection;
-  }, []);
+  }, [initialData]);
 }

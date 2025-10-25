@@ -1,18 +1,31 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { Delete, Diamond, DiamondPlus } from 'lucide-react';
 import { useState } from 'react';
+import type { Task } from '../useTasks';
 import { useTasks } from '../useTasks';
+import { ConvexHttpClient } from 'convex/browser';
+import { loadConvexData } from '@convex-rx/core/ssr';
+import { api } from '../../convex/_generated/api';
+
+const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
 
 export const Route = createFileRoute('/')({
+  loader: async () => {
+    const tasks = await loadConvexData<Task>(httpClient, api.tasks.pullChanges, {
+      limit: 100,
+    });
+    return { tasks };
+  },
   component: HomeComponent,
 });
 
 function HomeComponent() {
+  const { tasks: initialTasks } = Route.useLoaderData();
   const [newTaskText, setNewTaskText] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
 
-  const collection = useTasks();
+  const collection = useTasks(initialTasks);
 
   const handleCreateTask = (e: React.FormEvent) => {
     e.preventDefault();

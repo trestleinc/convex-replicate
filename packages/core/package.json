@@ -13,6 +13,10 @@
     "./convex-helpers": {
       "types": "./dist/convex-helpers.d.ts",
       "default": "./dist/convex-helpers.js"
+    },
+    "./ssr": {
+      "types": "./dist/ssr.d.ts",
+      "default": "./dist/ssr.js"
     }
   },
   "scripts": {
