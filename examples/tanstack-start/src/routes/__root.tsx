@@ -2,11 +2,17 @@ import { TanStackDevtools } from '@tanstack/react-devtools';
 import type { QueryClient } from '@tanstack/react-query';
 import { createRootRouteWithContext, HeadContent, Scripts } from '@tanstack/react-router';
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools';
-import { ConvexReplicateProvider } from '@convex-rx/react';
-import { convexClient } from '../router';
+import { configure, getConsoleSink } from '@logtape/logtape';
 import { ConvexRxErrorBoundary } from '../components/ErrorBoundary';
 
 import appCss from '../styles.css?url';
+
+await configure({
+  sinks: { console: getConsoleSink() },
+  loggers: [
+    { category: ['convex-replicate'], lowestLevel: 'debug', sinks: ['console'] },
+  ],
+});
 
 interface RouterContext {
   queryClient: QueryClient;
@@ -45,20 +51,18 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       </head>
       <body>
         <ConvexRxErrorBoundary>
-          <ConvexReplicateProvider client={convexClient}>
-            {children}
-            <TanStackDevtools
-              config={{
-                position: 'bottom-right',
-              }}
-              plugins={[
-                {
-                  name: 'Tanstack Router',
-                  render: <TanStackRouterDevtoolsPanel />,
-                },
-              ]}
-            />
-          </ConvexReplicateProvider>
+          {children}
+          <TanStackDevtools
+            config={{
+              position: 'bottom-right',
+            }}
+            plugins={[
+              {
+                name: 'Tanstack Router',
+                render: <TanStackRouterDevtoolsPanel />,
+              },
+            ]}
+          />
         </ConvexRxErrorBoundary>
         <Scripts />
       </body>

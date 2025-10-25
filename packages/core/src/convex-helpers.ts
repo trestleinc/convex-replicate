@@ -1,7 +1,7 @@
-import type { GenericMutationCtx, GenericQueryCtx } from 'convex/server';
+import type { GenericDataModel, GenericMutationCtx, GenericQueryCtx } from 'convex/server';
 
-export async function submitDocumentHelper(
-  ctx: GenericMutationCtx<any>,
+export async function submitDocumentHelper<DataModel extends GenericDataModel>(
+  ctx: GenericMutationCtx<DataModel>,
   components: any,
   tableName: string,
   args: { id: string; document: any; version: number }
@@ -37,8 +37,8 @@ export async function submitDocumentHelper(
   return { success: true };
 }
 
-export async function pullChangesHelper(
-  ctx: GenericQueryCtx<any>,
+export async function pullChangesHelper<DataModel extends GenericDataModel>(
+  ctx: GenericQueryCtx<DataModel>,
   tableName: string,
   args: { checkpoint: { lastModified: number }; limit?: number }
 ): Promise<{
@@ -75,8 +75,8 @@ export async function pullChangesHelper(
   };
 }
 
-export async function changeStreamHelper(
-  ctx: GenericQueryCtx<any>,
+export async function changeStreamHelper<DataModel extends GenericDataModel>(
+  ctx: GenericQueryCtx<DataModel>,
   tableName: string
 ): Promise<{ timestamp: number; count: number }> {
   const db = ctx.db as any;
