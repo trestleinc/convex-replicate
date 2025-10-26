@@ -59,15 +59,17 @@ export async function pullChangesHelper<DataModel extends GenericDataModel>(
     .take(args.limit ?? 100);
 
   return {
-    changes: docs.map((doc: any) => {
-      const { _id, _creationTime, timestamp: _timestamp, version: _version, ...rest } = doc;
-      return {
-        documentId: doc.id,
-        document: rest,
-        version: doc.version,
-        timestamp: doc.timestamp,
-      };
-    }),
+    changes: docs
+      .filter((doc: any) => !doc.deleted)
+      .map((doc: any) => {
+        const { _id, _creationTime, timestamp: _timestamp, version: _version, ...rest } = doc;
+        return {
+          documentId: doc.id,
+          document: rest,
+          version: doc.version,
+          timestamp: doc.timestamp,
+        };
+      }),
     checkpoint: {
       lastModified: docs[docs.length - 1]?.timestamp ?? args.checkpoint.lastModified,
     },

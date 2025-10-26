@@ -8,6 +8,7 @@ export default defineSchema({
     isCompleted: v.boolean(),
     version: v.number(),
     timestamp: v.number(),
+    deleted: v.optional(v.boolean()),
   })
     .index('by_user_id', ['id'])
     .index('by_timestamp', ['timestamp']),

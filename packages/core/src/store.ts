@@ -2,7 +2,7 @@ import * as Automerge from '@automerge/automerge';
 import { IndexedDBStorageAdapter } from '@automerge/automerge-repo-storage-indexeddb';
 import { getConvexReplicateLogger } from './logger';
 
-type DeletableDocument = { _deleted?: boolean };
+type DeletableDocument = { deleted?: boolean };
 
 export class AutomergeDocumentStore<T extends { id: string }> {
   private docs = new Map<string, Automerge.Doc<T>>();
@@ -107,7 +107,7 @@ export class AutomergeDocumentStore<T extends { id: string }> {
 
   remove(id: string): Uint8Array | null {
     return this.change(id, (draft) => {
-      (draft as T & DeletableDocument)._deleted = true;
+      (draft as T & DeletableDocument).deleted = true;
     });
   }
 
@@ -142,7 +142,7 @@ export class AutomergeDocumentStore<T extends { id: string }> {
 
     const materialized = { ...doc };
     const deletable = materialized as T & DeletableDocument;
-    if (deletable._deleted) return undefined;
+    if (deletable.deleted) return undefined;
 
     return materialized;
   }
@@ -155,7 +155,7 @@ export class AutomergeDocumentStore<T extends { id: string }> {
 
         const materialized = { ...doc };
         const deletable = materialized as T & DeletableDocument;
-        if (deletable._deleted) return null;
+        if (deletable.deleted) return null;
 
         return {
           id,
@@ -164,6 +164,24 @@ export class AutomergeDocumentStore<T extends { id: string }> {
         };
       })
       .filter((item): item is { id: string; document: T; version: number } => item !== null);
+  }
+
+  getDirtyForSync(): Array<{ id: string; document: T & DeletableDocument; version: number }> {
+    return Array.from(this.dirtyDocs)
+      .map((id) => {
+        const doc = this.docs.get(id);
+        if (!doc) return null;
+
+        return {
+          id,
+          document: { ...doc } as T & DeletableDocument,
+          version: Automerge.getHeads(doc).length,
+        };
+      })
+      .filter(
+        (item): item is { id: string; document: T & DeletableDocument; version: number } =>
+          item !== null
+      );
   }
 
   mergeFromMaterialized(id: string, remoteDoc: Partial<T>): void {
@@ -189,7 +207,7 @@ export class AutomergeDocumentStore<T extends { id: string }> {
       .map((doc) => ({ ...doc }))
       .filter((doc) => {
         const deletable = doc as T & DeletableDocument;
-        return !deletable._deleted;
+        return !deletable.deleted;
       });
   }
 

@@ -250,7 +250,7 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
         trackedItems.add(id);
       }
 
-      const dirty = store.getDirtyMaterialized();
+      const dirty = store.getDirtyForSync();
 
       if (dirty.length > 0) {
         await Promise.all(
@@ -281,7 +281,7 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
         });
       }
 
-      const dirty = store.getDirtyMaterialized();
+      const dirty = store.getDirtyForSync();
 
       if (dirty.length > 0) {
         await Promise.all(
@@ -306,7 +306,7 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
         store.remove(id);
       }
 
-      const dirty = store.getDirtyMaterialized();
+      const dirty = store.getDirtyForSync();
 
       if (dirty.length > 0) {
         await Promise.all(
