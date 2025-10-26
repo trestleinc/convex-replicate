@@ -72,10 +72,11 @@ export class AutomergeDocumentStore<T extends { id: string }> {
     try {
       await this.storage.save([id], bytes);
     } catch (error) {
-      this.logger.debug('Failed to persist document to IndexedDB', {
+      this.logger.warn('Failed to persist document to IndexedDB', {
         collection: this.collectionName,
         documentId: id,
         error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
       });
     }
   }

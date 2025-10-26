@@ -1,31 +1,99 @@
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, ClientOnly } from '@tanstack/react-router';
 import { Delete, Diamond, DiamondPlus } from 'lucide-react';
 import { useState } from 'react';
 import type { Task } from '../useTasks';
 import { useTasks } from '../useTasks';
 import { ConvexHttpClient } from 'convex/browser';
 import { loadConvexData } from '@convex-rx/core/ssr';
+import { getConvexReplicateLogger } from '@convex-rx/core';
+import { useLiveQuery } from '@tanstack/react-db';
 import { api } from '../../convex/_generated/api';
 
 const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
+const logger = getConvexReplicateLogger(['loader']);
 
 export const Route = createFileRoute('/')({
   loader: async () => {
+    logger.debug('Starting SSR data fetch');
     const tasks = await loadConvexData<Task>(httpClient, api.tasks.pullChanges, {
       limit: 100,
     });
+    logger.debug('Fetched tasks from SSR', { taskCount: tasks.length });
     return { tasks };
   },
   component: HomeComponent,
 });
 
-function HomeComponent() {
-  const { tasks: initialTasks } = Route.useLoaderData();
+function StaticTasksView({ tasks }: { tasks: ReadonlyArray<Task> }) {
+  return (
+    <div className="p-6 max-w-2xl mx-auto">
+      <div className="mb-6">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            disabled
+            placeholder="Add a new task..."
+            className="flex-1 px-3 py-2 border border-rose-pine-muted rounded opacity-50"
+          />
+          <button
+            type="button"
+            disabled
+            className="px-4 py-2 border border-rose-pine-rose text-rose-pine-text rounded opacity-50 cursor-not-allowed"
+          >
+            Add
+          </button>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        {tasks.map((task) => (
+          <div
+            key={task.id}
+            className="flex items-center gap-3 p-3 border border-rose-pine-muted rounded"
+          >
+            <div className="text-rose-pine-rose opacity-50">
+              <Delete className="w-5 h-5" />
+            </div>
+
+            <div className={`opacity-50 ${task.isCompleted ? 'text-blue' : 'text-rose-pine-gold'}`}>
+              {task.isCompleted ? (
+                <DiamondPlus className="w-5 h-5" />
+              ) : (
+                <Diamond className="w-5 h-5" />
+              )}
+            </div>
+
+            <div
+              className={`flex-1 px-2 py-1 ${
+                task.isCompleted ? 'line-through text-rose-pine-muted' : ''
+              }`}
+            >
+              {task.text}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {tasks.length === 0 && (
+        <p className="text-rose-pine-muted text-center py-8">No tasks yet. Create one above!</p>
+      )}
+    </div>
+  );
+}
+
+function LiveTasksView({ initialTasks }: { initialTasks: ReadonlyArray<Task> }) {
   const [newTaskText, setNewTaskText] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
 
   const collection = useTasks(initialTasks);
+  const { data: tasks, isLoading, isError } = useLiveQuery(collection);
+
+  logger.debug('useLiveQuery state', {
+    taskCount: tasks.length,
+    isLoading,
+    isError,
+  });
 
   const handleCreateTask = (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,7 +133,7 @@ function HomeComponent() {
     collection.delete(id);
   };
 
-  if (collection.status === 'error') {
+  if (isError) {
     return (
       <div className="p-6 max-w-2xl mx-auto">
         <div className="bg-rose-pine-surface border-2 border-rose-pine-rose text-rose-pine-text px-6 py-4 rounded-lg shadow-md">
@@ -83,7 +151,7 @@ function HomeComponent() {
     );
   }
 
-  if (collection.status === 'loading') {
+  if (isLoading) {
     return (
       <div className="p-6 max-w-2xl mx-auto">
         <div className="mb-4 text-center">
@@ -93,8 +161,6 @@ function HomeComponent() {
       </div>
     );
   }
-
-  const tasks = collection.toArray;
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
@@ -182,5 +248,16 @@ function HomeComponent() {
         <p className="text-rose-pine-muted text-center py-8">No tasks yet. Create one above!</p>
       )}
     </div>
+  );
+}
+
+function HomeComponent() {
+  const { tasks: initialTasks } = Route.useLoaderData();
+  logger.debug('Component rendering with initialTasks', { taskCount: initialTasks.length });
+
+  return (
+    <ClientOnly fallback={<StaticTasksView tasks={initialTasks} />}>
+      <LiveTasksView initialTasks={initialTasks} />
+    </ClientOnly>
   );
 }

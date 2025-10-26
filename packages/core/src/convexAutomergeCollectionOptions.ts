@@ -24,6 +24,12 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
   const logger = getConvexReplicateLogger(['collection', config.collectionName]);
 
   const sync: SyncConfig<TItem, string | number>['sync'] = (params) => {
+    logger.info('Sync function invoked', {
+      hasInitialData: !!config.initialData,
+      initialDataCount: config.initialData?.length ?? 0,
+      enableReplicate: config.enableReplicate ?? true,
+    });
+
     const { begin, write, commit, markReady } = params;
 
     const eventBuffer: Array<{
@@ -35,17 +41,29 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
     let isInitialSyncComplete = false;
 
     if (config.initialData && config.initialData.length > 0) {
-      logger.debug('Writing initial data for SSR hydration', {
-        itemCount: config.initialData.length,
-      });
-      begin();
-      for (const item of config.initialData) {
-        const key = String(config.getKey(item));
-        write({ type: 'insert', value: item });
-        trackedItems.add(key);
+      try {
+        logger.debug('Writing initial data for SSR hydration', {
+          itemCount: config.initialData.length,
+        });
+
+        begin();
+        logger.debug('Called begin()');
+
+        for (const item of config.initialData) {
+          const key = String(config.getKey(item));
+          logger.debug('Writing initial item', { id: key });
+          write({ type: 'insert', value: item });
+          trackedItems.add(key);
+        }
+
+        commit();
+        logger.debug('Called commit() - initial data written for hydration');
+      } catch (error) {
+        logger.error('Failed to write initial data', {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
       }
-      commit();
-      logger.debug('Initial data written for hydration');
     }
 
     const shouldEnableReplicate = config.enableReplicate ?? true;
@@ -55,6 +73,7 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
       return () => {};
     }
 
+    // WebSocket reconnections with code 1001 ("Going Away") are normal during HMR in development
     const unsubscribe = config.convexClient.onUpdate(config.api.changeStream as any, {}, () => {
       void pullChanges();
     });
@@ -207,9 +226,12 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
       }
     };
 
+    logger.debug('Starting initial sync in background');
     void initialSync();
 
+    logger.debug('Sync function setup complete, returning cleanup function');
     return () => {
+      logger.debug('Cleanup function called, unsubscribing');
       unsubscribe();
     };
   };

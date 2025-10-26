@@ -7,12 +7,14 @@ import { ConvexRxErrorBoundary } from '../components/ErrorBoundary';
 
 import appCss from '../styles.css?url';
 
-await configure({
-  sinks: { console: getConsoleSink() },
-  loggers: [
-    { category: ['convex-replicate'], lowestLevel: 'debug', sinks: ['console'] },
-  ],
-});
+try {
+  await configure({
+    sinks: { console: getConsoleSink() },
+    loggers: [{ category: ['convex-replicate'], lowestLevel: 'debug', sinks: ['console'] }],
+  });
+} catch {
+  // LogTape already configured during HMR - this is expected
+}
 
 interface RouterContext {
   queryClient: QueryClient;
