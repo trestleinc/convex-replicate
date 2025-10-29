@@ -4,9 +4,19 @@ import { getConvexReplicateLogger } from './logger';
 
 type DeletableDocument = { deleted?: boolean };
 
+export interface StoreDelta<T> {
+  inserted: T[];
+  updated: T[];
+  deleted: string[];
+}
+
+export type DeltaListener<T> = (delta: StoreDelta<T>) => void;
+
 export class AutomergeDocumentStore<T extends { id: string }> {
   private docs = new Map<string, Automerge.Doc<T>>();
-  private dirtyDocs = new Set<string>();
+  private unreplicatedDocs = new Set<string>();
+  private previousSnapshot = new Map<string, T>();
+  private deltaListeners = new Set<DeltaListener<T>>();
   private listeners = new Set<(docs: T[]) => void>();
   private isInitialized = false;
   private storage: IndexedDBStorageAdapter | null = null;
@@ -82,9 +92,13 @@ export class AutomergeDocumentStore<T extends { id: string }> {
   }
 
   create(id: string, data: Omit<T, 'id'>): Uint8Array {
-    const doc = Automerge.from({ ...data, id } as T);
+    const doc = Automerge.from({
+      ...data,
+      id,
+      deleted: false,
+    } as T & DeletableDocument);
     this.docs.set(id, doc);
-    this.dirtyDocs.add(id);
+    this.unreplicatedDocs.add(id);
     const bytes = Automerge.save(doc);
     void this.persistToIndexedDB(id, bytes);
     this.notify();
@@ -97,7 +111,7 @@ export class AutomergeDocumentStore<T extends { id: string }> {
 
     const newDoc = Automerge.change(doc, updateFn);
     this.docs.set(id, newDoc);
-    this.dirtyDocs.add(id);
+    this.unreplicatedDocs.add(id);
     const bytes = Automerge.save(newDoc);
     void this.persistToIndexedDB(id, bytes);
     this.notify();
@@ -120,11 +134,11 @@ export class AutomergeDocumentStore<T extends { id: string }> {
     this.docs.set(id, merged);
     const mergedBytes = Automerge.save(merged);
     void this.persistToIndexedDB(id, mergedBytes);
-    this.notify();
+    this.notify(true);
   }
 
-  getDirty(): Array<{ id: string; bytes: Uint8Array }> {
-    return Array.from(this.dirtyDocs)
+  getUnreplicated(): Array<{ id: string; bytes: Uint8Array }> {
+    return Array.from(this.unreplicatedDocs)
       .map((id) => {
         const doc = this.docs.get(id);
         return doc ? { id, bytes: Automerge.save(doc) } : null;
@@ -132,8 +146,8 @@ export class AutomergeDocumentStore<T extends { id: string }> {
       .filter((item): item is { id: string; bytes: Uint8Array } => item !== null);
   }
 
-  clearDirty(id: string): void {
-    this.dirtyDocs.delete(id);
+  markReplicated(id: string): void {
+    this.unreplicatedDocs.delete(id);
   }
 
   getMaterialized(id: string): T | undefined {
@@ -147,8 +161,8 @@ export class AutomergeDocumentStore<T extends { id: string }> {
     return materialized;
   }
 
-  getDirtyMaterialized(): Array<{ id: string; document: T; version: number }> {
-    return Array.from(this.dirtyDocs)
+  getUnreplicatedMaterialized(): Array<{ id: string; document: T; version: number }> {
+    return Array.from(this.unreplicatedDocs)
       .map((id) => {
         const doc = this.docs.get(id);
         if (!doc) return null;
@@ -166,8 +180,12 @@ export class AutomergeDocumentStore<T extends { id: string }> {
       .filter((item): item is { id: string; document: T; version: number } => item !== null);
   }
 
-  getDirtyForSync(): Array<{ id: string; document: T & DeletableDocument; version: number }> {
-    return Array.from(this.dirtyDocs)
+  getUnreplicatedForConvex(): Array<{
+    id: string;
+    document: T & DeletableDocument;
+    version: number;
+  }> {
+    return Array.from(this.unreplicatedDocs)
       .map((id) => {
         const doc = this.docs.get(id);
         if (!doc) return null;
@@ -187,19 +205,31 @@ export class AutomergeDocumentStore<T extends { id: string }> {
   mergeFromMaterialized(id: string, remoteDoc: Partial<T>): void {
     let doc = this.docs.get(id);
 
+    const cleanRemoteDoc = Object.fromEntries(
+      Object.entries(remoteDoc).filter(([_, value]) => value !== undefined && value !== null)
+    );
+
+    if ('deleted' in cleanRemoteDoc && cleanRemoteDoc.deleted === undefined) {
+      delete cleanRemoteDoc.deleted;
+    }
+
+    if (!('deleted' in cleanRemoteDoc)) {
+      (cleanRemoteDoc as any).deleted = false;
+    }
+
     if (!doc) {
-      doc = Automerge.from(remoteDoc as T);
+      doc = Automerge.from(cleanRemoteDoc as T);
       this.docs.set(id, doc);
     } else {
       doc = Automerge.change(doc, (draft) => {
-        Object.assign(draft, remoteDoc);
+        Object.assign(draft, cleanRemoteDoc);
       });
       this.docs.set(id, doc);
     }
 
     const bytes = Automerge.save(doc);
     void this.persistToIndexedDB(id, bytes);
-    this.notify();
+    this.notify(true);
   }
 
   toArray(): T[] {
@@ -211,15 +241,68 @@ export class AutomergeDocumentStore<T extends { id: string }> {
       });
   }
 
+  subscribeToDelta(fn: DeltaListener<T>): () => void {
+    this.deltaListeners.add(fn);
+    return () => this.deltaListeners.delete(fn);
+  }
+
   subscribe(fn: (docs: T[]) => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
   }
 
-  private notify(): void {
-    const data = this.toArray();
-    for (const fn of this.listeners) {
-      fn(data);
+  private notify(silent = false): void {
+    if (silent) {
+      this.updatePreviousSnapshot();
+      return;
     }
+
+    const currentDocs = this.toArray();
+    const currentMap = new Map(currentDocs.map((d) => [d.id, d]));
+
+    const delta = this.calculateDelta(currentMap);
+
+    for (const fn of this.deltaListeners) {
+      fn(delta);
+    }
+
+    for (const fn of this.listeners) {
+      fn(currentDocs);
+    }
+
+    this.updatePreviousSnapshot();
+  }
+
+  private calculateDelta(currentMap: Map<string, T>): StoreDelta<T> {
+    const inserted: T[] = [];
+    const updated: T[] = [];
+    const deleted: string[] = [];
+
+    for (const [id, currentDoc] of currentMap) {
+      const previousDoc = this.previousSnapshot.get(id);
+
+      if (!previousDoc) {
+        inserted.push(currentDoc);
+      } else if (!this.areDocsEqual(previousDoc, currentDoc)) {
+        updated.push(currentDoc);
+      }
+    }
+
+    for (const id of this.previousSnapshot.keys()) {
+      if (!currentMap.has(id)) {
+        deleted.push(id);
+      }
+    }
+
+    return { inserted, updated, deleted };
+  }
+
+  private areDocsEqual(doc1: T, doc2: T): boolean {
+    return JSON.stringify(doc1) === JSON.stringify(doc2);
+  }
+
+  private updatePreviousSnapshot(): void {
+    const currentDocs = this.toArray();
+    this.previousSnapshot = new Map(currentDocs.map((d) => [d.id, { ...d }]));
   }
 }

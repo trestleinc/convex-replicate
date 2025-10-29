@@ -20,8 +20,6 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
 ): CollectionConfig<TItem> {
   const store = new AutomergeDocumentStore<TItem>(config.collectionName);
   let checkpoint = { lastModified: 0 };
-  const trackedItems = new Set<string>();
-  const seenIds = new Set<string>();
   const logger = getConvexReplicateLogger(['collection', config.collectionName]);
 
   const sync: SyncConfig<TItem, string | number>['sync'] = (params) => {
@@ -48,8 +46,54 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
       return () => {};
     }
 
-    const unsubscribe = config.convexClient.onUpdate(config.api.changeStream as any, {}, () => {
-      void pullChanges();
+    const unsubscribeConvex = config.convexClient.onUpdate(
+      config.api.changeStream as any,
+      {},
+      () => {
+        void pullChanges();
+      }
+    );
+
+    const unsubscribeAutomerge = store.subscribeToDelta((delta) => {
+      if (!isInitialSyncComplete) {
+        logger.debug('Skipping Automerge delta during initial sync', {
+          insertedCount: delta.inserted.length,
+          updatedCount: delta.updated.length,
+          deletedCount: delta.deleted.length,
+        });
+        return;
+      }
+
+      logger.debug('Automerge delta received, syncing to TanStack DB', {
+        insertedCount: delta.inserted.length,
+        updatedCount: delta.updated.length,
+        deletedCount: delta.deleted.length,
+      });
+
+      begin();
+
+      for (const doc of delta.inserted) {
+        logger.debug('Writing insert to TanStack DB', { documentId: doc.id });
+        write({ type: 'insert', value: doc });
+      }
+
+      for (const doc of delta.updated) {
+        logger.debug('Writing update to TanStack DB', { documentId: doc.id });
+        write({ type: 'update', value: doc });
+      }
+
+      for (const id of delta.deleted) {
+        logger.debug('Writing delete to TanStack DB', { documentId: id });
+        write({ type: 'delete', value: { id } as TItem });
+      }
+
+      commit();
+
+      logger.debug('Synced Automerge delta to TanStack DB', {
+        insertedCount: delta.inserted.length,
+        updatedCount: delta.updated.length,
+        deletedCount: delta.deleted.length,
+      });
     });
 
     const pullChanges = async (): Promise<void> => {
@@ -74,50 +118,32 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
           eventBuffer.push(...result.changes);
         } else {
           if (result.changes.length > 0) {
+            logger.debug('Processing Convex changes', {
+              changeCount: result.changes.length,
+            });
+
             begin();
             for (const change of result.changes) {
-              if (seenIds.has(change.documentId)) {
-                logger.debug('Skipping already seen document', {
-                  documentId: change.documentId,
-                });
-                continue;
-              }
-
               store.mergeFromMaterialized(change.documentId, change.document);
 
               if (change.document.deleted) {
-                const key = config.getKey({ id: change.documentId } as TItem);
-                if (trackedItems.has(String(key))) {
-                  logger.debug('Writing deletion to TanStack DB', {
-                    documentId: change.documentId,
-                    key,
-                  });
-                  write({ type: 'delete', value: { id: change.documentId } as TItem });
-                  trackedItems.delete(String(key));
-                  seenIds.delete(change.documentId);
-                }
+                logger.debug('Writing delete to TanStack DB', {
+                  documentId: change.documentId,
+                });
+                write({ type: 'delete', value: { id: change.documentId } as TItem });
               } else {
                 const doc = store.getMaterialized(change.documentId);
                 if (doc) {
-                  const key = String(config.getKey(doc));
-                  const writeType = trackedItems.has(key) ? 'update' : 'insert';
-                  logger.debug('Writing change to TanStack DB', {
-                    documentId: change.documentId,
-                    writeType,
-                    tracked: trackedItems.has(key),
-                  });
-                  write({ type: writeType, value: doc });
-                  trackedItems.add(key);
-                  seenIds.add(change.documentId);
-                } else {
-                  logger.warn('Document not found after merge', {
+                  logger.debug('Writing update to TanStack DB', {
                     documentId: change.documentId,
                   });
+                  write({ type: 'update', value: doc });
                 }
               }
             }
             commit();
-            logger.debug('Committed changes to TanStack DB', {
+
+            logger.debug('Applied Convex changes to TanStack DB', {
               changeCount: result.changes.length,
             });
           }
@@ -166,58 +192,41 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
         if (finalData.length > 0) {
           begin();
           for (const item of finalData) {
-            const key = String(config.getKey(item));
             write({ type: 'insert', value: item });
-            trackedItems.add(key);
-            seenIds.add(item.id);
           }
           commit();
-          logger.debug('Wrote final merged data to TanStack DB (SINGLE WRITE)', {
+          logger.debug('Wrote final merged data to TanStack DB', {
             documentCount: finalData.length,
           });
         }
 
         isInitialSyncComplete = true;
-        logger.info('Initial sync complete', {
+        logger.info('Initial sync complete, enabling Automerge subscriber', {
           bufferedEventCount: eventBuffer.length,
         });
 
         if (eventBuffer.length > 0) {
-          logger.debug('Processing buffered events', {
+          logger.debug('Processing buffered Convex events', {
             eventCount: eventBuffer.length,
           });
+
           begin();
           for (const change of eventBuffer) {
-            if (seenIds.has(change.documentId)) {
-              logger.debug('Skipping already seen buffered document', {
-                documentId: change.documentId,
-              });
-              continue;
-            }
-
             store.mergeFromMaterialized(change.documentId, change.document);
 
             if (change.document.deleted) {
-              const key = config.getKey({ id: change.documentId } as TItem);
-              if (trackedItems.has(String(key))) {
-                write({ type: 'delete', value: { id: change.documentId } as TItem });
-                trackedItems.delete(String(key));
-                seenIds.delete(change.documentId);
-              }
+              write({ type: 'delete', value: { id: change.documentId } as TItem });
             } else {
               const doc = store.getMaterialized(change.documentId);
               if (doc) {
-                const key = String(config.getKey(doc));
-                const writeType = trackedItems.has(key) ? 'update' : 'insert';
-                write({ type: writeType, value: doc });
-                trackedItems.add(key);
-                seenIds.add(change.documentId);
+                write({ type: 'update', value: doc });
               }
             }
           }
           commit();
+
           eventBuffer.splice(0);
-          logger.debug('Processed buffered events');
+          logger.debug('Applied buffered events to TanStack DB');
         }
       } catch (error) {
         logger.error('Failed during initial sync', {
@@ -235,8 +244,9 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
 
     logger.debug('Sync function setup complete, returning cleanup function');
     return () => {
-      logger.debug('Cleanup function called, unsubscribing');
-      unsubscribe();
+      logger.debug('Cleanup function called, unsubscribing from Convex and Automerge');
+      unsubscribeConvex();
+      unsubscribeAutomerge();
     };
   };
 
@@ -248,18 +258,17 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
     onInsert: async ({ transaction }) => {
       for (const mutation of transaction.mutations) {
         const item = mutation.modified;
+
         const id = String(config.getKey(item));
         const { id: _id, ...data } = item;
         store.create(id, data as Omit<TItem, 'id'>);
-        trackedItems.add(id);
-        seenIds.add(id);
       }
 
-      const dirty = store.getDirtyForSync();
+      const unreplicated = store.getUnreplicatedForConvex();
 
-      if (dirty.length > 0) {
+      if (unreplicated.length > 0) {
         await Promise.all(
-          dirty.map(({ id, document, version }) =>
+          unreplicated.map(({ id, document, version }) =>
             config.convexClient.mutation(config.api.submitDocument as any, {
               id,
               document,
@@ -268,8 +277,8 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
           )
         );
 
-        for (const { id } of dirty) {
-          store.clearDirty(id);
+        for (const { id } of unreplicated) {
+          store.markReplicated(id);
         }
       }
 
@@ -286,11 +295,11 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
         });
       }
 
-      const dirty = store.getDirtyForSync();
+      const unreplicated = store.getUnreplicatedForConvex();
 
-      if (dirty.length > 0) {
+      if (unreplicated.length > 0) {
         await Promise.all(
-          dirty.map(({ id, document, version }) =>
+          unreplicated.map(({ id, document, version }) =>
             config.convexClient.mutation(config.api.submitDocument as any, {
               id,
               document,
@@ -299,8 +308,8 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
           )
         );
 
-        for (const { id } of dirty) {
-          store.clearDirty(id);
+        for (const { id } of unreplicated) {
+          store.markReplicated(id);
         }
       }
     },
@@ -309,14 +318,13 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
       for (const mutation of transaction.mutations) {
         const id = String(mutation.key);
         store.remove(id);
-        seenIds.delete(id);
       }
 
-      const dirty = store.getDirtyForSync();
+      const unreplicated = store.getUnreplicatedForConvex();
 
-      if (dirty.length > 0) {
+      if (unreplicated.length > 0) {
         await Promise.all(
-          dirty.map(({ id, document, version }) =>
+          unreplicated.map(({ id, document, version }) =>
             config.convexClient.mutation(config.api.submitDocument as any, {
               id,
               document,
@@ -325,8 +333,8 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
           )
         );
 
-        for (const { id } of dirty) {
-          store.clearDirty(id);
+        for (const { id } of unreplicated) {
+          store.markReplicated(id);
         }
       }
     },

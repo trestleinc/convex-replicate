@@ -69,17 +69,17 @@ export class SyncAdapter<T extends { id: string }> {
   }
 
   private async push(): Promise<void> {
-    const dirty = this.store.getDirtyMaterialized();
-    if (dirty.length === 0) return;
+    const unreplicated = this.store.getUnreplicatedMaterialized();
+    if (unreplicated.length === 0) return;
 
     this.logger.debug('Pushing changes to server', {
       collection: this.collectionName,
-      changeCount: dirty.length,
+      changeCount: unreplicated.length,
     });
 
     try {
       await Promise.all(
-        dirty.map(({ id, document, version }) =>
+        unreplicated.map(({ id, document, version }) =>
           this.client.mutation(this.api.submitDocument as any, {
             id,
             document,
@@ -88,18 +88,18 @@ export class SyncAdapter<T extends { id: string }> {
         )
       );
 
-      for (const { id } of dirty) {
-        this.store.clearDirty(id);
+      for (const { id } of unreplicated) {
+        this.store.markReplicated(id);
       }
 
       this.logger.debug('Successfully pushed changes to server', {
         collection: this.collectionName,
-        changeCount: dirty.length,
+        changeCount: unreplicated.length,
       });
     } catch (error) {
       this.logger.warn('Failed to push changes to server', {
         collection: this.collectionName,
-        changeCount: dirty.length,
+        changeCount: unreplicated.length,
         error: error instanceof Error ? error.message : String(error),
       });
     }
