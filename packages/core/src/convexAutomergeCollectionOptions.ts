@@ -21,6 +21,7 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
   const store = new AutomergeDocumentStore<TItem>(config.collectionName);
   let checkpoint = { lastModified: 0 };
   const trackedItems = new Set<string>();
+  const seenIds = new Set<string>();
   const logger = getConvexReplicateLogger(['collection', config.collectionName]);
 
   const sync: SyncConfig<TItem, string | number>['sync'] = (params) => {
@@ -40,32 +41,6 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
     }> = [];
     let isInitialSyncComplete = false;
 
-    if (config.initialData && config.initialData.length > 0) {
-      try {
-        logger.debug('Writing initial data for SSR hydration', {
-          itemCount: config.initialData.length,
-        });
-
-        begin();
-        logger.debug('Called begin()');
-
-        for (const item of config.initialData) {
-          const key = String(config.getKey(item));
-          logger.debug('Writing initial item', { id: key });
-          write({ type: 'insert', value: item });
-          trackedItems.add(key);
-        }
-
-        commit();
-        logger.debug('Called commit() - initial data written for hydration');
-      } catch (error) {
-        logger.error('Failed to write initial data', {
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        });
-      }
-    }
-
     const shouldEnableReplicate = config.enableReplicate ?? true;
     if (!shouldEnableReplicate) {
       logger.info('Replication disabled, skipping WebSocket setup');
@@ -73,7 +48,6 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
       return () => {};
     }
 
-    // WebSocket reconnections with code 1001 ("Going Away") are normal during HMR in development
     const unsubscribe = config.convexClient.onUpdate(config.api.changeStream as any, {}, () => {
       void pullChanges();
     });
@@ -102,22 +76,44 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
           if (result.changes.length > 0) {
             begin();
             for (const change of result.changes) {
+              if (seenIds.has(change.documentId)) {
+                logger.debug('Skipping already seen document', {
+                  documentId: change.documentId,
+                });
+                continue;
+              }
+
               store.mergeFromMaterialized(change.documentId, change.document);
-              const doc = store.getMaterialized(change.documentId);
-              if (doc) {
-                const key = String(config.getKey(doc));
-                const writeType = trackedItems.has(key) ? 'update' : 'insert';
-                logger.debug('Writing change to TanStack DB', {
-                  documentId: change.documentId,
-                  writeType,
-                  tracked: trackedItems.has(key),
-                });
-                write({ type: writeType, value: doc });
-                trackedItems.add(key);
+
+              if (change.document.deleted) {
+                const key = config.getKey({ id: change.documentId } as TItem);
+                if (trackedItems.has(String(key))) {
+                  logger.debug('Writing deletion to TanStack DB', {
+                    documentId: change.documentId,
+                    key,
+                  });
+                  write({ type: 'delete', value: { id: change.documentId } as TItem });
+                  trackedItems.delete(String(key));
+                  seenIds.delete(change.documentId);
+                }
               } else {
-                logger.warn('Document not found after merge', {
-                  documentId: change.documentId,
-                });
+                const doc = store.getMaterialized(change.documentId);
+                if (doc) {
+                  const key = String(config.getKey(doc));
+                  const writeType = trackedItems.has(key) ? 'update' : 'insert';
+                  logger.debug('Writing change to TanStack DB', {
+                    documentId: change.documentId,
+                    writeType,
+                    tracked: trackedItems.has(key),
+                  });
+                  write({ type: writeType, value: doc });
+                  trackedItems.add(key);
+                  seenIds.add(change.documentId);
+                } else {
+                  logger.warn('Document not found after merge', {
+                    documentId: change.documentId,
+                  });
+                }
               }
             }
             commit();
@@ -149,7 +145,7 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
         });
 
         if (config.initialData && config.initialData.length > 0) {
-          logger.debug('Merging initial data with local CRDTs', {
+          logger.debug('Merging SSR initial data with local CRDTs', {
             initialDataCount: config.initialData.length,
             localDataCount: localData.length,
           });
@@ -158,38 +154,28 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
             const id = String(config.getKey(serverItem));
             store.mergeFromMaterialized(id, serverItem);
           }
-
-          const mergedData = store.toArray();
-          logger.debug('Merged data ready', {
-            mergedCount: mergedData.length,
-          });
-
-          if (mergedData.length > 0) {
-            begin();
-            for (const item of mergedData) {
-              const key = String(config.getKey(item));
-              const writeType = trackedItems.has(key) ? 'update' : 'insert';
-              write({ type: writeType, value: item });
-              trackedItems.add(key);
-            }
-            commit();
-            logger.debug('Wrote merged data to TanStack DB', {
-              documentCount: mergedData.length,
-            });
-          }
-        } else if (localData.length > 0) {
-          begin();
-          for (const item of localData) {
-            write({ type: 'insert', value: item });
-            trackedItems.add(String(config.getKey(item)));
-          }
-          commit();
-          logger.debug('Wrote local data to TanStack DB', {
-            documentCount: localData.length,
-          });
         }
 
         await pullChanges();
+
+        const finalData = store.toArray();
+        logger.debug('Final merged data ready', {
+          documentCount: finalData.length,
+        });
+
+        if (finalData.length > 0) {
+          begin();
+          for (const item of finalData) {
+            const key = String(config.getKey(item));
+            write({ type: 'insert', value: item });
+            trackedItems.add(key);
+            seenIds.add(item.id);
+          }
+          commit();
+          logger.debug('Wrote final merged data to TanStack DB (SINGLE WRITE)', {
+            documentCount: finalData.length,
+          });
+        }
 
         isInitialSyncComplete = true;
         logger.info('Initial sync complete', {
@@ -202,13 +188,31 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
           });
           begin();
           for (const change of eventBuffer) {
+            if (seenIds.has(change.documentId)) {
+              logger.debug('Skipping already seen buffered document', {
+                documentId: change.documentId,
+              });
+              continue;
+            }
+
             store.mergeFromMaterialized(change.documentId, change.document);
-            const doc = store.getMaterialized(change.documentId);
-            if (doc) {
-              const key = String(config.getKey(doc));
-              const writeType = trackedItems.has(key) ? 'update' : 'insert';
-              write({ type: writeType, value: doc });
-              trackedItems.add(key);
+
+            if (change.document.deleted) {
+              const key = config.getKey({ id: change.documentId } as TItem);
+              if (trackedItems.has(String(key))) {
+                write({ type: 'delete', value: { id: change.documentId } as TItem });
+                trackedItems.delete(String(key));
+                seenIds.delete(change.documentId);
+              }
+            } else {
+              const doc = store.getMaterialized(change.documentId);
+              if (doc) {
+                const key = String(config.getKey(doc));
+                const writeType = trackedItems.has(key) ? 'update' : 'insert';
+                write({ type: writeType, value: doc });
+                trackedItems.add(key);
+                seenIds.add(change.documentId);
+              }
             }
           }
           commit();
@@ -248,6 +252,7 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
         const { id: _id, ...data } = item;
         store.create(id, data as Omit<TItem, 'id'>);
         trackedItems.add(id);
+        seenIds.add(id);
       }
 
       const dirty = store.getDirtyForSync();
@@ -304,6 +309,7 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
       for (const mutation of transaction.mutations) {
         const id = String(mutation.key);
         store.remove(id);
+        seenIds.delete(id);
       }
 
       const dirty = store.getDirtyForSync();
