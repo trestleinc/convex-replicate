@@ -1,16 +1,18 @@
 {
-  "name": "@convex-rx/storage",
-  "description": "CRDT storage component for ConvexRx.",
-  "repository": "github:convex-rx/storage",
-  "homepage": "https://github.com/convex-rx/storage#readme",
+  "name": "@convex-replicate/component",
+  "description": "CRDT replication component for Convex Replicate.",
+  "repository": "github:trestleinc/convex-replicate",
+  "homepage": "https://github.com/trestleinc/convex-replicate#readme",
   "bugs": {
-    "url": "https://github.com/convex-rx/storage/issues"
+    "url": "https://github.com/trestleinc/convex-replicate/issues"
   },
   "version": "0.1.8",
   "license": "Apache-2.0",
   "keywords": [
     "convex",
-    "count",
+    "replicate",
+    "crdt",
+    "automerge",
     "component"
   ],
   "type": "module",

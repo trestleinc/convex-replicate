@@ -1,7 +1,7 @@
 import { defineApp } from 'convex/server';
-import storage from '@convex-rx/storage/convex.config';
+import replicate from '@convex-replicate/component/convex.config';
 
 const app = defineApp();
-app.use(storage);
+app.use(replicate);
 
 export default app;

@@ -14,10 +14,10 @@
     "check": "biome check"
   },
   "dependencies": {
-    "@convex-dev/react-query": "0.0.0-alpha.11",
-    "@convex-rx/core": "workspace:*",
-    "@convex-rx/react": "workspace:*",
-    "@convex-rx/storage": "workspace:*",
+    "@automerge/automerge": "3.1.2",
+    "@automerge/automerge-repo-storage-indexeddb": "2.4.0",
+    "@convex-replicate/core": "workspace:*",
+    "@convex-replicate/component": "workspace:*",
     "@logtape/logtape": "1.1.2",
     "@radix-ui/react-switch": "1.2.6",
     "@radix-ui/react-toggle": "1.1.10",

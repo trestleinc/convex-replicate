@@ -1,5 +1,5 @@
 /**
- * @convex-rx/storage - CRDT storage component for ConvexRx
+ * @convex-replicate/component - CRDT replication component for Convex Replicate
  *
  * This component provides binary storage for CRDT data (snapshots and changes)
  * with deduplication and efficient querying.

@@ -2,7 +2,7 @@ import {
   submitDocumentHelper,
   pullChangesHelper,
   changeStreamHelper,
-} from '@convex-rx/core/convex-helpers';
+} from '@convex-replicate/core/convex-helpers';
 import { mutation, query } from './_generated/server';
 import { components } from './_generated/api';
 import { v } from 'convex/values';
@@ -14,24 +14,22 @@ export const submitDocument = mutation({
     version: v.number(),
   },
   handler: async (ctx, args) => {
-    return await submitDocumentHelper(ctx, components, 'tasks', args);
+    return await submitDocumentHelper(ctx, components.replicate, 'tasks', args);
   },
 });
 
 export const pullChanges = query({
   args: {
-    checkpoint: v.object({
-      lastModified: v.number(),
-    }),
+    checkpoint: v.object({ lastModified: v.number() }),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    return await pullChangesHelper(ctx, 'tasks', args);
+    return await pullChangesHelper(ctx, components.replicate, 'tasks', args);
   },
 });
 
 export const changeStream = query({
   handler: async (ctx) => {
-    return await changeStreamHelper(ctx, 'tasks');
+    return await ctx.runQuery(replicate.public.changeStream, {});
   },
 });

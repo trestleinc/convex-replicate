@@ -1,5 +1,5 @@
 {
-  "name": "convex-rx",
+  "name": "convex-replicate",
   "version": "0.1.0",
   "private": true,
   "workspaces": [
@@ -7,12 +7,12 @@
     "examples/*"
   ],
   "scripts": {
-    "build": "bun run build:storage && bun run build:core",
-    "build:storage": "cd packages/storage && bun run build",
+    "build": "bun run build:component && bun run build:core",
+    "build:component": "cd packages/component && bun run build",
     "build:core": "cd packages/core && bun run build",
     "clean": "rm -rf packages/*/dist",
-    "typecheck": "bun run typecheck:storage && bun run typecheck:core",
-    "typecheck:storage": "cd packages/storage && bun run typecheck",
+    "typecheck": "bun run typecheck:component && bun run typecheck:core",
+    "typecheck:component": "cd packages/component && bun run typecheck",
     "typecheck:core": "cd packages/core && tsc --noEmit",
     "dev:example": "cd examples/tanstack-start && bun run dev",
     "build:example": "cd examples/tanstack-start && bun run build",
