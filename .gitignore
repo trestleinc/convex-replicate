@@ -11,6 +11,8 @@ examples/*/dist
 examples/*/.env
 examples/*/.env.local
 
+*.env*
+.env
 # IDE
 .idea
 

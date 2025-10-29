@@ -1,5 +1,11 @@
 import type { GenericDataModel, GenericMutationCtx, GenericQueryCtx } from 'convex/server';
 
+function cleanDocument(doc: any): any {
+  return Object.fromEntries(
+    Object.entries(doc).filter(([_, value]) => value !== undefined && value !== null)
+  );
+}
+
 export async function submitDocumentHelper<DataModel extends GenericDataModel>(
   ctx: GenericMutationCtx<DataModel>,
   components: any,
@@ -19,16 +25,18 @@ export async function submitDocumentHelper<DataModel extends GenericDataModel>(
     .withIndex('by_user_id', (q: any) => q.eq('id', args.id))
     .first();
 
+  const cleanDoc = cleanDocument(args.document);
+
   if (existing) {
     await db.patch(existing._id, {
-      ...args.document,
+      ...cleanDoc,
       version: args.version,
       timestamp: Date.now(),
     });
   } else {
     await db.insert(tableName, {
       id: args.id,
-      ...args.document,
+      ...cleanDoc,
       version: args.version,
       timestamp: Date.now(),
     });
@@ -58,16 +66,27 @@ export async function pullChangesHelper<DataModel extends GenericDataModel>(
     .order('asc')
     .take(args.limit ?? 100);
 
-  return {
-    changes: docs.map((doc: any) => {
-      const { _id, _creationTime, timestamp: _timestamp, version: _version, ...rest } = doc;
+  const activeChanges = docs
+    .filter((doc: any) => doc.deleted !== true)
+    .map((doc: any) => {
+      const {
+        _id,
+        _creationTime,
+        timestamp: _timestamp,
+        version: _version,
+        deleted: _deleted,
+        ...rest
+      } = doc;
       return {
         documentId: doc.id,
         document: rest,
         version: doc.version,
         timestamp: doc.timestamp,
       };
-    }),
+    });
+
+  return {
+    changes: activeChanges,
     checkpoint: {
       lastModified: docs[docs.length - 1]?.timestamp ?? args.checkpoint.lastModified,
     },
