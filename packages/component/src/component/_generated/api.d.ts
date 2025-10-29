@@ -33,22 +33,17 @@ export type Mounts = {
       "query",
       "public",
       { collectionName: string },
-      { count: number; timestamp: number; totalSize: number }
+      { count: number; timestamp: number }
     >;
     getDocumentMetadata: FunctionReference<
       "query",
       "public",
       { collectionName: string; documentId: string },
       null | {
-        changeCount: number;
+        document: any;
         documentId: string;
-        latestChange: null | { hash: string; size: number; timestamp: number };
-        latestSnapshot: null | {
-          hash: string;
-          size: number;
-          timestamp: number;
-        };
-        snapshotCount: number;
+        timestamp: number;
+        version: number;
       }
     >;
     pullChanges: FunctionReference<
@@ -61,40 +56,25 @@ export type Mounts = {
       },
       {
         changes: Array<{
-          data: ArrayBuffer;
+          document: any;
           documentId: string;
-          size: number;
           timestamp: number;
-          type: "snapshot" | "change";
+          version: number;
         }>;
         checkpoint: { lastModified: number };
         hasMore: boolean;
       }
     >;
-    submitBatch: FunctionReference<
+    submitDocument: FunctionReference<
       "mutation",
       "public",
       {
-        operations: Array<{
-          collectionName: string;
-          data: ArrayBuffer;
-          documentId: string;
-          type: "snapshot" | "change";
-        }>;
+        collectionName: string;
+        document: any;
+        documentId: string;
+        version: number;
       },
-      Array<{ deduplicated: boolean; id: string }>
-    >;
-    submitChange: FunctionReference<
-      "mutation",
-      "public",
-      { collectionName: string; data: ArrayBuffer; documentId: string },
-      { deduplicated: boolean; id: string }
-    >;
-    submitSnapshot: FunctionReference<
-      "mutation",
-      "public",
-      { collectionName: string; data: ArrayBuffer; documentId: string },
-      { deduplicated: boolean; id: string }
+      { success: boolean }
     >;
   };
 };

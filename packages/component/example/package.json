@@ -13,7 +13,7 @@
   "dependencies": {
     "@convex-dev/migrations": "^0.1.6",
     "@convex-dev/sharded-counter": "file:..",
-    "convex": "^1.17.0",
+    "convex": "1.28.0",
     "convex-helpers": "^0.1.61",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

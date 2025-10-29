@@ -7,7 +7,7 @@ function cleanDocument(doc: any): any {
 }
 
 export async function submitDocumentHelper<DataModel extends GenericDataModel>(
-  ctx: GenericMutationCtx<DataModel>,
+  ctx: any,
   components: any,
   tableName: string,
   args: { id: string; document: any; version: number }
@@ -46,7 +46,7 @@ export async function submitDocumentHelper<DataModel extends GenericDataModel>(
 }
 
 export async function pullChangesHelper<DataModel extends GenericDataModel>(
-  ctx: GenericQueryCtx<DataModel>,
+  ctx: any,
   tableName: string,
   args: { checkpoint: { lastModified: number }; limit?: number }
 ): Promise<{
@@ -95,7 +95,7 @@ export async function pullChangesHelper<DataModel extends GenericDataModel>(
 }
 
 export async function changeStreamHelper<DataModel extends GenericDataModel>(
-  ctx: GenericQueryCtx<DataModel>,
+  ctx: any,
   tableName: string
 ): Promise<{ timestamp: number; count: number }> {
   const db = ctx.db as any;

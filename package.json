@@ -6,6 +6,9 @@
     "packages/*",
     "examples/*"
   ],
+  "resolutions": {
+    "convex": "1.28.0"
+  },
   "scripts": {
     "build": "bun run build:component && bun run build:core",
     "build:component": "cd packages/component && bun run build",

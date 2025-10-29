@@ -5,18 +5,18 @@ import './index.css';
 
 function App() {
   const [documentId, setDocumentId] = useState('test-doc-1');
-  const [message, setMessage] = useState('Hello from storage!');
+  const [message, setMessage] = useState('Hello from Convex Replicate!');
+  const [version, setVersion] = useState(1);
   const [lastModified, setLastModified] = useState(0);
 
-  const submitSnapshot = useMutation(api.storageTests.submitTestSnapshot);
-  const submitChange = useMutation(api.storageTests.submitTestChange);
+  const submitDocument = useMutation(api.storageTests.submitTestDocument);
   const pullChanges = useQuery(api.storageTests.pullTestChanges, { lastModified });
   const metadata = useQuery(api.storageTests.getTestMetadata, { documentId });
   const changeStream = useQuery(api.storageTests.getChangeStream);
 
   return (
     <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto' }}>
-      <h1>ConvexRx Storage Component Test</h1>
+      <h1>Convex Replicate Component Test</h1>
 
       <div
         style={{
@@ -26,7 +26,7 @@ function App() {
           borderRadius: '8px',
         }}
       >
-        <h2>Submit Data</h2>
+        <h2>Submit Document</h2>
         <div style={{ marginBottom: '1rem' }}>
           <label>
             Document ID:
@@ -49,20 +49,24 @@ function App() {
             />
           </label>
         </div>
+        <div style={{ marginBottom: '1rem' }}>
+          <label>
+            Version:
+            <input
+              type="number"
+              value={version}
+              onChange={(e) => setVersion(Number(e.target.value))}
+              style={{ marginLeft: '1rem', padding: '0.5rem', width: '100px' }}
+            />
+          </label>
+        </div>
         <div>
           <button
             type="button"
-            onClick={() => submitSnapshot({ documentId, message })}
-            style={{ marginRight: '1rem', padding: '0.5rem 1rem' }}
-          >
-            Submit Snapshot
-          </button>
-          <button
-            type="button"
-            onClick={() => submitChange({ documentId, message })}
+            onClick={() => submitDocument({ documentId, message, version })}
             style={{ padding: '0.5rem 1rem' }}
           >
-            Submit Change
+            Submit Document
           </button>
         </div>
       </div>
@@ -80,7 +84,6 @@ function App() {
           <div>
             <p>Latest Timestamp: {new Date(changeStream.timestamp).toLocaleString()}</p>
             <p>Total Documents: {changeStream.count}</p>
-            <p>Total Size: {changeStream.totalSize} bytes</p>
           </div>
         )}
       </div>
@@ -96,20 +99,9 @@ function App() {
         <h2>Document Metadata: {documentId}</h2>
         {metadata ? (
           <div>
-            <p>Snapshots: {metadata.snapshotCount}</p>
-            <p>Changes: {metadata.changeCount}</p>
-            {metadata.latestSnapshot && (
-              <p>
-                Latest Snapshot: {new Date(metadata.latestSnapshot.timestamp).toLocaleString()} (
-                {metadata.latestSnapshot.size} bytes)
-              </p>
-            )}
-            {metadata.latestChange && (
-              <p>
-                Latest Change: {new Date(metadata.latestChange.timestamp).toLocaleString()} (
-                {metadata.latestChange.size} bytes)
-              </p>
-            )}
+            <p>Version: {metadata.version}</p>
+            <p>Timestamp: {new Date(metadata.timestamp).toLocaleString()}</p>
+            <p>Message: {metadata.document.message}</p>
           </div>
         ) : (
           <p>No data found</p>
@@ -158,12 +150,14 @@ function App() {
                     borderRadius: '4px',
                   }}
                 >
-                  <strong>{change.type}:</strong> {change.documentId}
+                  <strong>Document:</strong> {change.documentId}
                   <br />
-                  <span>Message: {change.message}</span>
+                  <span>Message: {change.document.message}</span>
+                  <br />
+                  <span>Version: {change.version}</span>
                   <br />
                   <span style={{ fontSize: '0.9em', color: '#666' }}>
-                    {new Date(change.timestamp).toLocaleString()} - {change.size} bytes
+                    {new Date(change.timestamp).toLocaleString()}
                   </span>
                 </div>
               ))}

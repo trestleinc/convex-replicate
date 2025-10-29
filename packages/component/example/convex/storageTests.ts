@@ -2,36 +2,18 @@ import { mutation, query } from './_generated/server';
 import { components } from './_generated/api';
 import { v } from 'convex/values';
 
-export const submitTestSnapshot = mutation({
+export const submitTestDocument = mutation({
   args: {
     documentId: v.string(),
     message: v.string(),
+    version: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const testData = new TextEncoder().encode(args.message).buffer;
-
-    const result = await ctx.runMutation(components.storage.public.submitSnapshot, {
+    const result = await ctx.runMutation(components.replicate.public.submitDocument, {
       collectionName: 'test-collection',
       documentId: args.documentId,
-      data: testData,
-    });
-
-    return result;
-  },
-});
-
-export const submitTestChange = mutation({
-  args: {
-    documentId: v.string(),
-    message: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const testData = new TextEncoder().encode(args.message).buffer;
-
-    const result = await ctx.runMutation(components.storage.public.submitChange, {
-      collectionName: 'test-collection',
-      documentId: args.documentId,
-      data: testData,
+      document: { message: args.message },
+      version: args.version ?? 1,
     });
 
     return result;
@@ -43,33 +25,13 @@ export const pullTestChanges = query({
     lastModified: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const result = await ctx.runQuery(components.storage.public.pullChanges, {
+    const result = await ctx.runQuery(components.replicate.public.pullChanges, {
       collectionName: 'test-collection',
       checkpoint: { lastModified: args.lastModified ?? 0 },
       limit: 10,
     });
 
-    const decodedChanges = result.changes.map(
-      (change: {
-        documentId: string;
-        type: 'snapshot' | 'change';
-        data: ArrayBuffer;
-        timestamp: number;
-        size: number;
-      }) => ({
-        documentId: change.documentId,
-        type: change.type,
-        message: new TextDecoder().decode(change.data),
-        timestamp: change.timestamp,
-        size: change.size,
-      })
-    );
-
-    return {
-      changes: decodedChanges,
-      checkpoint: result.checkpoint,
-      hasMore: result.hasMore,
-    };
+    return result;
   },
 });
 
@@ -78,7 +40,7 @@ export const getTestMetadata = query({
     documentId: v.string(),
   },
   handler: async (ctx, args) => {
-    return await ctx.runQuery(components.storage.public.getDocumentMetadata, {
+    return await ctx.runQuery(components.replicate.public.getDocumentMetadata, {
       collectionName: 'test-collection',
       documentId: args.documentId,
     });
@@ -87,7 +49,7 @@ export const getTestMetadata = query({
 
 export const getChangeStream = query({
   handler: async (ctx) => {
-    return await ctx.runQuery(components.storage.public.changeStream, {
+    return await ctx.runQuery(components.replicate.public.changeStream, {
       collectionName: 'test-collection',
     });
   },

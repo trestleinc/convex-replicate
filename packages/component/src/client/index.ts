@@ -9,14 +9,14 @@
  * import { components } from "./_generated/api";
  *
  * // Submit a snapshot
- * await ctx.runMutation(components.storage.submitSnapshot, {
+ * await ctx.runMutation(components.replicate.submitSnapshot, {
  *   collectionName: "tasks",
  *   documentId: "task-123",
  *   data: automergeBytes
  * });
  *
  * // Pull changes
- * const result = await ctx.runQuery(components.storage.pullChanges, {
+ * const result = await ctx.runQuery(components.replicate.pullChanges, {
  *   collectionName: "tasks",
  *   checkpoint: { lastModified: 0 },
  *   limit: 100
