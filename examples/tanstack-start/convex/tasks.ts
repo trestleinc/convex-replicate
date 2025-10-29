@@ -24,12 +24,12 @@ export const pullChanges = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    return await pullChangesHelper(ctx, components.replicate, 'tasks', args);
+    return await pullChangesHelper(ctx, 'tasks', args);
   },
 });
 
 export const changeStream = query({
   handler: async (ctx) => {
-    return await ctx.runQuery(replicate.public.changeStream, {});
+    return await changeStreamHelper(ctx, 'tasks');
   },
 });

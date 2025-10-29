@@ -12,7 +12,7 @@ export async function submitDocumentHelper<DataModel extends GenericDataModel>(
   tableName: string,
   args: { id: string; document: any; version: number }
 ): Promise<{ success: boolean }> {
-  await ctx.runMutation(components.storage.public.submitDocument, {
+  await ctx.runMutation(components.replicate.public.submitDocument, {
     collectionName: tableName,
     documentId: args.id,
     document: args.document,

@@ -10,7 +10,7 @@ export const submitDocument = mutation({
     version: v.number(),
   },
   handler: async (ctx, args) => {
-    return await ctx.runMutation(components.storage.public.submitDocument, args);
+    return await ctx.runMutation(components.replicate.public.submitDocument, args);
   },
 });
 
@@ -23,7 +23,7 @@ export const pullChanges = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    return await ctx.runQuery(components.storage.public.pullChanges, args);
+    return await ctx.runQuery(components.replicate.public.pullChanges, args);
   },
 });
 
@@ -32,6 +32,6 @@ export const changeStream = query({
     collectionName: v.string(),
   },
   handler: async (ctx, args) => {
-    return await ctx.runQuery(components.storage.public.changeStream, args);
+    return await ctx.runQuery(components.replicate.public.changeStream, args);
   },
 });

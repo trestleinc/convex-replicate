@@ -25,17 +25,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@automerge/automerge": "3.1.2",
-    "@automerge/automerge-repo-storage-indexeddb": "2.4.0",
-    "@logtape/logtape": "1.1.2",
-    "@tanstack/db": "0.4.13",
-    "zod": "4.1.12"
+    "@tanstack/db": "0.4.13"
   },
   "peerDependencies": {
-    "convex": "1.28.0"
-  },
-  "devDependencies": {
-    "@types/node": "latest",
-    "typescript": "latest"
+    "convex": "^1.28.0"
   }
 }

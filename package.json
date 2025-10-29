@@ -1,5 +1,5 @@
 {
-  "name": "convex-replicate",
+  "name": "@convex-replicate",
   "version": "0.1.0",
   "private": true,
   "workspaces": [
@@ -23,11 +23,16 @@
     "check": "biome check .",
     "check:fix": "biome check --write ."
   },
-  "devDependencies": {
-    "@biomejs/biome": "latest",
-    "typescript": "latest"
-  },
   "dependencies": {
+    "@automerge/automerge": "3.1.2",
+    "@automerge/automerge-repo-storage-indexeddb": "2.4.0",
+    "@logtape/logtape": "1.1.2",
     "zod": "4.1.12"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.3.2",
+    "@types/node": "22.18.12",
+    "convex": "1.28.0",
+    "typescript": "5.9.3"
   }
 }
