@@ -12,9 +12,9 @@
   },
   "dependencies": {
     "@convex-dev/migrations": "^0.1.6",
-    "@convex-dev/sharded-counter": "file:..",
     "convex": "1.28.0",
     "convex-helpers": "^0.1.61",
+    "lucide-react": "0.546.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-use": "^17.5.1",

@@ -15,48 +15,41 @@ function App() {
   const changeStream = useQuery(api.storageTests.getChangeStream);
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto' }}>
-      <h1>Convex Replicate Component Test</h1>
+    <div className="p-4 max-w-3xl mx-auto">
+      <h1 className="hidden text-3xl text-center mb-8">Convex Replicate Component Test</h1>
 
-      <div
-        style={{
-          marginTop: '2rem',
-          padding: '1rem',
-          border: '1px solid #ccc',
-          borderRadius: '8px',
-        }}
-      >
-        <h2>Submit Document</h2>
-        <div style={{ marginBottom: '1rem' }}>
-          <label>
-            Document ID:
+      <div className="p-4 border border-rose-pine-muted rounded">
+        <h2 className="text-2xl mb-4">Submit Document</h2>
+        <div className="mb-4">
+          <label className="flex items-center gap-4">
+            <span className="font-semibold min-w-32">Document ID:</span>
             <input
               type="text"
               value={documentId}
               onChange={(e) => setDocumentId(e.target.value)}
-              style={{ marginLeft: '1rem', padding: '0.5rem', width: '200px' }}
+              className="px-3 py-2 border border-rose-pine-muted rounded focus:outline-none focus:border-rose-pine-rose w-64"
             />
           </label>
         </div>
-        <div style={{ marginBottom: '1rem' }}>
-          <label>
-            Message:
+        <div className="mb-4">
+          <label className="flex items-center gap-4">
+            <span className="font-semibold min-w-32">Message:</span>
             <input
               type="text"
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              style={{ marginLeft: '1rem', padding: '0.5rem', width: '300px' }}
+              className="px-3 py-2 border border-rose-pine-muted rounded focus:outline-none focus:border-rose-pine-rose flex-1"
             />
           </label>
         </div>
-        <div style={{ marginBottom: '1rem' }}>
-          <label>
-            Version:
+        <div className="mb-4">
+          <label className="flex items-center gap-4">
+            <span className="font-semibold min-w-32">Version:</span>
             <input
               type="number"
               value={version}
               onChange={(e) => setVersion(Number(e.target.value))}
-              style={{ marginLeft: '1rem', padding: '0.5rem', width: '100px' }}
+              className="px-3 py-2 border border-rose-pine-muted rounded focus:outline-none focus:border-rose-pine-rose w-32"
             />
           </label>
         </div>
@@ -64,101 +57,88 @@ function App() {
           <button
             type="button"
             onClick={() => submitDocument({ documentId, message, version })}
-            style={{ padding: '0.5rem 1rem' }}
+            className="px-4 py-2 border border-rose-pine-rose text-rose-pine-text rounded hover:bg-rose-pine-rose hover:text-rose-pine-base transition-colors"
           >
             Submit Document
           </button>
         </div>
       </div>
 
-      <div
-        style={{
-          marginTop: '2rem',
-          padding: '1rem',
-          border: '1px solid #ccc',
-          borderRadius: '8px',
-        }}
-      >
-        <h2>Change Stream Stats</h2>
-        {changeStream && (
-          <div>
-            <p>Latest Timestamp: {new Date(changeStream.timestamp).toLocaleString()}</p>
-            <p>Total Documents: {changeStream.count}</p>
-          </div>
-        )}
-      </div>
-
-      <div
-        style={{
-          marginTop: '2rem',
-          padding: '1rem',
-          border: '1px solid #ccc',
-          borderRadius: '8px',
-        }}
-      >
-        <h2>Document Metadata: {documentId}</h2>
-        {metadata ? (
-          <div>
-            <p>Version: {metadata.version}</p>
-            <p>Timestamp: {new Date(metadata.timestamp).toLocaleString()}</p>
-            <p>Message: {metadata.document.message}</p>
+      <div className="mt-2 p-4 border border-rose-pine-muted rounded">
+        <h2 className="text-2xl mb-4">Change Stream Stats</h2>
+        {changeStream ? (
+          <div className="space-y-2">
+            <p className="text-rose-pine-text">
+              <span className="font-semibold">Latest Timestamp:</span>{' '}
+              {new Date(changeStream.timestamp).toLocaleString()}
+            </p>
+            <p className="text-rose-pine-text">
+              <span className="font-semibold">Total Documents:</span> {changeStream.count}
+            </p>
           </div>
         ) : (
-          <p>No data found</p>
+          <p className="text-rose-pine-muted">Loading...</p>
         )}
       </div>
 
-      <div
-        style={{
-          marginTop: '2rem',
-          padding: '1rem',
-          border: '1px solid #ccc',
-          borderRadius: '8px',
-        }}
-      >
-        <h2>Pull Changes</h2>
-        <div style={{ marginBottom: '1rem' }}>
-          <label>
-            Last Modified:
+      <div className="mt-2 p-4 border border-rose-pine-muted rounded">
+        <h2 className="text-2xl mb-4">Document Metadata: {documentId}</h2>
+        {metadata ? (
+          <div className="space-y-2">
+            <p className="text-rose-pine-text">
+              <span className="font-semibold">Version:</span> {metadata.version}
+            </p>
+            <p className="text-rose-pine-text">
+              <span className="font-semibold">Timestamp:</span>{' '}
+              {new Date(metadata.timestamp).toLocaleString()}
+            </p>
+            <p className="text-rose-pine-text">
+              <span className="font-semibold">Message:</span> {metadata.document.message}
+            </p>
+          </div>
+        ) : (
+          <p className="text-rose-pine-muted">No data found</p>
+        )}
+      </div>
+
+      <div className="mt-2 p-4 border border-rose-pine-muted rounded">
+        <h2 className="text-2xl mb-4">Pull Changes</h2>
+        <div className="mb-4 flex items-center gap-4">
+          <label className="flex items-center gap-4">
+            <span className="font-semibold">Last Modified:</span>
             <input
               type="number"
               value={lastModified}
               onChange={(e) => setLastModified(Number(e.target.value))}
-              style={{ marginLeft: '1rem', padding: '0.5rem', width: '200px' }}
+              className="px-3 py-2 border border-rose-pine-muted rounded focus:outline-none focus:border-rose-pine-rose w-48"
             />
           </label>
           <button
             type="button"
             onClick={() => pullChanges && setLastModified(pullChanges.checkpoint.lastModified)}
-            style={{ marginLeft: '1rem', padding: '0.5rem 1rem' }}
+            className="px-4 py-2 border border-rose-pine-rose text-rose-pine-text rounded hover:bg-rose-pine-rose hover:text-rose-pine-base transition-colors"
           >
             Update Checkpoint
           </button>
         </div>
         {pullChanges && (
-          <div>
-            <p>Found {pullChanges.changes.length} changes</p>
-            <p>Has More: {pullChanges.hasMore ? 'Yes' : 'No'}</p>
-            <div style={{ marginTop: '1rem' }}>
+          <div className="space-y-2">
+            <p className="text-rose-pine-text">Found {pullChanges.changes.length} changes</p>
+            <p className="text-rose-pine-text">Has More: {pullChanges.hasMore ? 'Yes' : 'No'}</p>
+            <div className="mt-4 space-y-2">
               {pullChanges.changes.map((change) => (
                 <div
                   key={`${change.documentId}-${change.timestamp}`}
-                  style={{
-                    padding: '0.5rem',
-                    marginBottom: '0.5rem',
-                    background: '#f5f5f5',
-                    borderRadius: '4px',
-                  }}
+                  className="p-3 border border-rose-pine-muted rounded bg-rose-pine-surface"
                 >
-                  <strong>Document:</strong> {change.documentId}
-                  <br />
-                  <span>Message: {change.document.message}</span>
-                  <br />
-                  <span>Version: {change.version}</span>
-                  <br />
-                  <span style={{ fontSize: '0.9em', color: '#666' }}>
+                  <p className="text-rose-pine-text">
+                    <strong>Document:</strong> {change.documentId}
+                  </p>
+                  <p className="text-rose-pine-text">Message: {change.document.message}</p>
+                  <p className="text-rose-pine-text">Version: {change.version}</p>
+                  <p className="text-sm text-rose-pine-muted">
                     {new Date(change.timestamp).toLocaleString()}
-                  </span>
+                  </p>
                 </div>
               ))}
             </div>
