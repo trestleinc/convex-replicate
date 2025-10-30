@@ -25,7 +25,7 @@ Convex Replicate provides a framework-agnostic core for building offline-capable
 graph TB
     App[Application Layer<br/>Your React Components]
     TanStack[TanStack DB/React<br/>• createCollection<br/>• useLiveQuery<br/>• Reactive state]
-    Core[@convex-rx/core<br/>• convexAutomergeCollectionOptions<br/>• AutomergeDocumentStore<br/>• SyncAdapter<br/>• Convex helpers<br/>• SSR utilities]
+    Core[convex-rx/core<br/>• convexAutomergeCollectionOptions<br/>• AutomergeDocumentStore<br/>• SyncAdapter<br/>• Convex helpers<br/>• SSR utilities]
     Automerge[Automerge CRDT<br/>IndexedDB Persistence]
     Convex[Convex Cloud<br/>• Database<br/>• Functions<br/>• WebSocket]
     
