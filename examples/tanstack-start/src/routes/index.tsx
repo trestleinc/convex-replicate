@@ -4,7 +4,7 @@ import { useState } from 'react';
 import type { Task } from '../useTasks';
 import { useTasks } from '../useTasks';
 import { ConvexHttpClient } from 'convex/browser';
-import { loadConvexData } from '@convex-replicate/core/ssr';
+import { loadCollection } from '@convex-replicate/core/ssr';
 import { getConvexReplicateLogger } from '@convex-replicate/core';
 import { useLiveQuery } from '@tanstack/react-db';
 import { api } from '../../convex/_generated/api';
@@ -15,8 +15,9 @@ const logger = getConvexReplicateLogger(['loader']);
 export const Route = createFileRoute('/')({
   loader: async () => {
     logger.debug('Starting SSR data fetch');
-    const tasks = await loadConvexData<Task>(httpClient, api.tasks.pullChanges, {
-      collectionName: 'tasks',
+    const tasks = await loadCollection<Task>(httpClient, {
+      api: api.tasks,
+      collection: 'tasks',
       limit: 100,
     });
     logger.debug('Fetched tasks from SSR', { taskCount: tasks.length });

@@ -2,10 +2,73 @@ import type { ConvexHttpClient } from 'convex/browser';
 import type { FunctionReference } from 'convex/server';
 
 /**
- * Load initial data from Convex for server-side rendering.
+ * API module shape expected by loadCollection.
  *
- * This function queries the Convex backend to fetch initial document data
- * that can be used to hydrate the client-side state during SSR.
+ * This should match the generated API module for your collection
+ * (e.g., api.tasks, api.users, etc.)
+ */
+export type CollectionAPI = {
+  pullChanges: FunctionReference<'query', 'public' | 'internal'>;
+};
+
+/**
+ * Configuration for loading collection data during SSR.
+ */
+export interface LoadCollectionConfig {
+  /** The API module for the collection (e.g., api.tasks) */
+  api: CollectionAPI;
+  /** The collection name (should match the API module name) */
+  collection: string;
+  /** Maximum number of items to load (default: 100) */
+  limit?: number;
+}
+
+/**
+ * Load collection data for server-side rendering.
+ *
+ * This function provides a clean, explicit API for loading initial data
+ * from Convex during SSR. All configuration is passed in a single object
+ * to make the intent clear and avoid parameter confusion.
+ *
+ * @param httpClient - Convex HTTP client for server-side queries
+ * @param config - Configuration object with api, collection, and options
+ * @returns Promise resolving to array of items from the collection
+ *
+ * @example
+ * ```typescript
+ * import { loadCollection } from '@convex-replicate/core/ssr';
+ * import { api } from '../convex/_generated/api';
+ *
+ * const tasks = await loadCollection<Task>(httpClient, {
+ *   api: api.tasks,
+ *   collection: 'tasks',
+ *   limit: 100,
+ * });
+ * ```
+ */
+export async function loadCollection<TItem extends { id: string }>(
+  httpClient: ConvexHttpClient,
+  config: LoadCollectionConfig
+): Promise<ReadonlyArray<TItem>> {
+  const result = await httpClient.query(config.api.pullChanges as any, {
+    collectionName: config.collection,
+    checkpoint: { lastModified: 0 },
+    limit: config.limit ?? 100,
+  });
+
+  const items: TItem[] = [];
+  for (const change of result.changes) {
+    const item = { id: change.documentId, ...change.document } as TItem;
+    items.push(item);
+  }
+
+  return items;
+}
+
+/**
+ * @deprecated Use loadCollection instead for better clarity
+ *
+ * Load initial data from Convex for server-side rendering.
  *
  * @param httpClient - Convex HTTP client for server-side queries
  * @param pullChangesQuery - The pullChanges query function reference
@@ -13,35 +76,15 @@ import type { FunctionReference } from 'convex/server';
  * @param options.collectionName - Name of the collection to load
  * @param options.limit - Maximum number of items to load (default: 100)
  * @returns Array of items from the collection
- *
- * @example
- * ```typescript
- * const tasks = await loadConvexData<Task>(httpClient, api.tasks.pullChanges, {
- *   collectionName: 'tasks',
- *   limit: 100
- * });
- * ```
  */
 export async function loadConvexData<TItem extends { id: string }>(
   httpClient: ConvexHttpClient,
   pullChangesQuery: FunctionReference<'query', 'public' | 'internal'>,
   options: { collectionName: string; limit?: number }
 ): Promise<ReadonlyArray<TItem>> {
-  const result = await httpClient.query(pullChangesQuery as any, {
-    collectionName: options.collectionName,
-    checkpoint: { lastModified: 0 },
-    limit: options.limit ?? 100,
+  return loadCollection(httpClient, {
+    api: { pullChanges: pullChangesQuery },
+    collection: options.collectionName,
+    limit: options.limit,
   });
-
-  const items: TItem[] = [];
-
-  for (const change of result.changes) {
-    const item = {
-      id: change.documentId,
-      ...change.document,
-    } as TItem;
-    items.push(item);
-  }
-
-  return items;
 }
