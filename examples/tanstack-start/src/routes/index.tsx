@@ -16,6 +16,7 @@ export const Route = createFileRoute('/')({
   loader: async () => {
     logger.debug('Starting SSR data fetch');
     const tasks = await loadConvexData<Task>(httpClient, api.tasks.pullChanges, {
+      collectionName: 'tasks',
       limit: 100,
     });
     logger.debug('Fetched tasks from SSR', { taskCount: tasks.length });
