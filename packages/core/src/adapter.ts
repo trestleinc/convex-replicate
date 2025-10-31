@@ -4,6 +4,39 @@ import type { AutomergeDocumentStore } from './store';
 import { getConvexReplicateLogger } from './logger';
 
 export interface StorageAPI {
+  insertDocument: FunctionReference<
+    'mutation',
+    'public' | 'internal',
+    {
+      collectionName: string;
+      documentId: string;
+      crdtBytes: ArrayBuffer;
+      materializedDoc: unknown;
+      version: number;
+    },
+    { success: boolean }
+  >;
+  updateDocument: FunctionReference<
+    'mutation',
+    'public' | 'internal',
+    {
+      collectionName: string;
+      documentId: string;
+      crdtBytes: ArrayBuffer;
+      materializedDoc: unknown;
+      version: number;
+    },
+    { success: boolean }
+  >;
+  deleteDocument: FunctionReference<
+    'mutation',
+    'public' | 'internal',
+    {
+      collectionName: string;
+      documentId: string;
+    },
+    { success: boolean }
+  >;
   pullChanges: FunctionReference<
     'query',
     'public' | 'internal',
@@ -15,24 +48,13 @@ export interface StorageAPI {
     {
       changes: Array<{
         documentId: string;
-        document: unknown;
+        crdtBytes: ArrayBuffer;
         version: number;
         timestamp: number;
       }>;
       checkpoint: { lastModified: number };
       hasMore: boolean;
     }
-  >;
-  submitDocument: FunctionReference<
-    'mutation',
-    'public' | 'internal',
-    {
-      collectionName: string;
-      documentId: string;
-      document: unknown;
-      version: number;
-    },
-    { success: boolean }
   >;
   changeStream: FunctionReference<
     'query',
@@ -112,16 +134,18 @@ export class SyncAdapter<T extends { id: string }> {
     });
 
     try {
-      await Promise.all(
-        unreplicated.map(({ id, document, version }) =>
-          this.client.mutation(this.api.submitDocument as any, {
-            collectionName: this.collectionName,
-            documentId: id,
-            document,
-            version,
-          })
-        )
-      );
+      // TODO: Update SyncAdapter to use new API
+      // await Promise.all(
+      //   unreplicated.map(({ id, bytes }) =>
+      //     this.client.mutation(this.api.insertDocument as any, {
+      //       collectionName: this.collectionName,
+      //       documentId: id,
+      //       crdtBytes: bytes.buffer,
+      //       materializedDoc: {}, // TODO
+      //       version: 1,
+      //     })
+      //   )
+      // );
 
       for (const { id } of unreplicated) {
         this.store.markReplicated(id);

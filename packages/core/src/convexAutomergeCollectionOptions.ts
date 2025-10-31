@@ -265,15 +265,16 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
         store.create(id, data as Omit<TItem, 'id'>);
       }
 
-      const unreplicated = store.getUnreplicatedForConvex();
+      const unreplicated = store.getUnreplicatedCRDTBytes();
 
       if (unreplicated.length > 0) {
         await Promise.all(
-          unreplicated.map(({ id, document, version }) =>
-            config.convexClient.mutation(config.api.submitDocument as any, {
+          unreplicated.map(({ id, crdtBytes, materializedDoc, version }) =>
+            config.convexClient.mutation(config.api.insertDocument as any, {
               collectionName: config.collectionName,
               documentId: id,
-              document,
+              crdtBytes: crdtBytes.buffer,
+              materializedDoc,
               version,
             })
           )
@@ -297,15 +298,16 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
         });
       }
 
-      const unreplicated = store.getUnreplicatedForConvex();
+      const unreplicated = store.getUnreplicatedCRDTBytes();
 
       if (unreplicated.length > 0) {
         await Promise.all(
-          unreplicated.map(({ id, document, version }) =>
-            config.convexClient.mutation(config.api.submitDocument as any, {
+          unreplicated.map(({ id, crdtBytes, materializedDoc, version }) =>
+            config.convexClient.mutation(config.api.updateDocument as any, {
               collectionName: config.collectionName,
               documentId: id,
-              document,
+              crdtBytes: crdtBytes.buffer,
+              materializedDoc,
               version,
             })
           )
@@ -323,15 +325,18 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
         store.remove(id);
       }
 
-      const unreplicated = store.getUnreplicatedForConvex();
+      // Deletes are handled differently - just mark as deleted in CRDT
+      // The remove() call above marks the doc as deleted in Automerge
+      const unreplicated = store.getUnreplicatedCRDTBytes();
 
       if (unreplicated.length > 0) {
         await Promise.all(
-          unreplicated.map(({ id, document, version }) =>
-            config.convexClient.mutation(config.api.submitDocument as any, {
+          unreplicated.map(({ id, crdtBytes, materializedDoc, version }) =>
+            config.convexClient.mutation(config.api.updateDocument as any, {
               collectionName: config.collectionName,
               documentId: id,
-              document,
+              crdtBytes: crdtBytes.buffer,
+              materializedDoc,
               version,
             })
           )
