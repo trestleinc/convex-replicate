@@ -146,8 +146,53 @@ export class AutomergeDocumentStore<T extends { id: string }> {
       .filter((item): item is { id: string; bytes: Uint8Array } => item !== null);
   }
 
+  getUnreplicatedCRDTBytes(): Array<{
+    id: string;
+    crdtBytes: Uint8Array;
+    materializedDoc: T;
+    version: number;
+  }> {
+    return Array.from(this.unreplicatedDocs)
+      .map((id) => {
+        const doc = this.docs.get(id);
+        if (!doc) return null;
+
+        const materialized = { ...doc } as T;
+        const deletable = materialized as T & DeletableDocument;
+        if (deletable.deleted) return null;
+
+        return {
+          id,
+          crdtBytes: Automerge.save(doc),
+          materializedDoc: materialized,
+          version: Automerge.getHeads(doc).length,
+        };
+      })
+      .filter(
+        (
+          item
+        ): item is { id: string; crdtBytes: Uint8Array; materializedDoc: T; version: number } =>
+          item !== null
+      );
+  }
+
   markReplicated(id: string): void {
     this.unreplicatedDocs.delete(id);
+  }
+
+  getDoc(id: string): Automerge.Doc<T> | undefined {
+    return this.docs.get(id);
+  }
+
+  setDoc(id: string, doc: Automerge.Doc<T>): void {
+    this.docs.set(id, doc);
+    const bytes = Automerge.save(doc);
+    void this.persistToIndexedDB(id, bytes);
+    this.notify();
+  }
+
+  mergeCRDT(id: string, crdtBytes: Uint8Array): void {
+    this.merge(id, crdtBytes);
   }
 
   getMaterialized(id: string): T | undefined {

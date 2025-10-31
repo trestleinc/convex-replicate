@@ -9,13 +9,13 @@ function cleanDocument(doc: unknown): unknown {
 }
 
 /**
- * Submit a document to both the CRDT component and the main application table.
+ * Insert a document into both the CRDT component and the main application table.
  *
  * DUAL-STORAGE ARCHITECTURE:
  * This helper implements a dual-storage pattern where documents are stored in two places:
  *
  * 1. Component Storage (CRDT Layer):
- *    - Stores Automerge CRDT data for offline-first conflict resolution
+ *    - Stores CRDT bytes (from Automerge) for offline-first conflict resolution
  *    - Handles concurrent updates with automatic merging
  *    - Provides the source of truth for offline changes
  *
@@ -25,144 +25,175 @@ function cleanDocument(doc: unknown): unknown {
  *    - Optimized for reactive subscriptions and complex queries
  *
  * WHY BOTH?
- * - Component: Handles conflict resolution and offline sync
- * - Main table: Enables efficient server-side queries and subscriptions
+ * - Component: Handles conflict resolution and offline sync (CRDT bytes)
+ * - Main table: Enables efficient server-side queries (materialized docs)
  * - Similar to event sourcing: component = event log, main table = read model
  *
  * @param ctx - Convex mutation context
  * @param components - Generated components from Convex
  * @param tableName - Name of the main application table
- * @param args - Document data with id, document, and version
+ * @param args - Document data with id, crdtBytes, materializedDoc, and version
  * @returns Success indicator
  */
-export async function submitDocumentHelper<_DataModel extends GenericDataModel>(
+export async function insertDocumentHelper<_DataModel extends GenericDataModel>(
   ctx: unknown,
   components: unknown,
   tableName: string,
-  args: { id: string; document: unknown; version: number }
+  args: { id: string; crdtBytes: ArrayBuffer; materializedDoc: unknown; version: number }
 ): Promise<{ success: boolean }> {
-  await (ctx as any).runMutation((components as any).replicate.public.submitDocument, {
+  // Write CRDT bytes to component
+  await (ctx as any).runMutation((components as any).replicate.public.insertDocument, {
     collectionName: tableName,
     documentId: args.id,
-    document: args.document,
+    crdtBytes: args.crdtBytes,
     version: args.version,
   });
 
+  // Write materialized doc to main table
+  const db = (ctx as any).db;
+  const cleanDoc = cleanDocument(args.materializedDoc) as Record<string, unknown>;
+
+  await db.insert(tableName, {
+    id: args.id,
+    ...cleanDoc,
+    version: args.version,
+    timestamp: Date.now(),
+  });
+
+  return { success: true };
+}
+
+/**
+ * Update a document in both the CRDT component and the main application table.
+ *
+ * @param ctx - Convex mutation context
+ * @param components - Generated components from Convex
+ * @param tableName - Name of the main application table
+ * @param args - Document data with id, crdtBytes, materializedDoc, and version
+ * @returns Success indicator
+ */
+export async function updateDocumentHelper<_DataModel extends GenericDataModel>(
+  ctx: unknown,
+  components: unknown,
+  tableName: string,
+  args: { id: string; crdtBytes: ArrayBuffer; materializedDoc: unknown; version: number }
+): Promise<{ success: boolean }> {
+  // Write CRDT bytes to component
+  await (ctx as any).runMutation((components as any).replicate.public.updateDocument, {
+    collectionName: tableName,
+    documentId: args.id,
+    crdtBytes: args.crdtBytes,
+    version: args.version,
+  });
+
+  // Update materialized doc in main table
   const db = (ctx as any).db;
   const existing = await db
     .query(tableName)
     .withIndex('by_user_id', (q: unknown) => (q as any).eq('id', args.id))
     .first();
 
-  const cleanDoc = cleanDocument(args.document) as Record<string, unknown>;
+  if (!existing) {
+    throw new Error(`Document ${args.id} not found in table ${tableName}`);
+  }
+
+  const cleanDoc = cleanDocument(args.materializedDoc) as Record<string, unknown>;
+
+  await db.patch(existing._id, {
+    ...cleanDoc,
+    version: args.version,
+    timestamp: Date.now(),
+  });
+
+  return { success: true };
+}
+
+/**
+ * Delete a document from both the CRDT component and the main application table.
+ *
+ * @param ctx - Convex mutation context
+ * @param components - Generated components from Convex
+ * @param tableName - Name of the main application table
+ * @param args - Document ID
+ * @returns Success indicator
+ */
+export async function deleteDocumentHelper<_DataModel extends GenericDataModel>(
+  ctx: unknown,
+  components: unknown,
+  tableName: string,
+  args: { id: string }
+): Promise<{ success: boolean }> {
+  // Delete from component
+  await (ctx as any).runMutation((components as any).replicate.public.deleteDocument, {
+    collectionName: tableName,
+    documentId: args.id,
+  });
+
+  // Delete from main table
+  const db = (ctx as any).db;
+  const existing = await db
+    .query(tableName)
+    .withIndex('by_user_id', (q: unknown) => (q as any).eq('id', args.id))
+    .first();
 
   if (existing) {
-    await db.patch(existing._id, {
-      ...cleanDoc,
-      version: args.version,
-      timestamp: Date.now(),
-    });
-  } else {
-    await db.insert(tableName, {
-      id: args.id,
-      ...cleanDoc,
-      version: args.version,
-      timestamp: Date.now(),
-    });
+    await db.delete(existing._id);
   }
 
   return { success: true };
 }
 
 /**
- * Pull document changes from the main application table.
+ * Pull document changes from the CRDT component storage.
  *
- * This reads from the materialized table (not the component storage) to provide
- * efficient querying with proper indexing. Changes are pulled incrementally using
- * a checkpoint-based approach.
+ * This reads CRDT bytes from the component (not the main table) to enable
+ * true Automerge.merge() conflict resolution on the client.
  *
  * @param ctx - Convex query context
- * @param tableName - Name of the main application table
+ * @param components - Generated components from Convex
+ * @param tableName - Name of the collection
  * @param args - Checkpoint and limit for pagination
- * @returns Array of changes with new checkpoint
+ * @returns Array of changes with CRDT bytes
  */
 export async function pullChangesHelper<_DataModel extends GenericDataModel>(
   ctx: unknown,
+  components: unknown,
   tableName: string,
   args: { checkpoint: { lastModified: number }; limit?: number }
 ): Promise<{
   changes: Array<{
-    documentId: unknown;
-    document: unknown;
-    version: unknown;
-    timestamp: unknown;
+    documentId: string;
+    crdtBytes: ArrayBuffer;
+    version: number;
+    timestamp: number;
   }>;
   checkpoint: { lastModified: number };
   hasMore: boolean;
 }> {
-  const db = (ctx as any).db;
-  const docs = await db
-    .query(tableName)
-    .withIndex('by_timestamp', (q: unknown) =>
-      (q as any).gt('timestamp', args.checkpoint.lastModified)
-    )
-    .order('asc')
-    .take(args.limit ?? 100);
-
-  const activeChanges = docs
-    .filter((doc: unknown) => (doc as any).deleted !== true)
-    .map((doc: unknown) => {
-      const {
-        _id,
-        _creationTime,
-        timestamp: _timestamp,
-        version: _version,
-        deleted: _deleted,
-        ...rest
-      } = doc as Record<string, unknown>;
-      return {
-        documentId: (doc as any).id,
-        document: rest,
-        version: (doc as any).version,
-        timestamp: (doc as any).timestamp,
-      };
-    });
-
-  return {
-    changes: activeChanges,
-    checkpoint: {
-      lastModified: docs[docs.length - 1]?.timestamp ?? args.checkpoint.lastModified,
-    },
-    hasMore: docs.length === (args.limit ?? 100),
-  };
+  return (ctx as any).runQuery((components as any).replicate.public.pullChanges, {
+    collectionName: tableName,
+    checkpoint: args.checkpoint,
+    limit: args.limit,
+  });
 }
 
 /**
- * Get the latest timestamp and count for a table's change stream.
+ * Get the latest timestamp and count for a collection's change stream.
  *
- * This provides a lightweight way to detect when changes occur in the main
- * application table, triggering reactive updates in the client.
+ * This provides a lightweight way to detect when changes occur in the CRDT
+ * component storage, triggering reactive updates in the client.
  *
  * @param ctx - Convex query context
- * @param tableName - Name of the main application table
+ * @param components - Generated components from Convex
+ * @param tableName - Name of the collection
  * @returns Latest timestamp and document count
  */
 export async function changeStreamHelper<_DataModel extends GenericDataModel>(
   ctx: unknown,
+  components: unknown,
   tableName: string
 ): Promise<{ timestamp: number; count: number }> {
-  const db = (ctx as any).db;
-  const allDocs = await db.query(tableName).collect();
-  let latestTimestamp = 0;
-
-  for (const doc of allDocs) {
-    if (doc.timestamp > latestTimestamp) {
-      latestTimestamp = doc.timestamp;
-    }
-  }
-
-  return {
-    timestamp: latestTimestamp,
-    count: allDocs.length,
-  };
+  return (ctx as any).runQuery((components as any).replicate.public.changeStream, {
+    collectionName: tableName,
+  });
 }
