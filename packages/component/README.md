@@ -1,325 +1,390 @@
-# Convex Sharded Counter Component
+# @convex-replicate/component
 
-[![npm version](https://badge.fury.io/js/@convex-dev%2Fsharded-counter.svg)](https://badge.fury.io/js/@convex-dev%2Fsharded-counter)
+Convex component for CRDT-based document storage and synchronization.
 
-<!-- START: Include on https://convex.dev/components -->
-
-This component adds counters to Convex. It acts as a key-value store from
-string to number, with sharding to increase throughput when updating values.
-
-Since it's built on Convex, everything is automatically consistent, reactive,
-and cached. Since it's built with [Components](https://convex.dev/components),
-the operations are isolated and increment/decrement are atomic even if run in
-parallel.
-
-For example, if you want to display
-[one million checkboxes](https://en.wikipedia.org/wiki/One_Million_Checkboxes)
-[on your Convex site](https://www.youtube.com/watch?v=LRUWplYoejQ), you want to
-count the checkboxes in real-time while allowing a lot of the boxes to change in
-parallel.
-
-More generally, whenever you have a counter that is changing frequently, you
-can use this component to keep track of it efficiently.
-
-```ts
-export const checkBox = mutation({
-  args: { i: v.number() },
-  handler: async (ctx, args) => {
-    const checkbox = await ctx.db
-      .query("checkboxes")
-      .withIndex("i", (q) => q.eq("i", args.i))
-      .unique();
-    if (!checkbox.isChecked) {
-      await ctx.db.patch(checkbox._id, { isChecked: true });
-
-      // Here we increment the number of checkboxes.
-      await numCheckboxes.inc(ctx);
-    }
-  },
-});
-export const getCount = query({
-  args: {},
-  handler: async (ctx, _args) => {
-    return await numCheckboxes.count(ctx);
-  },
-});
-```
-
-This relies on the assumption that you need to frequently modify the counter,
-but only need to read its value from a query, or infrequently in a mutation.
-If you read the count every time you modify it, you lose the sharding benefit.
-
-## Pre-requisite: Convex
-
-You'll need an existing Convex project to use the component.
-Convex is a hosted backend platform, including a database, serverless functions,
-and a ton more you can learn about [here](https://docs.convex.dev/get-started).
-
-Run `npm create convex` or follow any of the [quickstarts](https://docs.convex.dev/home) to set one up.
+This component provides the CRDT storage layer for ConvexReplicate, handling conflict-free replication of Automerge documents. It acts as the source of truth for offline changes and automatic conflict resolution.
 
 ## Installation
 
-First, install the component package:
-
-```ts
-npm install @convex-dev/sharded-counter
+```bash
+npm install @convex-replicate/component
+# or
+bun add @convex-replicate/component
 ```
 
-Then, create a `convex.config.ts` file in your app's `convex/` folder and install the
-component by calling `use`:
+## Overview
 
-```ts
+The component provides:
+
+1. **CRDT Storage** - Internal storage for Automerge document data
+2. **ConvexReplicateStorage API** - Type-safe client API for interacting with the component
+3. **Conflict Resolution** - Automatic merging of concurrent changes
+4. **Change Tracking** - Incremental sync with checkpoints
+
+## Setup
+
+### 1. Install the Component
+
+First, install the component in your Convex app configuration:
+
+```typescript
 // convex/convex.config.ts
-import { defineApp } from "convex/server";
-import shardedCounter from "@convex-dev/sharded-counter/convex.config";
+import { defineApp } from 'convex/server';
+import replicate from '@convex-replicate/component/convex.config';
 
 const app = defineApp();
-app.use(shardedCounter);
+app.use(replicate, { name: 'replicate' });
 
 export default app;
 ```
 
-Finally, create a new `ShardedCounter` within your `convex/` folder, and point it to
-the installed component.
+### 2. Create Storage Instance
 
-```ts
-import { components } from "./_generated/api";
-import { ShardedCounter } from "@convex-dev/sharded-counter";
+Create a `ConvexReplicateStorage` instance for each collection:
 
-const counter = new ShardedCounter(components.shardedCounter);
+```typescript
+// convex/tasks.ts
+import { components } from './_generated/api';
+import { ConvexReplicateStorage } from '@convex-replicate/component';
+
+const tasksStorage = new ConvexReplicateStorage(components.replicate, 'tasks');
 ```
 
-## Updating and reading counters
+### 3. Use in Mutations and Queries
 
-Once you have a `ShardedCounter`, there are a few methods you can use to update
-the counter for a key in a mutation or action.
+Use the storage instance in your Convex functions:
 
-```ts
-await counter.add(ctx, "checkboxes", 5); // increment by 5
-await counter.inc(ctx, "checkboxes"); // increment by 1
-await counter.subtract(ctx, "checkboxes", 5); // decrement by 5
-await counter.dec(ctx, "checkboxes"); // decrement by 1
-await counter.reset(ctx, "checkboxes"); // reset to 0
+```typescript
+import { mutation, query } from './_generated/server';
+import { v } from 'convex/values';
 
-const numCheckboxes = counter.for("checkboxes");
-await numCheckboxes.inc(ctx); // increment
-await numCheckboxes.dec(ctx); // decrement
-await numCheckboxes.add(ctx, 5); // add 5
-await numCheckboxes.subtract(ctx, 5); // subtract 5
-await numCheckboxes.reset(ctx); // reset to 0
-```
+export const updateTask = mutation({
+  args: {
+    id: v.string(),
+    document: v.any(),
+    version: v.number(),
+  },
+  handler: async (ctx, args) => {
+    return await tasksStorage.submitDocument(
+      ctx,
+      args.id,
+      args.document,
+      args.version
+    );
+  },
+});
 
-And you can read the counter's value in a query, mutation, or action.
-
-```ts
-await counter.count(ctx, "checkboxes");
-await numCheckboxes.count(ctx);
-```
-
-See more example usage in [example.ts](./example/convex/example.ts).
-
-## Sharding the counter
-
-When a single document is modified by two mutations at the same time, the
-mutations slow down to achieve
-[serializable results](https://docs.convex.dev/database/advanced/occ).
-
-To achieve high throughput, the ShardedCounter distributes counts across
-multiple documents, called "shards". Increments and decrements update a random
-shard, while queries of the total count read from all shards.
-
-1. More shards => greater throughput when incrementing or decrementing.
-2. Fewer shards => better latency when querying the count.
-
-You can set the number of shards when initializing the ShardedCounter, either
-setting it specially for each key:
-
-```ts
-const counter = new ShardedCounter(components.shardedCounter, {
-  shards: { checkboxes: 100 }, // 100 shards for the key "checkboxes"
+export const getTasks = query({
+  args: {
+    checkpoint: v.object({ lastModified: v.number() }),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    return await tasksStorage.pullChanges(ctx, args.checkpoint, args.limit);
+  },
 });
 ```
 
-Or by setting a default that applies to all keys not specified in `shards`:
+## API Reference
 
-```ts
-const counter = new ShardedCounter(components.shardedCounter, {
-  shards: { checkboxes: 100 },
-  defaultShards: 8,
+### `ConvexReplicateStorage<TDocument>`
+
+Main class for interacting with the replicate component. Each instance is scoped to a specific collection.
+
+#### Constructor
+
+```typescript
+new ConvexReplicateStorage<TDocument>(component, collectionName)
+```
+
+**Parameters:**
+- `component` - The replicate component from `components.replicate`
+- `collectionName` - Name of the collection to interact with
+
+**Example:**
+```typescript
+import { components } from './_generated/api';
+import { ConvexReplicateStorage } from '@convex-replicate/component';
+
+interface Task {
+  id: string;
+  text: string;
+  isCompleted: boolean;
+}
+
+const tasksStorage = new ConvexReplicateStorage<Task>(
+  components.replicate,
+  'tasks'
+);
+```
+
+#### Methods
+
+##### `submitDocument(ctx, documentId, document, version)`
+
+Submit a document to the component's CRDT storage.
+
+**Parameters:**
+- `ctx` - Convex mutation context
+- `documentId` - Unique identifier for the document
+- `document` - The document data to store
+- `version` - Version number for conflict resolution
+
+**Returns:** `Promise<{ success: boolean }>`
+
+**Example:**
+```typescript
+export const updateTask = mutation({
+  handler: async (ctx, { id, document, version }) => {
+    return await tasksStorage.submitDocument(ctx, id, document, version);
+  },
 });
 ```
 
-The default number of shards if none is specified is 16.
+##### `pullChanges(ctx, checkpoint, limit?)`
 
-Note your keys can be a subtype of string. e.g. if you want to store a count of
-friends for each user, and you don't care about throughput for a single user,
-you would declare ShardedCounter like so:
+Pull document changes from the component storage.
 
-```ts
-const friendCounts = new ShardedCounter<Id<"users">>(
-  components.shardedCounter,
-  { defaultShards: 1 },
+**Parameters:**
+- `ctx` - Convex query context
+- `checkpoint` - Object with `{ lastModified: number }`
+- `limit` - Optional maximum number of changes to retrieve (default: 100)
+
+**Returns:**
+```typescript
+Promise<{
+  changes: Array<{
+    documentId: string;
+    document: TDocument;
+    version: number;
+    timestamp: number;
+  }>;
+  checkpoint: { lastModified: number };
+  hasMore: boolean;
+}>
+```
+
+**Example:**
+```typescript
+export const getTasks = query({
+  handler: async (ctx, { checkpoint, limit }) => {
+    return await tasksStorage.pullChanges(ctx, checkpoint, limit);
+  },
+});
+```
+
+##### `changeStream(ctx)`
+
+Subscribe to collection changes via a reactive query.
+
+**Parameters:**
+- `ctx` - Convex query context
+
+**Returns:** `Promise<{ timestamp: number; count: number }>`
+
+**Example:**
+```typescript
+export const watchTasks = query({
+  handler: async (ctx) => {
+    const stream = await tasksStorage.changeStream(ctx);
+    // When stream.timestamp or stream.count changes, query reruns
+    return stream;
+  },
+});
+```
+
+##### `getDocumentMetadata(ctx, documentId)`
+
+Retrieve metadata for a specific document.
+
+**Parameters:**
+- `ctx` - Convex query context
+- `documentId` - Unique identifier for the document
+
+**Returns:**
+```typescript
+Promise<{
+  documentId: string;
+  version: number;
+  timestamp: number;
+  document: TDocument;
+} | null>
+```
+
+**Example:**
+```typescript
+export const getTaskMetadata = query({
+  handler: async (ctx, { id }) => {
+    return await tasksStorage.getDocumentMetadata(ctx, id);
+  },
+});
+```
+
+##### `for(documentId)`
+
+Create a scoped API for a specific document ID.
+
+**Parameters:**
+- `documentId` - The document ID to scope methods to
+
+**Returns:** Object with document-scoped methods:
+- `submit(ctx, document, version)` - Submit this specific document
+- `getMetadata(ctx)` - Get metadata for this specific document
+
+**Example:**
+```typescript
+const task123 = tasksStorage.for('task-123');
+
+export const updateTask123 = mutation({
+  handler: async (ctx, { document, version }) => {
+    return await task123.submit(ctx, document, version);
+  },
+});
+
+export const getTask123Metadata = query({
+  handler: async (ctx) => {
+    return await task123.getMetadata(ctx);
+  },
+});
+```
+
+## Complete Example
+
+Here's a complete example showing how to use the component in your Convex backend:
+
+```typescript
+// convex/tasks.ts
+import { v } from 'convex/values';
+import { mutation, query } from './_generated/server';
+import { components } from './_generated/api';
+import { ConvexReplicateStorage } from '@convex-replicate/component';
+
+interface Task {
+  id: string;
+  text: string;
+  isCompleted: boolean;
+}
+
+const tasksStorage = new ConvexReplicateStorage<Task>(
+  components.replicate,
+  'tasks'
 );
 
-// Decrement a user's friend count by 1
-await friendsCount.dec(ctx, userId);
-```
-
-## Reduce contention on reads
-
-Reading the count with `counter.count(ctx, "checkboxes")` reads from all shards
-to get an accurate count. This takes a read dependency on all shard documents.
-
-- In a query subscription, that means any change to the counter causes the query
-  to rerun.
-- In a mutation, that means any modification to the counter causes an
-  [OCC](https://docs.convex.dev/error#1) conflict.
-
-You can reduce contention by estimating the count: read from a smaller number
-of shards and extrapolate based on the total number of shards.
-
-```ts
-const estimatedCheckboxCount = await counter.estimateCount(ctx, "checkboxes");
-```
-
-By default, this reads from a single random shard and multiplies by the total
-number of shards to form an estimate. You can improve the estimate by reading
-from more shards, at the cost of more contention:
-
-```ts
-const estimateFromThree = await counter.estimateCount(ctx, "checkboxes", 3);
-```
-
-If the counter was accumulated from many
-small `counter.inc` and `counter.dec` calls, then they should be uniformly
-distributed across the shards, so estimated counts will be accurate.
-
-In some cases the counter will not be evenly distributed:
-
-- If the counter was accumulated from few operations
-- If some operations were `counter.add`s or `counter.subtract`s with large
-  values, because each operation only changes a single shard
-- If the number of shards changed
-
-In these cases, the count might not be evenly distributed across the shards.
-To repair such cases, you can call:
-
-```ts
-await counter.rebalance(ctx, "checkboxes");
-```
-
-Which will even out the count across shards.
-
-You may change the number of shards for a key, by changing the second argument
-to the `ShardedCounter` constructor. If you decrease the number of shards,
-you will be left with extra shards that won't be written to but are still
-read when computing `count`.
-In this case, you should call `counter.rebalance` to delete
-the extraneous shards.
-
-NOTE: `counter.rebalance` reads and writes all shards, so it could cause
-more OCCs, and it's recommended you call it sparingly, from the Convex dashboard
-or from an infrequent cron.
-
-NOTE: counts are floats, and floating point arithmetic isn't infinitely
-precise. Even if you always add and subtract integers, you may get a fractional
-counts, especially if you use `estimateCount` or `rebalance`.
-Values distributed across shards may be added in different combinations, and
-[floating point arithmetic isn't associative](https://docs.oracle.com/cd/E19957-01/806-3568/ncg_goldberg.html).
-You can use `Math.round` to ensure your final count is an integer, if
-desired.
-
-## Counting documents in a table
-
-Often you want to use a sharded counter to track how many documents are in a
-table.
-
-> If you want more than just a count, take a look at the
-> [Aggregate component](https://www.npmjs.com/package/@convex-dev/aggregate).
-
-There are three ways to go about keeping a count in sync with a table:
-
-1. Be careful to always update the aggregate in any mutation that inserts or
-   deletes from the table.
-2. \[Recommended\] Place all writes to a table in separate TypeScript functions,
-   and always call these functions from mutations instead of writing to the db
-   directly. This method is recommended, because it encapsulates the logic for
-   updating a table, while still keeping all operations explicit. For example,
-
-```ts
-// Example of a mutation that calls `insertUser`.
-export const insertPair = mutation(async (ctx) => {
-  ...
-  await insertUser(ctx, user1);
-  await insertUser(ctx, user2);
+export const submitTask = mutation({
+  args: {
+    id: v.string(),
+    document: v.any(),
+    version: v.number(),
+  },
+  handler: async (ctx, args) => {
+    return await tasksStorage.submitDocument(
+      ctx,
+      args.id,
+      args.document,
+      args.version
+    );
+  },
 });
 
-// All inserts to the "users" table go through this function.
-async function insertUser(ctx, user) {
-  await ctx.db.insert("users", user);
-  await counter.inc(ctx, "users");
+export const pullChanges = query({
+  args: {
+    checkpoint: v.object({ lastModified: v.number() }),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    return await tasksStorage.pullChanges(ctx, args.checkpoint, args.limit);
+  },
+});
+
+export const changeStream = query({
+  handler: async (ctx) => {
+    return await tasksStorage.changeStream(ctx);
+  },
+});
+
+export const getTaskMetadata = query({
+  args: { id: v.string() },
+  handler: async (ctx, args) => {
+    return await tasksStorage.getDocumentMetadata(ctx, args.id);
+  },
+});
+```
+
+## Dual-Storage Pattern
+
+This component is designed to work alongside main application tables in a dual-storage architecture:
+
+### Component Storage (CRDT Layer)
+- Stores Automerge CRDT data
+- Handles conflict resolution automatically
+- Source of truth for offline changes
+
+### Main Application Tables
+- Stores materialized documents
+- Used for efficient queries and joins
+- Optimized for reactive subscriptions
+
+See [@convex-replicate/core](../core) for replication helpers that implement this pattern.
+
+## Architecture
+
+```
+┌──────────────────────────────────────┐
+│         Client Applications          │
+│   (Offline-first with Automerge)     │
+└────────────────┬─────────────────────┘
+                 │
+                 ▼
+┌──────────────────────────────────────┐
+│      ConvexReplicateStorage API      │
+│  (Type-safe, collection-scoped)      │
+└────────────────┬─────────────────────┘
+                 │
+                 ▼
+┌──────────────────────────────────────┐
+│       Replicate Component            │
+│  ────────────────────────────        │
+│  • submitDocument (mutation)         │
+│  • pullChanges (query)               │
+│  • changeStream (query)              │
+│  • getDocumentMetadata (query)       │
+└────────────────┬─────────────────────┘
+                 │
+                 ▼
+┌──────────────────────────────────────┐
+│       Internal Storage Table         │
+│  (documents with CRDT data)          │
+│                                      │
+│  Indexes:                            │
+│  • by_collection_document            │
+│  • by_collection                     │
+│  • by_timestamp                      │
+└──────────────────────────────────────┘
+```
+
+## Storage Schema
+
+The component stores documents in an internal `documents` table with this structure:
+
+```typescript
+{
+  collectionName: string;    // Collection identifier
+  documentId: string;        // Document identifier
+  document: any;             // CRDT document data
+  version: number;           // Version for conflict detection
+  timestamp: number;         // Last modification time
 }
 ```
 
-3. Register a [Trigger](https://www.npmjs.com/package/convex-helpers#triggers),
-   which automatically runs code when a mutation changes the
-   data in a table.
+## TypeScript
 
-```ts
-// Triggers hook up writes to the table to the ShardedCounter.
-const triggers = new Triggers<DataModel>();
-triggers.register("mytable", counter.trigger("mycounter"));
-export const mutation = customMutation(rawMutation, customCtx(triggers.wrapDB));
-```
+This package is fully typed and exports complete type definitions.
 
-The [insertUserWithTrigger](example/convex/example.ts) mutation uses a trigger.
+## Related Packages
 
-## Backfilling an existing count
+- [@convex-replicate/core](../core) - Replication helpers and SSR utilities
+- Example app in `examples/tanstack-start/`
 
-If you want to count items like documents in a table, you may already have
-documents before installing the ShardedCounter component, and these should be
-accounted for.
+## License
 
-The easy version of this is to calculate the value once and add that value, if
-there aren't active requests happening. You can also periodically re-calculate
-the value and update the counter, if there aren't in-flight requests.
-
-The tricky part is handling requests while doing the calculation: making sure to
-merge active updates to counts with old values that you want to backfill.
-
-### Simple backfill: if table is append-only
-
-See example code at the bottom of
-[example/convex/example.ts](example/convex/example.ts).
-
-Walkthrough of steps:
-
-1. Change live writes to update the counter. In the example, you would be
-   changing `insertUserBeforeBackfill` to be implemented as
-   `insertUserAfterBackfill`.
-2. Write a backfill that counts documents that were created before the code from
-   (1) deployed. In the example, this would be `backfillOldUsers`.
-3. Run `backfillOldUsers` from the dashboard.
-
-### Complex backfill: if documents may be deleted
-
-See example code at the bottom of
-[example/convex/example.ts](example/convex/example.ts).
-
-Walkthrough of steps:
-
-1. Create `backfillCursor` table in schema.ts
-2. Create a new document in this table, with fields
-   `{ creationTime: 0, id: "", isDone: false }`
-3. Wherever you want to update a counter based on a document changing, wrap the
-   update in a conditional, so it only gets updated if the backfill has processed
-   that document. In the example, you would be changing `insertUserBeforeBackfill`
-   to be implemented as `insertUserDuringBackfill`.
-4. Define backfill functions similar to `backfillUsers` and `backfillUsersBatch`
-5. Call `backfillUsersBatch` from the dashboard.
-6. Remove the conditional when updating counters. In the example, you would be
-   changing `insertUserDuringBackfill` to be implemented as
-   `insertUserAfterBackfill`.
-7. Delete the `backfillCursor` table.
-
-<!-- END: Include on https://convex.dev/components -->
+MIT

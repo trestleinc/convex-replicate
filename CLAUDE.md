@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Important: Always Use Context7 for Library Documentation
 
-**CRITICAL**: When looking up documentation for any library (RxDB, React, Convex, TanStack, etc.), ALWAYS use the Context7 MCP tool (`mcp__context7__resolve-library-id` and `mcp__context7__get-library-docs`). NEVER use WebSearch for library documentation.
+**CRITICAL**: When looking up documentation for any library (Automerge, Convex, TanStack, React, etc.), ALWAYS use the Context7 MCP tool (`mcp__context7__resolve-library-id` and `mcp__context7__get-library-docs`). NEVER use WebSearch for library documentation.
 
 **Why:**
 - Context7 provides accurate, up-to-date documentation with code examples
@@ -17,27 +17,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**ConvexRx** - Offline-first sync library bridging RxDB (local) and Convex (cloud) for real-time data synchronization.
+**ConvexReplicate** - Offline-first data replication using Automerge CRDTs and Convex for automatic conflict resolution and real-time synchronization.
+
+This is a monorepo providing:
+- A Convex component for CRDT storage
+- Core replication utilities for building offline-first apps
+- Integration with TanStack DB for reactive state management
 
 **Monorepo Structure:**
-- `packages/core/` - Framework-agnostic sync engine (@convex-rx/core)
-- `packages/react/` - React hooks with TanStack DB integration (@convex-rx/react)
-- `examples/tanstack-start/` - Example app demonstrating usage
+- `packages/component/` - Convex component for CRDT storage (@convex-replicate/component)
+- `packages/core/` - Framework-agnostic replication helpers and SSR utilities (@convex-replicate/core)
+- `packages/sharded-counter/` - Sharded counter example/component (experimental)
+- `examples/tanstack-start/` - Example app using TanStack Start
 
 ## Available Scripts
 
 ### Build Commands
-- `bun run build` - Build all packages (core → react in sequence)
-- `bun run build:core` - Build only @convex-rx/core package
-- `bun run build:react` - Build only @convex-rx/react package
+- `bun run build` - Build all packages (component → core in sequence)
+- `bun run build:component` - Build only @convex-replicate/component package
+- `bun run build:core` - Build only @convex-replicate/core package
 - `bun run clean` - Remove all dist/ directories from packages
 
 ### Type Checking
-- `bun run typecheck` - Type check all packages (core + react)
-- `bun run typecheck:core` - Type check only @convex-rx/core
-- `bun run typecheck:react` - Type check only @convex-rx/react
+- `bun run typecheck` - Type check all packages
+- `bun run typecheck:component` - Type check only @convex-replicate/component
+- `bun run typecheck:core` - Type check only @convex-replicate/core (uses tsc --noEmit)
 
-**Note:** Type checking runs against all packages simultaneously using shared `tsconfig.base.json`
+**Note:** Component package uses both ESM and CommonJS builds, while core uses TypeScript compilation.
 
 ### Example App Development
 - `bun run dev:example` - Start TanStack Start dev server + Convex dev environment (runs both concurrently)
@@ -63,9 +69,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 2. Format all files according to Biome config
 3. Report any remaining issues
 
-### Code Style
-**NEVER use emojis** in code, comments, documentation, or commit messages. Keep all content professional and text-only.
-
 ### Dev Server Management
 - **Do NOT run dev servers manually** - The development server is managed by another process
 - If you need to start the example app, use `bun run dev:example` which handles both Vite and Convex
@@ -73,693 +76,363 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Monorepo Conventions
 - **Workspace dependencies** use `workspace:*` protocol in package.json
 - **All packages share** the same Biome and TypeScript configuration from root
-- **Type checking** runs against all packages simultaneously via root scripts
+- **Type checking** runs against all packages
 - **Example apps** each have their own Convex backend in their respective directories
-- **Build order matters**: Core must build before React (handled by build script)
+- **Build order matters**: Component must build before Core (handled by build script)
+- **Component package** has dual build (ESM + CommonJS) for broad compatibility
 
-## TypeScript Coding Standards
+### Biome Configuration Notes
+- `noExplicitAny` is OFF in the linter config (line 23 of biome.json)
+- `noConsole` warnings are enabled except in test files
+- Generated files (`_generated/**`, `*.d.ts`, `routeTree.gen.ts`) are excluded from linting
+- `sharded-counter` package is excluded from linting and formatting
+- Config files allow disabling `useNodejsImportProtocol` rule
 
-### 1. Type Safety - No `any`
+## Architecture: Dual-Storage Pattern
 
-**NEVER use `any`**. Use specific types or `unknown` for truly unknown values.
+ConvexReplicate implements a dual-storage architecture for offline-first applications:
 
-❌ **Bad:**
+### Component Storage (CRDT Layer)
+**Located in:** `packages/component/`
+- Stores Automerge CRDT documents for conflict-free replication
+- Handles automatic merging of concurrent offline changes
+- Source of truth for conflict resolution
+- Accessed via `ConvexReplicateStorage` client API
+
+### Main Application Tables
+- Stores materialized/denormalized documents
+- Used for efficient Convex queries, indexes, and reactive subscriptions
+- Optimized for server-side operations and complex queries
+- Similar to event sourcing: component = event log, main table = read model
+
+### Why Both?
+- **Component** provides automatic conflict resolution via CRDTs
+- **Main tables** enable efficient server-side queries and subscriptions
+- Separation allows offline-first client experience with powerful server capabilities
+
+## Package Architecture
+
+### @convex-replicate/component (`packages/component/`)
+
+Convex component providing CRDT storage layer.
+
+**Key Files:**
+- `src/component/` - Component implementation (deployed to Convex)
+  - `schema.ts` - Internal `documents` table schema
+  - `public.ts` - Public API functions (submitDocument, pullChanges, changeStream, getDocumentMetadata)
+  - `convex.config.ts` - Component configuration
+- `src/client/` - Type-safe client API
+  - `index.ts` - `ConvexReplicateStorage` class for interacting with component
+
+**Build Output:**
+- Dual package (ESM + CommonJS) in `dist/esm/` and `dist/commonjs/`
+- Uses TypeScript compilation with separate tsconfig files (`esm.json`, `commonjs.json`)
+
+**Storage Schema:**
 ```typescript
-function handler(data: any) {
-  return data.value;
-}
-
-const result: any = await fetch();
-```
-
-✅ **Good:**
-```typescript
-interface HandlerData {
-  value: string;
-}
-
-function handler(data: HandlerData) {
-  return data.value;
-}
-
-// For truly unknown values
-function formatError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
-}
-```
-
-### 2. Const Object Pattern Instead of Enums
-
-**Use const objects with `as const`** instead of TypeScript enums.
-
-❌ **Bad:**
-```typescript
-enum StorageType {
-  DEXIE = 'dexie',
-  MEMORY = 'memory',
-}
-```
-
-✅ **Good:**
-```typescript
-export const StorageType = {
-  Dexie: 'dexie',
-  Memory: 'memory',
-} as const;
-
-export type StorageType = (typeof StorageType)[keyof typeof StorageType];
-```
-
-**Why:** Const objects are compile-time only (no runtime JS), provide better type inference, and work better with modern TypeScript.
-
-### 3. Explicit Return Types
-
-**Always add explicit return types** to exported functions and complex functions.
-
-❌ **Bad:**
-```typescript
-export function createSchema(name: string, props: any) {
-  return {
-    title: name,
-    properties: props,
-  };
+{
+  collectionName: string;    // Collection identifier
+  documentId: string;        // Document identifier
+  document: any;             // Automerge CRDT data
+  version: number;           // Version for conflict detection
+  timestamp: number;         // Last modification time
 }
 ```
 
-✅ **Good:**
-```typescript
-export function createSchema<T>(
-  name: string,
-  props: Record<string, PropertySchema>
-): RxJsonSchema<T> {
-  return {
-    title: name,
-    version: 0,
-    type: 'object',
-    primaryKey: 'id',
-    properties: props,
-    required: [],
-  };
-}
-```
-
-### 4. Trust TypeScript - Avoid Redundant Runtime Checks
-
-**Do NOT add runtime validation that duplicates TypeScript's type guarantees.**
-
-❌ **Bad:**
-```typescript
-function process(config: Config) {
-  // TypeScript already ensures config.name is a string!
-  if (typeof config.name !== 'string') {
-    throw new Error('Name must be string');
-  }
-
-  // TypeScript already prevents null!
-  if (!config.options) {
-    return;
-  }
-}
-```
-
-✅ **Good:**
-```typescript
-function process(config: Config) {
-  // Trust TypeScript - just use the values
-  return doSomething(config.name, config.options);
-}
-```
-
-**Exception:** Validate data from external sources (Convex API responses, user input).
-
-### 5. No Double Type Assertions
-
-**Never use `as unknown as`** - it bypasses all type checking.
-
-❌ **Bad:**
-```typescript
-const doc = {
-  ...partial,
-  id: newId,
-} as unknown as FullDocument;
-```
-
-✅ **Good:**
-```typescript
-const doc = {
-  ...partial,
-  id: newId,
-} as FullDocument;
-
-// Or even better, use a helper type
-type WithMetadata<T> = T & { id: string; updatedTime: number };
-const doc: WithMetadata<Partial<Document>> = {
-  ...partial,
-  id: newId,
-  updatedTime: Date.now(),
-};
-```
-
-### 6. Generic Constraints
-
-**Use specific generic constraints** instead of `any` or overly broad constraints.
-
-❌ **Bad:**
-```typescript
-function process<T = any>(items: T[]) {
-  return items;
-}
-```
-
-✅ **Good:**
-```typescript
-function process<T extends SyncedDocument>(items: T[]) {
-  return items.filter(item => !item._deleted);
-}
-```
-
-### 7. Null Safety
-
-**Use optional chaining and nullish coalescing** appropriately.
-
-✅ **Good:**
-```typescript
-// Optional chaining
-await convexClient.close?.();
-
-// Nullish coalescing (preserves false, 0, '')
-const batchSize = config.batchSize ?? 100;
-
-// Use || only for truly falsy fallbacks
-const name = config.name || 'default';
-```
-
-## Logging Standards
-
-### Use LogTape, Never Console
-
-**ALWAYS use LogTape logger**, never `console.*`
-
-❌ **Bad:**
-```typescript
-console.log('Starting sync');
-console.warn('Invalid data:', data);
-console.error('Sync failed:', error);
-```
-
-✅ **Good:**
-```typescript
-import { getLogger } from './logger';
-
-const logger = getLogger('sync-engine', config.enableLogging);
-
-logger.info('Starting sync', { table: 'tasks' });
-logger.warn('Invalid data received', { data, reason: 'missing id' });
-logger.error('Sync failed', { error, table: 'tasks' });
-```
-
-**Logger Levels:**
-- `logger.debug()` - Detailed debugging info (only when enableLogging=true)
-- `logger.info()` - General informational messages
-- `logger.warn()` - Warning conditions
-- `logger.error()` - Error conditions
-
-**Best Practices:**
-- Always pass context as second parameter (object)
-- Use structured data, not string interpolation
-- Enable logging via config, not hardcoded
-
-```typescript
-// ✅ Good - structured context
-logger.info('Document synced', {
-  documentId: doc.id,
-  table: 'tasks',
-  timestamp: doc.updatedTime
-});
-
-// ❌ Bad - string interpolation
-logger.info(`Document ${doc.id} synced to ${table}`);
-```
-
-## Comment Guidelines
-
-### Philosophy: Most Code is Self-Explanatory
-
-Good code should be self-documenting through clear naming, simple logic, and proper structure. Comments should only be added when they provide meaningful insight that cannot be derived from reading the code itself.
-
-### When to Write Comments
-
-**DO write comments that explain:**
-
-1. **WHY, not WHAT** - Explain the reasoning behind non-obvious decisions
-   ```typescript
-   // Use deterministic for-loop instead of reduce() to avoid Convex non-determinism issues
-   let latestTime = 0;
-   for (const doc of allDocs) {
-     if (doc.updatedTime > latestTime) {
-       latestTime = doc.updatedTime;
-     }
-   }
-   ```
-
-2. **Non-obvious consequences or side effects**
-   ```typescript
-   // RxDBUpdatePlugin enables soft deletes via doc.update() in actions.ts
-   addRxPlugin(RxDBUpdatePlugin);
-   ```
-
-3. **Workarounds for bugs or limitations**
-   ```typescript
-   // Type cast: RxConflictHandler<T> satisfies RxDB's internal conflict handler interface
-   conflictHandler: conflictHandler as any,
-   ```
-
-4. **Complex algorithms or business logic**
-   ```typescript
-   // Exponential backoff with 30s cap prevents overwhelming the server during outages
-   const delay = Math.min(1000 * 2 ** retryCount, 30000);
-   ```
-
-5. **Edge cases being handled**
-   ```typescript
-   // Return 0 for empty collections to prevent unnecessary change detection on initial load
-   return { timestamp: latestTime || 0, count: allDocs.length };
-   ```
-
-6. **Performance considerations**
-   ```typescript
-   // withIndex provides 10-100x better performance than filter for large collections
-   docs = await ctx.db
-     .query(tableName)
-     .withIndex('by_updatedTime', (q) => q.gt('updatedTime', checkpoint.updatedTime))
-   ```
-
-### When NOT to Write Comments
-
-**DO NOT write comments that:**
-
-1. **Restate what the code obviously does**
-   ```typescript
-   // ❌ Bad
-   // Create RxDB database
-   const db = await createRxDatabase({ ... });
-
-   // ✅ Good (no comment needed)
-   const db = await createRxDatabase({ ... });
-   ```
-
-2. **Repeat function/variable names**
-   ```typescript
-   // ❌ Bad
-   // Update an existing document
-   update: async (id, updates) => { ... }
-
-   // ✅ Good (JSDoc if needed for API documentation)
-   /**
-    * @param id - Document identifier
-    * @param updates - Partial updates to merge (automatically adds updatedTime)
-    */
-   update: async (id, updates) => { ... }
-   ```
-
-3. **Number steps that are self-evident**
-   ```typescript
-   // ❌ Bad
-   // Step 1: Get user input
-   const input = getUserInput();
-   // Step 2: Validate input
-   const valid = validate(input);
-   // Step 3: Save to database
-   await save(valid);
-
-   // ✅ Good (code flow is clear)
-   const input = getUserInput();
-   const valid = validate(input);
-   await save(valid);
-   ```
-
-4. **Describe language features**
-   ```typescript
-   // ❌ Bad
-   // Loop through all documents
-   for (const doc of documents) { ... }
-
-   // ✅ Good (no comment needed)
-   for (const doc of documents) { ... }
-   ```
-
-5. **Separate obvious UI sections**
-   ```typescript
-   // ❌ Bad
-   {/* Task List */}
-   <div className="space-y-2">
-     {tasks.map(task => <TaskItem key={task.id} task={task} />)}
-   </div>
-
-   // ✅ Good (component name and structure are clear)
-   <div className="space-y-2">
-     {tasks.map(task => <TaskItem key={task.id} task={task} />)}
-   </div>
-   ```
-
-### Special Cases
-
-**Section Headers in Large Files:**
-For very large files (>300 lines), section header comments can help with navigation:
-```typescript
-// ========================================
-// PLUGIN INITIALIZATION
-// ========================================
-```
-
-Use these sparingly and only when the file is too large to easily comprehend at once. Consider refactoring into smaller modules instead.
-
-**JSDoc for Public APIs:**
-Always document exported functions, types, and components with JSDoc:
-```typescript
-/**
- * Create a ConvexRx sync instance bridging RxDB and Convex.
- *
- * This is the main entry point for the ConvexRx library. It creates:
- * - RxDB database for local storage
- * - Bidirectional replication with Convex
- * - WebSocket change stream for real-time updates
- *
- * @template T - Document type extending ConvexRxDocument
- * @param config - Configuration object
- * @returns Instance with RxDB primitives and cleanup function
- * @throws {Error} If config validation fails
- */
-export async function createConvexRxDB<T extends ConvexRxDocument>(
-  config: ConvexRxDBConfig<T>
-): Promise<ConvexRxDBInstance<T>> { ... }
-```
-
-### Before Adding a Comment, Ask:
-
-1. Can I make the code clearer instead? (Better naming, simpler logic, extracted function)
-2. Would this be obvious to someone reading the code?
-3. Am I explaining WHY, or just repeating WHAT?
-4. Will this comment still be accurate in 6 months?
-
-**Remember:** Code changes, but comments often don't. Outdated comments are worse than no comments.
-
-## Validation Standards
-
-### When to Use Zod vs TypeScript
-
-**Zod:** Validate data from external sources
-**TypeScript:** Internal type safety
-
-✅ **Use Zod for:**
-```typescript
-// Validating config from users
-const configSchema = z.object({
-  databaseName: z.string().regex(/^[a-zA-Z0-9_-]+$/),
-  batchSize: z.number().int().min(1).max(1000),
-});
-
-configSchema.parse(userConfig);
-
-// Validating data from Convex API
-const convexResponseSchema = z.object({
-  documents: z.array(z.any()),
-  checkpoint: z.object({
-    id: z.string(),
-    updatedTime: z.number(),
-  }),
-});
-```
-
-✅ **Trust TypeScript for:**
-```typescript
-// Internal function parameters
-function processDocument(doc: SyncedDocument, table: string) {
-  // No need to validate - TypeScript guarantees types
-  return {
-    id: doc.id,
-    table: table,
-  };
-}
-
-// Enum/const object values
-const storage = config.type ?? StorageType.Dexie;
-// No need to validate - TypeScript enforces StorageType
-```
-
-## Network Error Handling
-
-### Pattern for Network Requests
-
-```typescript
-import { isNetworkError } from './types';
-import { getLogger } from './logger';
-
-const logger = getLogger('network', enableLogging);
-
-async function syncData() {
-  try {
-    const result = await convexClient.query(api.table.pullDocuments, {
-      checkpoint,
-      limit: batchSize,
-    });
-
-    return result;
-  } catch (error) {
-    // Check if it's a network error
-    if (isNetworkError(error)) {
-      logger.warn('Network error during sync', {
-        error: error instanceof Error ? error.message : String(error),
-        willRetry: true
-      });
-      // Handle network-specific recovery
-      return handleNetworkFailure();
-    }
-
-    // Non-network errors
-    logger.error('Sync error', {
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined
-    });
-    throw error;
-  }
-}
-```
-
-**Network Error Detection:**
-```typescript
-export function isNetworkError(error: unknown): boolean {
-  if (error instanceof TypeError) {
-    return true;
-  }
-  if (error instanceof Error) {
-    const message = error.message.toLowerCase();
-    return (
-      message.includes('fetch') ||
-      message.includes('network') ||
-      message.includes('offline') ||
-      message.includes('connection')
-    );
-  }
-  return false;
-}
-```
-
-## Project Structure
-
-### Core Package (`packages/core/`)
-Framework-agnostic sync utilities:
-- `src/index.ts` - Main exports with organized sections
-- `src/rxdb.ts` - Core sync engine (`createConvexRxDB`)
-- `src/singleton.ts` - Generic singleton manager
-- `src/middleware.ts` - Middleware execution for CRUD operations
-- `src/subscriptions.ts` - Subscription builder utilities
-- `src/actions.ts` - Base CRUD action factory with adapter pattern
-- `src/types.ts` - Type definitions (`SyncedDocument`, `ConvexClient`, `PropertySchema`)
-- `src/conflictHandler.ts` - Conflict resolution strategies
-- `src/logger.ts` - LogTape logging abstraction
-- `src/schema.ts` - RxDB schema builder with property helpers
-- `src/convex.ts` - Convex function generator (`generateConvexRxFunctions`)
-- `src/storage.ts` - Storage adapters (Dexie, LocalStorage, Memory)
-
-### React Package (`packages/react/`)
-React-specific wrapper:
-- `src/index.ts` - Main exports (React-specific only)
-- `src/createConvexRx.ts` - Internal wrapper adding TanStack DB to core
-- `src/useConvexRx.ts` - React hook with automatic singleton management
-- `src/ConvexRxProvider.tsx` - Required provider for global configuration
-- `src/ssr.ts` - SSR data preloading (`preloadConvexRxData`)
-- `src/types.ts` - React-specific types (`HookContext`, `UseConvexRxConfig`)
-
-### Example App (`examples/tanstack-start/`)
-Complete working example:
-- `src/hooks/useTasks.ts` - Example hook with custom actions/queries
-- `src/routes/index.tsx` - Component usage
-- `src/routes/__root.tsx` - ConvexRxProvider setup
-- `convex/tasks.ts` - Auto-generated Convex functions
-- `vite.config.ts` - Vite + TanStack Start configuration
-
-## Architecture Patterns
-
-### Core + Framework Wrapper Pattern
-
-**Core Package** (`@convex-rx/core`):
-- Framework-agnostic utilities
-- Pure TypeScript, no React/Vue/etc dependencies
-- Exports: `createConvexRxDB`, `getSingletonInstance`, `createBaseActions`, etc.
-
-**React Package** (`@convex-rx/react`):
-- Thin wrapper around core
-- Adds TanStack DB integration
-- Exports: `useConvexRx`, `ConvexRxProvider`
-
-### Singleton Management
-
-**Always use singleton pattern** to prevent duplicate database instances:
-
-```typescript
-import { getSingletonInstance, createSingletonKey } from '@convex-rx/core';
-
-const instance = await getSingletonInstance(config, {
-  keyFn: (cfg) => createSingletonKey(cfg.databaseName, cfg.collectionName),
-  createFn: async (cfg) => await createConvexRxDB(cfg),
-});
-```
-
-**Why:** Prevents race conditions, memory leaks, and duplicate WebSocket connections.
-
-### Middleware Pattern
-
-Use middleware for cross-cutting concerns:
-
-```typescript
-const middleware: MiddlewareConfig<Task> = {
-  beforeInsert: async (doc) => {
-    logger.info('Inserting document', { id: doc.id });
-    return doc;
-  },
-
-  afterUpdate: async (id, updates) => {
-    logger.info('Document updated', { id, updates });
-  },
-
-  onSyncError: (error) => {
-    logger.error('Sync error occurred', { error });
-  },
-};
-```
-
-## Important Convex Patterns
-
-### Required Fields for Synced Documents
-
-```typescript
-interface YourDocument {
-  id: string;           // Client-generated UUID
-  updatedTime: number;  // Auto-managed by sync engine
-  _deleted?: boolean;   // Soft delete flag
-  // ... your fields
-}
-```
-
-### Convex Function Generator
-
-**Use the generator** instead of manually writing functions:
-
-```typescript
-// convex/yourTable.ts
-import { generateConvexRxFunctions } from '@convex-rx/core/convex';
-import { query, mutation } from './_generated/server';
-import { v } from 'convex/values';
-
-const tableFunctions = generateConvexRxFunctions({
-  tableName: 'yourTable',
-  query,
-  mutation,
-  v,
-});
-
-export const changeStream = tableFunctions.changeStream;
-export const pullDocuments = tableFunctions.pullDocuments;
-export const pushDocuments = tableFunctions.pushDocuments;
-```
-
-### Soft Deletes
-
-**Never hard delete** - always use soft deletes:
-
-```typescript
-// ❌ Bad - hard delete
-await collection.remove(id);
-
-// ✅ Good - soft delete (built into actions)
-await actions.delete(id); // Sets _deleted: true
-```
-
-## File Organization
-
-### Import Order
-1. External dependencies
-2. Core package imports
-3. Local/relative imports
-4. Types (use `import type` when possible)
-
-```typescript
-// External
-import { Subject } from 'rxjs';
-import { createRxDatabase } from 'rxdb';
-
-// Core package
-import { getLogger, type SyncedDocument } from '@convex-rx/core';
-
-// Local
-import { createSchema } from './schema';
-import type { Config } from './types';
-```
-
-### Export Organization
-
-Use barrel exports (`index.ts`) with clear sections:
-
-```typescript
-// ========================================
-// CORE DATABASE & REPLICATION
-// ========================================
-export { createConvexRxDB } from './rxdb';
-export { getSingletonInstance } from './singleton';
-
-// ========================================
-// TYPE DEFINITIONS
-// ========================================
-export type { SyncedDocument, ConvexClient } from './types';
-```
-
+**Indexes:**
+- `by_collection_document` - Lookup specific documents
+- `by_collection` - Query all documents in a collection
+- `by_timestamp` - Incremental sync support
+
+### @convex-replicate/core (`packages/core/`)
+
+Framework-agnostic utilities for replication and SSR.
+
+**Key Files:**
+- `src/index.ts` - Main exports (replication helpers, storage, logger, collection options)
+- `src/replication.ts` - Dual-storage write/read helpers:
+  - `submitDocumentHelper()` - Write to both component and main table
+  - `pullChangesHelper()` - Read from main table for incremental sync
+  - `changeStreamHelper()` - Detect changes for reactive queries
+- `src/ssr.ts` - `loadCollection()` for server-side data loading
+- `src/store.ts` - `AutomergeDocumentStore` for managing Automerge documents
+- `src/adapter.ts` - `SyncAdapter` for abstracting storage backends
+- `src/convexAutomergeCollectionOptions.ts` - TanStack DB collection options
+- `src/logger.ts` - LogTape logger configuration
+
+**Build Output:**
+- TypeScript compilation to `dist/` directory
+- Exports: `.` (main), `./replication`, `./ssr`
+
+**Dependencies:**
+- Requires `@tanstack/db` for collection options
+- Peer dependency on `convex ^1.28.0`
 
 ## Technology Stack
 
 - **Language:** TypeScript (strict mode)
 - **Runtime:** Bun
-- **Build:** tsup (packages), Vite (example)
+- **Build:** TypeScript compiler (both packages)
 - **Linting:** Biome v2
-- **Database:** RxDB (local) + Convex (cloud)
+- **CRDTs:** Automerge 3.x with IndexedDB storage
+- **Backend:** Convex (cloud database and functions)
+- **State Management:** TanStack DB for reactive collections
 - **Logging:** LogTape
-- **Validation:** Zod (external data only)
-- **Testing:** TypeScript type checking
+- **Testing:** Vitest (component package), TypeScript type checking
 
-## Common Pitfalls to Avoid
+## Using ConvexReplicate in Your App
 
-1. Using `any` instead of `unknown` or specific types
-2. Using enums instead of const objects
-3. Adding runtime checks that duplicate TypeScript
-4. Using `console.*` instead of LogTape
-5. Double type assertions (`as unknown as`)
-6. Hard deletes instead of soft deletes
-7. Creating multiple database instances instead of singletons
-8. Validating internal TypeScript types with Zod
-9. Missing explicit return types on exported functions
-10. Not using Context7 for library documentation
-11. Using emojis in code, comments, or documentation
-12. Writing comments that restate obvious code (explain WHY, not WHAT)
+### 1. Install Component in Convex
+
+```typescript
+// convex/convex.config.ts
+import { defineApp } from 'convex/server';
+import replicate from '@convex-replicate/component/convex.config';
+
+const app = defineApp();
+app.use(replicate, { name: 'replicate' });
+
+export default app;
+```
+
+### 2. Create Storage Instance
+
+```typescript
+// convex/tasks.ts
+import { components } from './_generated/api';
+import { ConvexReplicateStorage } from '@convex-replicate/component';
+
+const tasksStorage = new ConvexReplicateStorage(components.replicate, 'tasks');
+```
+
+### 3. Use Replication Helpers
+
+```typescript
+// convex/tasks.ts (continued)
+import { submitDocumentHelper, pullChangesHelper, changeStreamHelper } from '@convex-replicate/core';
+import { mutation, query } from './_generated/server';
+import { v } from 'convex/values';
+
+export const updateTask = mutation({
+  args: { id: v.string(), document: v.any(), version: v.number() },
+  handler: async (ctx, args) => {
+    // Writes to both component storage AND main 'tasks' table
+    return await submitDocumentHelper(ctx, components, 'tasks', args);
+  },
+});
+
+export const pullChanges = query({
+  args: {
+    checkpoint: v.object({ lastModified: v.number() }),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    // Reads from main 'tasks' table for efficient queries
+    return await pullChangesHelper(ctx, 'tasks', args);
+  },
+});
+
+export const changeStream = query({
+  handler: async (ctx) => {
+    // Returns latest timestamp/count for change detection
+    return await changeStreamHelper(ctx, 'tasks');
+  },
+});
+```
+
+### 4. Client-Side Integration (TanStack DB)
+
+```typescript
+import { AutomergeDocumentStore } from '@convex-replicate/core';
+import { SyncAdapter } from '@convex-replicate/core';
+import { convexAutomergeCollectionOptions } from '@convex-replicate/core';
+import { createDB } from '@tanstack/db';
+
+// Create Automerge store with IndexedDB persistence
+const store = new AutomergeDocumentStore({ collectionName: 'tasks' });
+
+// Create sync adapter for Convex replication
+const adapter = new SyncAdapter({
+  store,
+  convexClient,
+  api: api.tasks,
+});
+
+// Create reactive database
+const db = createDB({
+  collections: {
+    tasks: convexAutomergeCollectionOptions,
+  },
+});
+
+// Start syncing
+await adapter.sync();
+```
+
+## Key API Concepts
+
+### ConvexReplicateStorage Methods
+
+- **`submitDocument(ctx, documentId, document, version)`** - Submit document to component storage
+- **`pullChanges(ctx, checkpoint, limit?)`** - Pull incremental changes from component
+- **`changeStream(ctx)`** - Subscribe to collection changes (reactive query)
+- **`getDocumentMetadata(ctx, documentId)`** - Get document version and timestamp
+- **`for(documentId)`** - Create document-scoped API
+
+### Replication Helpers
+
+- **`submitDocumentHelper(ctx, components, tableName, args)`** - Dual-write to component + main table
+- **`pullChangesHelper(ctx, tableName, args)`** - Read from main table with pagination
+- **`changeStreamHelper(ctx, tableName)`** - Latest timestamp/count for change detection
+
+### SSR Utilities
+
+- **`loadCollection<T>(httpClient, config)`** - Load initial data during SSR
+  - `config.api` - The API module (e.g., `api.tasks`)
+  - `config.collection` - Collection name (must match API module name)
+  - `config.limit` - Max items to load (default: 100)
+
+## Required Convex Schema
+
+Your main application tables must include these fields and indexes:
+
+```typescript
+// convex/schema.ts
+import { defineSchema, defineTable } from 'convex/server';
+import { v } from 'convex/values';
+
+export default defineSchema({
+  tasks: defineTable({
+    id: v.string(),           // Document ID
+    version: v.number(),      // Version for conflict detection
+    timestamp: v.number(),    // Last modification timestamp
+    // ... your application fields
+  })
+    .index('by_user_id', ['id'])
+    .index('by_timestamp', ['timestamp']),
+});
+```
+
+## Logging
+
+ConvexReplicate uses LogTape for structured logging.
+
+```typescript
+import { configureLogger, getConvexReplicateLogger } from '@convex-replicate/core';
+
+// Configure logging
+configureLogger({
+  level: 'debug', // 'debug' | 'info' | 'warn' | 'error'
+  enableConsole: true,
+});
+
+// Get logger instance
+const logger = getConvexReplicateLogger('my-module');
+
+logger.info('Operation started', { userId: '123' });
+logger.warn('Something unexpected', { reason: 'timeout' });
+logger.error('Operation failed', { error });
+```
+
+**Note:** Biome warns on `console.*` usage - use LogTape instead for consistency.
+
+## Example App
+
+The `examples/tanstack-start/` directory contains a complete working example:
+
+**Key Files:**
+- `convex/convex.config.ts` - Component installation
+- `convex/tasks.ts` - Convex functions using replication helpers
+- `convex/schema.ts` - Application schema with required indexes
+- `src/` - React components using TanStack Start
+- `vite.config.ts` - Vite configuration with Wasm/top-level-await plugins
+
+**Running:**
+```bash
+cd examples/tanstack-start
+bun run dev  # Starts both Vite and Convex dev servers
+```
+
+## Common Patterns
+
+### Document Lifecycle
+
+1. **Create** - Client generates Automerge document with unique ID
+2. **Submit** - Call `submitDocumentHelper` to write to component + main table
+3. **Sync** - Component stores CRDT data, main table gets materialized version
+4. **Update** - Client merges changes offline, submits new version on reconnect
+5. **Conflict** - Automerge automatically merges concurrent changes (CRDT magic)
+
+### Incremental Sync
+
+Use checkpoints to efficiently sync only new/changed documents:
+
+```typescript
+// Client tracks last checkpoint
+let checkpoint = { lastModified: 0 };
+
+// Pull changes since checkpoint
+const result = await convex.query(api.tasks.pullChanges, {
+  checkpoint,
+  limit: 100,
+});
+
+// Process changes
+for (const change of result.changes) {
+  await store.merge(change.documentId, change.document);
+}
+
+// Update checkpoint for next sync
+checkpoint = result.checkpoint;
+```
+
+### SSR Data Loading
+
+Load initial data on server for instant rendering:
+
+```typescript
+// TanStack Start loader
+import { loadCollection } from '@convex-replicate/core/ssr';
+import { ConvexHttpClient } from 'convex/browser';
+import { api } from '../convex/_generated/api';
+
+export const Route = createFileRoute('/tasks')({
+  loader: async () => {
+    const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
+
+    const tasks = await loadCollection<Task>(httpClient, {
+      api: api.tasks,
+      collection: 'tasks',
+      limit: 50,
+    });
+
+    return { initialTasks: tasks };
+  },
+});
+```
+
+## Troubleshooting
+
+### Build Issues
+- Ensure component builds before core: `bun run build:component && bun run build:core`
+- Clear dist folders if stale: `bun run clean`
+- Component requires both ESM and CommonJS builds
+
+### Type Errors
+- Run `bun run typecheck` to check all packages
+- Ensure `convex` peer dependency version matches (^1.28.0)
+- Check that Convex codegen is up to date: `convex dev` in example
+
+### Linting/Formatting
+- Run `bun run check:fix` before committing
+- Note: `noExplicitAny` is disabled, but still prefer typed code
+- Generated files are auto-excluded from linting
+
+## Important Notes
+
+- **Don't run dev servers** - They're managed by another process
+- **Build order matters** - Component before Core
+- **Dual-storage is required** - Both component and main tables needed
+- **Automerge is the CRDT engine** - Not RxDB (common confusion)
+- **LogTape for logging** - Not console.* (Biome warns on console usage)
+- **Context7 for docs** - Always use for library documentation lookups
