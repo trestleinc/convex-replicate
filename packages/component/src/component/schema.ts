@@ -5,7 +5,7 @@ export default defineSchema({
   documents: defineTable({
     collectionName: v.string(),
     documentId: v.string(),
-    document: v.any(),
+    crdtBytes: v.bytes(),
     version: v.number(),
     timestamp: v.number(),
   })

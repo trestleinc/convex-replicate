@@ -65,59 +65,77 @@ export class ConvexReplicateStorage<TDocument extends { id: string } = { id: str
   ) {}
 
   /**
-   * Submit a document to the replicate component storage.
+   * Insert a new document into the replicate component storage.
    *
-   * This stores the document data in the component's internal storage table,
-   * making it available for replication and synchronization across clients.
+   * This stores the CRDT bytes in the component's internal storage table.
    *
    * @param ctx - Convex mutation context
    * @param documentId - Unique identifier for the document
-   * @param document - The document data to store
+   * @param crdtBytes - The CRDT binary data (from Automerge.save())
    * @param version - Version number for conflict resolution
    * @returns Success indicator
-   *
-   * @example
-   * ```typescript
-   * await tasksStorage.submitDocument(ctx, "task-123", {
-   *   id: "task-123",
-   *   text: "Complete the project",
-   *   isCompleted: false
-   * }, 1);
-   * ```
    */
-  async submitDocument(
+  async insertDocument(
     ctx: RunMutationCtx,
     documentId: string,
-    document: TDocument,
+    crdtBytes: ArrayBuffer,
     version: number
   ): Promise<{ success: boolean }> {
-    return ctx.runMutation(this.component.public.submitDocument, {
+    return ctx.runMutation(this.component.public.insertDocument, {
       collectionName: this.collectionName,
       documentId,
-      document,
+      crdtBytes,
       version,
+    });
+  }
+
+  /**
+   * Update an existing document in the replicate component storage.
+   *
+   * @param ctx - Convex mutation context
+   * @param documentId - Unique identifier for the document
+   * @param crdtBytes - The CRDT binary data (from Automerge.save())
+   * @param version - Version number for conflict resolution
+   * @returns Success indicator
+   */
+  async updateDocument(
+    ctx: RunMutationCtx,
+    documentId: string,
+    crdtBytes: ArrayBuffer,
+    version: number
+  ): Promise<{ success: boolean }> {
+    return ctx.runMutation(this.component.public.updateDocument, {
+      collectionName: this.collectionName,
+      documentId,
+      crdtBytes,
+      version,
+    });
+  }
+
+  /**
+   * Delete a document from the replicate component storage.
+   *
+   * @param ctx - Convex mutation context
+   * @param documentId - Unique identifier for the document
+   * @returns Success indicator
+   */
+  async deleteDocument(ctx: RunMutationCtx, documentId: string): Promise<{ success: boolean }> {
+    return ctx.runMutation(this.component.public.deleteDocument, {
+      collectionName: this.collectionName,
+      documentId,
     });
   }
 
   /**
    * Pull document changes from the replicate component storage.
    *
-   * Retrieves documents that have been modified since the provided checkpoint,
-   * enabling incremental synchronization. Use this for efficient polling or
-   * initial data loading.
+   * Retrieves CRDT bytes for documents that have been modified since the
+   * provided checkpoint, enabling incremental synchronization.
    *
    * @param ctx - Convex query context
    * @param checkpoint - Last known modification timestamp
    * @param limit - Maximum number of changes to retrieve (default: 100)
    * @returns Array of changes with updated checkpoint
-   *
-   * @example
-   * ```typescript
-   * const result = await tasksStorage.pullChanges(ctx, { lastModified: 0 }, 50);
-   * // result.changes contains up to 50 modified documents
-   * // result.checkpoint contains the new lastModified timestamp
-   * // result.hasMore indicates if more changes are available
-   * ```
    */
   async pullChanges(
     ctx: RunQueryCtx,
@@ -126,7 +144,7 @@ export class ConvexReplicateStorage<TDocument extends { id: string } = { id: str
   ): Promise<{
     changes: Array<{
       documentId: string;
-      document: TDocument;
+      crdtBytes: ArrayBuffer;
       version: number;
       timestamp: number;
     }>;
@@ -137,7 +155,7 @@ export class ConvexReplicateStorage<TDocument extends { id: string } = { id: str
       collectionName: this.collectionName,
       checkpoint,
       limit,
-    });
+    }) as any;
   }
 
   /**
@@ -166,72 +184,6 @@ export class ConvexReplicateStorage<TDocument extends { id: string } = { id: str
     return ctx.runQuery(this.component.public.changeStream, {
       collectionName: this.collectionName,
     });
-  }
-
-  /**
-   * Retrieve metadata for a specific document.
-   *
-   * Fetches document data, version, and timestamp without pulling all changes.
-   * Useful for checking if a document exists or getting its current state.
-   *
-   * @param ctx - Convex query context
-   * @param documentId - Unique identifier for the document
-   * @returns Document metadata or null if not found
-   *
-   * @example
-   * ```typescript
-   * const taskMeta = await tasksStorage.getDocumentMetadata(ctx, "task-123");
-   * if (taskMeta) {
-   *   console.log(`Task version: ${taskMeta.version}`);
-   *   console.log(`Last modified: ${taskMeta.timestamp}`);
-   * }
-   * ```
-   */
-  async getDocumentMetadata(
-    ctx: RunQueryCtx,
-    documentId: string
-  ): Promise<{
-    documentId: string;
-    version: number;
-    timestamp: number;
-    document: TDocument;
-  } | null> {
-    return ctx.runQuery(this.component.public.getDocumentMetadata, {
-      collectionName: this.collectionName,
-      documentId,
-    });
-  }
-
-  /**
-   * Create a scoped API for a specific document ID.
-   *
-   * Returns an object with methods pre-bound to a specific document,
-   * similar to ShardedCounter's `.for()` pattern.
-   *
-   * @param documentId - The document ID to scope methods to
-   * @returns Object with document-scoped methods
-   *
-   * @example
-   * ```typescript
-   * const task123 = tasksStorage.for("task-123");
-   *
-   * await task123.submit(ctx, { id: "task-123", text: "..." }, 1);
-   * const metadata = await task123.getMetadata(ctx);
-   * ```
-   */
-  for(documentId: string) {
-    return {
-      /**
-       * Submit this specific document.
-       */
-      submit: async (ctx: RunMutationCtx, document: TDocument, version: number) =>
-        this.submitDocument(ctx, documentId, document, version),
-
-      /**
-       * Get metadata for this specific document.
-       */
-      getMetadata: async (ctx: RunQueryCtx) => this.getDocumentMetadata(ctx, documentId),
-    };
   }
 }
 

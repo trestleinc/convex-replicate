@@ -1,11 +1,11 @@
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
 
-export const submitDocument = mutation({
+export const insertDocument = mutation({
   args: {
     collectionName: v.string(),
     documentId: v.string(),
-    document: v.any(),
+    crdtBytes: v.bytes(),
     version: v.number(),
   },
   returns: v.object({
@@ -20,19 +20,75 @@ export const submitDocument = mutation({
       .first();
 
     if (existing) {
-      await ctx.db.patch(existing._id, {
-        document: args.document,
-        version: args.version,
-        timestamp: Date.now(),
-      });
-    } else {
-      await ctx.db.insert('documents', {
-        collectionName: args.collectionName,
-        documentId: args.documentId,
-        document: args.document,
-        version: args.version,
-        timestamp: Date.now(),
-      });
+      throw new Error(
+        `Document ${args.documentId} already exists in collection ${args.collectionName}. Use updateDocument instead.`
+      );
+    }
+
+    await ctx.db.insert('documents', {
+      collectionName: args.collectionName,
+      documentId: args.documentId,
+      crdtBytes: args.crdtBytes,
+      version: args.version,
+      timestamp: Date.now(),
+    });
+
+    return { success: true };
+  },
+});
+
+export const updateDocument = mutation({
+  args: {
+    collectionName: v.string(),
+    documentId: v.string(),
+    crdtBytes: v.bytes(),
+    version: v.number(),
+  },
+  returns: v.object({
+    success: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query('documents')
+      .withIndex('by_collection_document', (q) =>
+        q.eq('collectionName', args.collectionName).eq('documentId', args.documentId)
+      )
+      .first();
+
+    if (!existing) {
+      throw new Error(
+        `Document ${args.documentId} not found in collection ${args.collectionName}. Use insertDocument instead.`
+      );
+    }
+
+    await ctx.db.patch(existing._id, {
+      crdtBytes: args.crdtBytes,
+      version: args.version,
+      timestamp: Date.now(),
+    });
+
+    return { success: true };
+  },
+});
+
+export const deleteDocument = mutation({
+  args: {
+    collectionName: v.string(),
+    documentId: v.string(),
+  },
+  returns: v.object({
+    success: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const doc = await ctx.db
+      .query('documents')
+      .withIndex('by_collection_document', (q) =>
+        q.eq('collectionName', args.collectionName).eq('documentId', args.documentId)
+      )
+      .first();
+
+    if (doc) {
+      await ctx.db.delete(doc._id);
     }
 
     return { success: true };
@@ -51,7 +107,7 @@ export const pullChanges = query({
     changes: v.array(
       v.object({
         documentId: v.string(),
-        document: v.any(),
+        crdtBytes: v.bytes(),
         version: v.number(),
         timestamp: v.number(),
       })
@@ -74,7 +130,7 @@ export const pullChanges = query({
 
     const changes = documents.map((doc) => ({
       documentId: doc.documentId,
-      document: doc.document,
+      crdtBytes: doc.crdtBytes,
       version: doc.version,
       timestamp: doc.timestamp,
     }));
@@ -119,41 +175,6 @@ export const changeStream = query({
     return {
       timestamp: latestTimestamp,
       count: allDocs.length,
-    };
-  },
-});
-
-export const getDocumentMetadata = query({
-  args: {
-    collectionName: v.string(),
-    documentId: v.string(),
-  },
-  returns: v.union(
-    v.null(),
-    v.object({
-      documentId: v.string(),
-      version: v.number(),
-      timestamp: v.number(),
-      document: v.any(),
-    })
-  ),
-  handler: async (ctx, args) => {
-    const doc = await ctx.db
-      .query('documents')
-      .withIndex('by_collection_document', (q) =>
-        q.eq('collectionName', args.collectionName).eq('documentId', args.documentId)
-      )
-      .first();
-
-    if (!doc) {
-      return null;
-    }
-
-    return {
-      documentId: doc.documentId,
-      version: doc.version,
-      timestamp: doc.timestamp,
-      document: doc.document,
     };
   },
 });
