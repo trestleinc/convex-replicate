@@ -6,12 +6,10 @@ import './index.css';
 function App() {
   const [documentId, setDocumentId] = useState('test-doc-1');
   const [message, setMessage] = useState('Hello from Convex Replicate!');
-  const [version, setVersion] = useState(1);
   const [lastModified, setLastModified] = useState(0);
 
-  const submitDocument = useMutation(api.storageTests.submitTestDocument);
+  const insertDocument = useMutation(api.storageTests.insertTestDocument);
   const pullChanges = useQuery(api.storageTests.pullTestChanges, { lastModified });
-  const metadata = useQuery(api.storageTests.getTestMetadata, { documentId });
   const changeStream = useQuery(api.storageTests.getChangeStream);
 
   return (
@@ -19,7 +17,7 @@ function App() {
       <h1 className="hidden text-3xl text-center mb-8">Convex Replicate Component Test</h1>
 
       <div className="p-4 border border-rose-pine-muted rounded">
-        <h2 className="text-2xl mb-4">Submit Document</h2>
+        <h2 className="text-2xl mb-4">Insert Document</h2>
         <div className="mb-4">
           <label className="flex items-center gap-4">
             <span className="font-semibold min-w-32">Document ID:</span>
@@ -42,24 +40,13 @@ function App() {
             />
           </label>
         </div>
-        <div className="mb-4">
-          <label className="flex items-center gap-4">
-            <span className="font-semibold min-w-32">Version:</span>
-            <input
-              type="number"
-              value={version}
-              onChange={(e) => setVersion(Number(e.target.value))}
-              className="px-3 py-2 border border-rose-pine-muted rounded focus:outline-none focus:border-rose-pine-rose w-32"
-            />
-          </label>
-        </div>
         <div>
           <button
             type="button"
-            onClick={() => submitDocument({ documentId, message, version })}
+            onClick={() => insertDocument({ documentId, message })}
             className="px-4 py-2 border border-rose-pine-rose text-rose-pine-text rounded hover:bg-rose-pine-rose hover:text-rose-pine-base transition-colors"
           >
-            Submit Document
+            Insert Document
           </button>
         </div>
       </div>
@@ -82,50 +69,35 @@ function App() {
       </div>
 
       <div className="mt-2 p-4 border border-rose-pine-muted rounded">
-        <h2 className="text-2xl mb-4">Document Metadata: {documentId}</h2>
-        {metadata ? (
-          <div className="space-y-2">
-            <p className="text-rose-pine-text">
-              <span className="font-semibold">Version:</span> {metadata.version}
-            </p>
-            <p className="text-rose-pine-text">
-              <span className="font-semibold">Timestamp:</span>{' '}
-              {new Date(metadata.timestamp).toLocaleString()}
-            </p>
-            <p className="text-rose-pine-text">
-              <span className="font-semibold">Message:</span> {metadata.document.message}
-            </p>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-2xl">Recent Changes</h2>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setLastModified(0)}
+              className="px-3 py-1 border border-rose-pine-muted text-rose-pine-text rounded hover:bg-rose-pine-muted transition-colors text-sm"
+            >
+              Reset
+            </button>
+            <button
+              type="button"
+              onClick={() => setLastModified(Date.now())}
+              className="px-3 py-1 border border-rose-pine-muted text-rose-pine-text rounded hover:bg-rose-pine-muted transition-colors text-sm"
+            >
+              From Now
+            </button>
           </div>
-        ) : (
-          <p className="text-rose-pine-muted">No data found</p>
-        )}
-      </div>
-
-      <div className="mt-2 p-4 border border-rose-pine-muted rounded">
-        <h2 className="text-2xl mb-4">Pull Changes</h2>
-        <div className="mb-4 flex items-center gap-4">
-          <label className="flex items-center gap-4">
-            <span className="font-semibold">Last Modified:</span>
-            <input
-              type="number"
-              value={lastModified}
-              onChange={(e) => setLastModified(Number(e.target.value))}
-              className="px-3 py-2 border border-rose-pine-muted rounded focus:outline-none focus:border-rose-pine-rose w-48"
-            />
-          </label>
-          <button
-            type="button"
-            onClick={() => pullChanges && setLastModified(pullChanges.checkpoint.lastModified)}
-            className="px-4 py-2 border border-rose-pine-rose text-rose-pine-text rounded hover:bg-rose-pine-rose hover:text-rose-pine-base transition-colors"
-          >
-            Update Checkpoint
-          </button>
         </div>
-        {pullChanges && (
+        {pullChanges ? (
           <div className="space-y-2">
-            <p className="text-rose-pine-text">Found {pullChanges.changes.length} changes</p>
-            <p className="text-rose-pine-text">Has More: {pullChanges.hasMore ? 'Yes' : 'No'}</p>
-            <div className="mt-4 space-y-2">
+            <p className="text-rose-pine-muted text-sm">
+              Showing changes since: {new Date(lastModified).toLocaleString()}
+            </p>
+            <p className="text-rose-pine-muted text-sm">
+              {pullChanges.changes.length} changes found
+              {pullChanges.hasMore && ' (more available)'}
+            </p>
+            <div className="space-y-2">
               {pullChanges.changes.map((change) => (
                 <div
                   key={`${change.documentId}-${change.timestamp}`}
@@ -143,6 +115,8 @@ function App() {
               ))}
             </div>
           </div>
+        ) : (
+          <p className="text-rose-pine-muted">Loading...</p>
         )}
       </div>
     </div>
