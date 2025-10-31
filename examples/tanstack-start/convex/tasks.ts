@@ -1,25 +1,66 @@
-import { ConvexReplicateStorage } from '@convex-replicate/component';
-import { mutation, query } from './_generated/server';
+import { mutation, query } from './functions';
 import { components } from './_generated/api';
 import { v } from 'convex/values';
+import {
+  insertDocumentHelper,
+  updateDocumentHelper,
+  deleteDocumentHelper,
+  pullChangesHelper,
+  changeStreamHelper,
+} from '@convex-replicate/core';
 
-interface Task {
-  id: string;
-  text: string;
-  isCompleted: boolean;
-}
+/**
+ * TanStack DB endpoints - called by convexAutomergeCollectionOptions
+ *
+ * These receive CRDT bytes from the client and use replication helpers
+ * to write to both the component (CRDT bytes) and main table (materialized docs).
+ */
 
-const tasksStorage = new ConvexReplicateStorage<Task>(components.replicate, 'tasks');
-
-export const submitDocument = mutation({
+export const insertDocument = mutation({
   args: {
     collectionName: v.string(),
     documentId: v.string(),
-    document: v.any(),
+    crdtBytes: v.bytes(),
+    materializedDoc: v.any(),
     version: v.number(),
   },
   handler: async (ctx, args) => {
-    return await tasksStorage.submitDocument(ctx, args.documentId, args.document, args.version);
+    return await insertDocumentHelper(ctx, components, 'tasks', {
+      id: args.documentId,
+      crdtBytes: args.crdtBytes,
+      materializedDoc: args.materializedDoc,
+      version: args.version,
+    });
+  },
+});
+
+export const updateDocument = mutation({
+  args: {
+    collectionName: v.string(),
+    documentId: v.string(),
+    crdtBytes: v.bytes(),
+    materializedDoc: v.any(),
+    version: v.number(),
+  },
+  handler: async (ctx, args) => {
+    return await updateDocumentHelper(ctx, components, 'tasks', {
+      id: args.documentId,
+      crdtBytes: args.crdtBytes,
+      materializedDoc: args.materializedDoc,
+      version: args.version,
+    });
+  },
+});
+
+export const deleteDocument = mutation({
+  args: {
+    collectionName: v.string(),
+    documentId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return await deleteDocumentHelper(ctx, components, 'tasks', {
+      id: args.documentId,
+    });
   },
 });
 
@@ -30,7 +71,10 @@ export const pullChanges = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    return await tasksStorage.pullChanges(ctx, args.checkpoint, args.limit);
+    return await pullChangesHelper(ctx, components, 'tasks', {
+      checkpoint: args.checkpoint,
+      limit: args.limit,
+    });
   },
 });
 
@@ -39,6 +83,20 @@ export const changeStream = query({
     collectionName: v.string(),
   },
   handler: async (ctx) => {
-    return await tasksStorage.changeStream(ctx);
+    return await changeStreamHelper(ctx, components, 'tasks');
+  },
+});
+
+/**
+ * Regular query endpoints for SSR/server-side operations
+ * These read from the materialized main table for efficient queries
+ */
+
+export const getTasks = query({
+  handler: async (ctx) => {
+    return await ctx.db
+      .query('tasks')
+      .filter((q) => q.neq(q.field('deleted'), true))
+      .collect();
   },
 });
