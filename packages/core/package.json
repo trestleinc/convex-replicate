@@ -10,9 +10,9 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./convex-helpers": {
-      "types": "./dist/convex-helpers.d.ts",
-      "default": "./dist/convex-helpers.js"
+    "./replication": {
+      "types": "./dist/replication.d.ts",
+      "default": "./dist/replication.js"
     },
     "./ssr": {
       "types": "./dist/ssr.d.ts",

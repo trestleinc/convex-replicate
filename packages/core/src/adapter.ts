@@ -4,9 +4,42 @@ import type { AutomergeDocumentStore } from './store';
 import { getConvexReplicateLogger } from './logger';
 
 export interface StorageAPI {
-  pullChanges: FunctionReference<'query', 'public' | 'internal'>;
-  submitDocument: FunctionReference<'mutation', 'public' | 'internal'>;
-  changeStream: FunctionReference<'query', 'public' | 'internal'>;
+  pullChanges: FunctionReference<
+    'query',
+    'public' | 'internal',
+    {
+      collectionName: string;
+      checkpoint: { lastModified: number };
+      limit?: number;
+    },
+    {
+      changes: Array<{
+        documentId: string;
+        document: unknown;
+        version: number;
+        timestamp: number;
+      }>;
+      checkpoint: { lastModified: number };
+      hasMore: boolean;
+    }
+  >;
+  submitDocument: FunctionReference<
+    'mutation',
+    'public' | 'internal',
+    {
+      collectionName: string;
+      documentId: string;
+      document: unknown;
+      version: number;
+    },
+    { success: boolean }
+  >;
+  changeStream: FunctionReference<
+    'query',
+    'public' | 'internal',
+    { collectionName: string },
+    { timestamp: number; count: number }
+  >;
 }
 
 export class SyncAdapter<T extends { id: string }> {
@@ -29,7 +62,7 @@ export class SyncAdapter<T extends { id: string }> {
 
     this.unsubscribe = this.client.onUpdate(
       this.api.changeStream as any,
-      {},
+      { collectionName: this.collectionName },
       () => void this.pull()
     );
   }
@@ -42,6 +75,7 @@ export class SyncAdapter<T extends { id: string }> {
   private async pull(): Promise<void> {
     try {
       const result = await this.client.query(this.api.pullChanges as any, {
+        collectionName: this.collectionName,
         checkpoint: this.checkpoint,
         limit: 100,
       });
@@ -81,7 +115,8 @@ export class SyncAdapter<T extends { id: string }> {
       await Promise.all(
         unreplicated.map(({ id, document, version }) =>
           this.client.mutation(this.api.submitDocument as any, {
-            id,
+            collectionName: this.collectionName,
+            documentId: id,
             document,
             version,
           })

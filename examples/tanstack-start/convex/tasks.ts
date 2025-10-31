@@ -2,7 +2,7 @@ import {
   submitDocumentHelper,
   pullChangesHelper,
   changeStreamHelper,
-} from '@convex-replicate/core/convex-helpers';
+} from '@convex-replicate/core/replication';
 import { mutation, query } from './_generated/server';
 import { components } from './_generated/api';
 import { v } from 'convex/values';

@@ -48,7 +48,7 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
 
     const unsubscribeConvex = config.convexClient.onUpdate(
       config.api.changeStream as any,
-      {},
+      { collectionName: config.collectionName },
       () => {
         void pullChanges();
       }
@@ -101,6 +101,7 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
         logger.debug('Pulling changes from Convex', { checkpoint, isInitialSyncComplete });
 
         const result = await config.convexClient.query(config.api.pullChanges as any, {
+          collectionName: config.collectionName,
           checkpoint,
           limit: 100,
         });
@@ -270,7 +271,8 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
         await Promise.all(
           unreplicated.map(({ id, document, version }) =>
             config.convexClient.mutation(config.api.submitDocument as any, {
-              id,
+              collectionName: config.collectionName,
+              documentId: id,
               document,
               version,
             })
@@ -301,7 +303,8 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
         await Promise.all(
           unreplicated.map(({ id, document, version }) =>
             config.convexClient.mutation(config.api.submitDocument as any, {
-              id,
+              collectionName: config.collectionName,
+              documentId: id,
               document,
               version,
             })
@@ -326,7 +329,8 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
         await Promise.all(
           unreplicated.map(({ id, document, version }) =>
             config.convexClient.mutation(config.api.submitDocument as any, {
-              id,
+              collectionName: config.collectionName,
+              documentId: id,
               document,
               version,
             })
