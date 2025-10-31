@@ -35,16 +35,22 @@ export type Mounts = {
       { collectionName: string },
       { count: number; timestamp: number }
     >;
-    getDocumentMetadata: FunctionReference<
-      "query",
+    deleteDocument: FunctionReference<
+      "mutation",
       "public",
       { collectionName: string; documentId: string },
-      null | {
-        document: any;
+      { success: boolean }
+    >;
+    insertDocument: FunctionReference<
+      "mutation",
+      "public",
+      {
+        collectionName: string;
+        crdtBytes: ArrayBuffer;
         documentId: string;
-        timestamp: number;
         version: number;
-      }
+      },
+      { success: boolean }
     >;
     pullChanges: FunctionReference<
       "query",
@@ -56,7 +62,7 @@ export type Mounts = {
       },
       {
         changes: Array<{
-          document: any;
+          crdtBytes: ArrayBuffer;
           documentId: string;
           timestamp: number;
           version: number;
@@ -65,12 +71,12 @@ export type Mounts = {
         hasMore: boolean;
       }
     >;
-    submitDocument: FunctionReference<
+    updateDocument: FunctionReference<
       "mutation",
       "public",
       {
         collectionName: string;
-        document: any;
+        crdtBytes: ArrayBuffer;
         documentId: string;
         version: number;
       },

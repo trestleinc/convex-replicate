@@ -1,17 +1,12 @@
-import { defineSchema, defineTable } from 'convex/server';
-import { v } from 'convex/values';
+import { defineSchema } from 'convex/server';
 
+/**
+ * Component example schema
+ *
+ * This example uses pure CRDT storage via the replicate component.
+ * No main application tables are needed since we're only demonstrating
+ * component storage functionality.
+ */
 export default defineSchema({
-  users: defineTable({
-    name: v.string(),
-  }),
-  backfillCursor: defineTable({
-    creationTime: v.number(),
-    id: v.string(),
-    isDone: v.boolean(),
-  }),
-  checkboxes: defineTable({
-    idx: v.number(),
-    boxes: v.bytes(),
-  }).index('idx', ['idx']),
+  // No tables needed - using component storage only
 });

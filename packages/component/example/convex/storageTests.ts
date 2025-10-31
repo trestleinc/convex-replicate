@@ -2,7 +2,6 @@ import { mutation, query } from './_generated/server';
 import { components } from './_generated/api';
 import { ConvexReplicateStorage } from '../../src/client';
 import { v } from 'convex/values';
-import * as Automerge from '@automerge/automerge';
 
 interface TestDocument {
   id: string;
@@ -16,51 +15,59 @@ const testStorage = new ConvexReplicateStorage<TestDocument>(
 
 /**
  * Insert a new test document with CRDT bytes
+ * Client must send CRDT bytes created with Automerge.save()
  */
 export const insertTestDocument = mutation({
   args: {
     documentId: v.string(),
-    message: v.string(),
+    crdtBytes: v.bytes(),
   },
   handler: async (ctx, args) => {
-    // Create Automerge CRDT
-    const doc = Automerge.from({
-      id: args.documentId,
-      message: args.message,
-    });
-    const crdtBytes = Automerge.save(doc);
-
-    return await testStorage.insertDocument(
-      ctx,
-      args.documentId,
-      crdtBytes.buffer as ArrayBuffer,
-      1
-    );
+    return await testStorage.insertDocument(ctx, args.documentId, args.crdtBytes, 1);
   },
 });
 
 /**
  * Update an existing test document with CRDT bytes
+ * Client must send CRDT bytes created with Automerge.save()
  */
 export const updateTestDocument = mutation({
   args: {
     documentId: v.string(),
-    message: v.string(),
+    crdtBytes: v.bytes(),
   },
   handler: async (ctx, args) => {
-    // Create updated Automerge CRDT
-    const doc = Automerge.from({
-      id: args.documentId,
-      message: args.message,
-    });
-    const crdtBytes = Automerge.save(doc);
+    return await testStorage.updateDocument(ctx, args.documentId, args.crdtBytes, 2);
+  },
+});
 
-    return await testStorage.updateDocument(
-      ctx,
-      args.documentId,
-      crdtBytes.buffer as ArrayBuffer,
-      2
-    );
+/**
+ * Upsert (insert or update) a test document with CRDT bytes
+ * Automatically detects if document exists and calls insert or update
+ * Client must send CRDT bytes created with Automerge.save()
+ */
+export const upsertTestDocument = mutation({
+  args: {
+    documentId: v.string(),
+    crdtBytes: v.bytes(),
+  },
+  handler: async (ctx, args) => {
+    // Check if document exists by pulling all changes
+    const existing = await testStorage.pullChanges(ctx, { lastModified: 0 }, 1000);
+    const existingDoc = existing.changes.find((c) => c.documentId === args.documentId);
+
+    if (existingDoc) {
+      // Document exists - update it with incremented version
+      return await testStorage.updateDocument(
+        ctx,
+        args.documentId,
+        args.crdtBytes,
+        existingDoc.version + 1
+      );
+    } else {
+      // New document - insert it with version 1
+      return await testStorage.insertDocument(ctx, args.documentId, args.crdtBytes, 1);
+    }
   },
 });
 
@@ -78,24 +85,14 @@ export const deleteTestDocument = mutation({
 
 /**
  * Pull changes - returns CRDT bytes
+ * Client must use Automerge.load() to materialize the bytes
  */
 export const pullTestChanges = query({
   args: {
     lastModified: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const result = await testStorage.pullChanges(ctx, { lastModified: args.lastModified ?? 0 }, 10);
-
-    // Materialize the CRDT bytes for easier inspection
-    return {
-      ...result,
-      changes: result.changes.map((change) => ({
-        documentId: change.documentId,
-        document: Automerge.load<TestDocument>(new Uint8Array(change.crdtBytes)),
-        version: change.version,
-        timestamp: change.timestamp,
-      })),
-    };
+    return await testStorage.pullChanges(ctx, { lastModified: args.lastModified ?? 0 }, 10);
   },
 });
 

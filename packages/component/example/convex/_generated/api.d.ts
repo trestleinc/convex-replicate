@@ -47,16 +47,22 @@ export declare const components: {
         { collectionName: string },
         { count: number; timestamp: number }
       >;
-      getDocumentMetadata: FunctionReference<
-        "query",
+      deleteDocument: FunctionReference<
+        "mutation",
         "internal",
         { collectionName: string; documentId: string },
-        null | {
-          document: any;
+        { success: boolean }
+      >;
+      insertDocument: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          collectionName: string;
+          crdtBytes: ArrayBuffer;
           documentId: string;
-          timestamp: number;
           version: number;
-        }
+        },
+        { success: boolean }
       >;
       pullChanges: FunctionReference<
         "query",
@@ -68,7 +74,7 @@ export declare const components: {
         },
         {
           changes: Array<{
-            document: any;
+            crdtBytes: ArrayBuffer;
             documentId: string;
             timestamp: number;
             version: number;
@@ -77,12 +83,12 @@ export declare const components: {
           hasMore: boolean;
         }
       >;
-      submitDocument: FunctionReference<
+      updateDocument: FunctionReference<
         "mutation",
         "internal",
         {
           collectionName: string;
-          document: any;
+          crdtBytes: ArrayBuffer;
           documentId: string;
           version: number;
         },

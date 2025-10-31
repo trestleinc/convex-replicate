@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import { api } from '../convex/_generated/api';
+import * as Automerge from '@automerge/automerge';
 import './index.css';
 
 function App() {
@@ -8,7 +9,7 @@ function App() {
   const [message, setMessage] = useState('Hello from Convex Replicate!');
   const [lastModified, setLastModified] = useState(0);
 
-  const insertDocument = useMutation(api.storageTests.insertTestDocument);
+  const upsertDocument = useMutation(api.storageTests.upsertTestDocument);
   const pullChanges = useQuery(api.storageTests.pullTestChanges, { lastModified });
   const changeStream = useQuery(api.storageTests.getChangeStream);
 
@@ -17,7 +18,7 @@ function App() {
       <h1 className="hidden text-3xl text-center mb-8">Convex Replicate Component Test</h1>
 
       <div className="p-4 border border-rose-pine-muted rounded">
-        <h2 className="text-2xl mb-4">Insert Document</h2>
+        <h2 className="text-2xl mb-4">Save Document</h2>
         <div className="mb-4">
           <label className="flex items-center gap-4">
             <span className="font-semibold min-w-32">Document ID:</span>
@@ -43,10 +44,19 @@ function App() {
         <div>
           <button
             type="button"
-            onClick={() => insertDocument({ documentId, message })}
+            onClick={() => {
+              // Create Automerge CRDT document on the client
+              const doc = Automerge.from({ id: documentId, message });
+              const crdtBytes = Automerge.save(doc);
+              // Send CRDT bytes to backend (convert to ArrayBuffer)
+              upsertDocument({
+                documentId,
+                crdtBytes: crdtBytes.buffer as ArrayBuffer,
+              });
+            }}
             className="px-4 py-2 border border-rose-pine-rose text-rose-pine-text rounded hover:bg-rose-pine-rose hover:text-rose-pine-base transition-colors"
           >
-            Insert Document
+            Save Document
           </button>
         </div>
       </div>
@@ -98,21 +108,28 @@ function App() {
               {pullChanges.hasMore && ' (more available)'}
             </p>
             <div className="space-y-2">
-              {pullChanges.changes.map((change) => (
-                <div
-                  key={`${change.documentId}-${change.timestamp}`}
-                  className="p-3 border border-rose-pine-muted rounded bg-rose-pine-surface"
-                >
-                  <p className="text-rose-pine-text">
-                    <strong>Document:</strong> {change.documentId}
-                  </p>
-                  <p className="text-rose-pine-text">Message: {change.document.message}</p>
-                  <p className="text-rose-pine-text">Version: {change.version}</p>
-                  <p className="text-sm text-rose-pine-muted">
-                    {new Date(change.timestamp).toLocaleString()}
-                  </p>
-                </div>
-              ))}
+              {pullChanges.changes.map((change) => {
+                // Materialize CRDT bytes to view the document
+                const materialized = Automerge.load(new Uint8Array(change.crdtBytes)) as {
+                  id: string;
+                  message: string;
+                };
+                return (
+                  <div
+                    key={`${change.documentId}-${change.timestamp}`}
+                    className="p-3 border border-rose-pine-muted rounded bg-rose-pine-surface"
+                  >
+                    <p className="text-rose-pine-text">
+                      <strong>Document:</strong> {change.documentId}
+                    </p>
+                    <p className="text-rose-pine-text">Message: {materialized.message}</p>
+                    <p className="text-rose-pine-text">Version: {change.version}</p>
+                    <p className="text-sm text-rose-pine-muted">
+                      {new Date(change.timestamp).toLocaleString()}
+                    </p>
+                  </div>
+                );
+              })}
             </div>
           </div>
         ) : (
