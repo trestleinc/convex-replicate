@@ -1,3 +1,24 @@
+/**
+ * Server-Side Rendering (SSR) Utilities
+ *
+ * This module provides utilities for loading collection data during
+ * server-side rendering. Use `loadCollection` with an explicit config
+ * object for clarity and type safety.
+ *
+ * @module ssr
+ * @example
+ * ```typescript
+ * import { loadCollection } from '@convex-replicate/core/ssr';
+ * import { api } from '../convex/_generated/api';
+ *
+ * const tasks = await loadCollection<Task>(httpClient, {
+ *   api: api.tasks,
+ *   collection: 'tasks',
+ *   limit: 100,
+ * });
+ * ```
+ */
+
 import type { ConvexHttpClient } from 'convex/browser';
 import type { FunctionReference } from 'convex/server';
 
@@ -63,28 +84,4 @@ export async function loadCollection<TItem extends { id: string }>(
   }
 
   return items;
-}
-
-/**
- * @deprecated Use loadCollection instead for better clarity
- *
- * Load initial data from Convex for server-side rendering.
- *
- * @param httpClient - Convex HTTP client for server-side queries
- * @param pullChangesQuery - The pullChanges query function reference
- * @param options - Configuration options
- * @param options.collectionName - Name of the collection to load
- * @param options.limit - Maximum number of items to load (default: 100)
- * @returns Array of items from the collection
- */
-export async function loadConvexData<TItem extends { id: string }>(
-  httpClient: ConvexHttpClient,
-  pullChangesQuery: FunctionReference<'query', 'public' | 'internal'>,
-  options: { collectionName: string; limit?: number }
-): Promise<ReadonlyArray<TItem>> {
-  return loadCollection(httpClient, {
-    api: { pullChanges: pullChangesQuery },
-    collection: options.collectionName,
-    limit: options.limit,
-  });
 }

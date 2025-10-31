@@ -45,7 +45,8 @@
   },
   "css": {
     "parser": {
-      "cssModules": true
+      "cssModules": true,
+      "tailwindDirectives": true
     },
     "formatter": {
       "enabled": false
@@ -63,7 +64,7 @@
   },
   "overrides": [
     {
-      "includes": ["convex/_generated/**", "**/*.d.ts", "**/routeTree.gen.ts"],
+      "includes": ["**/_generated/**", "**/*.d.ts", "**/routeTree.gen.ts"],
       "linter": {
         "enabled": false
       },
@@ -72,12 +73,16 @@
       }
     },
     {
-      "includes": ["src/styles.css", "**/styles.css"],
-      "css": {
-        "linter": {
-          "enabled": true
-        }
+      "includes": ["packages/sharded-counter/**"],
+      "linter": {
+        "enabled": false
       },
+      "formatter": {
+        "enabled": false
+      }
+    },
+    {
+      "includes": ["**/*.css"],
       "linter": {
         "rules": {
           "suspicious": {
