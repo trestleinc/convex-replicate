@@ -759,4 +759,6 @@ Contributions welcome! Please see `CLAUDE.md` for coding standards.
 
 ## License
 
-MIT License - see LICENSE file for details.
+Apache-2.0 License - see [LICENSE](./LICENSE) file for details.
+
+Copyright 2025 Trestle Inc

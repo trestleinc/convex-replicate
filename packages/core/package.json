@@ -1,7 +1,22 @@
 {
   "name": "@convex-replicate/core",
+  "description": "Framework-agnostic replication utilities for ConvexReplicate.",
   "version": "0.1.0",
-  "private": true,
+  "license": "Apache-2.0",
+  "private": false,
+  "repository": "github:trestleinc/convex-replicate",
+  "homepage": "https://github.com/trestleinc/convex-replicate#readme",
+  "bugs": {
+    "url": "https://github.com/trestleinc/convex-replicate/issues"
+  },
+  "keywords": [
+    "convex",
+    "replicate",
+    "crdt",
+    "automerge",
+    "offline-first",
+    "tanstack"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -29,5 +44,8 @@
   },
   "peerDependencies": {
     "convex": "^1.28.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
