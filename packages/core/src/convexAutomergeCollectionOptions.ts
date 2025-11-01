@@ -33,7 +33,7 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
 
     const eventBuffer: Array<{
       documentId: string;
-      document: any;
+      crdtBytes: ArrayBuffer;
       version: number;
       timestamp: number;
     }> = [];
@@ -125,21 +125,23 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
 
             begin();
             for (const change of result.changes) {
-              store.mergeFromMaterialized(change.documentId, change.document);
+              // Convert ArrayBuffer to Uint8Array and merge CRDT bytes
+              store.mergeCRDT(change.documentId, new Uint8Array(change.crdtBytes));
 
-              if (change.document.deleted) {
+              // Get materialized document after merging
+              const doc = store.getMaterialized(change.documentId);
+
+              if (!doc) {
+                // Document was deleted or doesn't exist
                 logger.debug('Writing delete to TanStack DB', {
                   documentId: change.documentId,
                 });
                 write({ type: 'delete', value: { id: change.documentId } as TItem });
               } else {
-                const doc = store.getMaterialized(change.documentId);
-                if (doc) {
-                  logger.debug('Writing update to TanStack DB', {
-                    documentId: change.documentId,
-                  });
-                  write({ type: 'update', value: doc });
-                }
+                logger.debug('Writing update to TanStack DB', {
+                  documentId: change.documentId,
+                });
+                write({ type: 'update', value: doc });
               }
             }
             commit();
@@ -213,15 +215,17 @@ export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
 
           begin();
           for (const change of eventBuffer) {
-            store.mergeFromMaterialized(change.documentId, change.document);
+            // Convert ArrayBuffer to Uint8Array and merge CRDT bytes
+            store.mergeCRDT(change.documentId, new Uint8Array(change.crdtBytes));
 
-            if (change.document.deleted) {
+            // Get materialized document after merging
+            const doc = store.getMaterialized(change.documentId);
+
+            if (!doc) {
+              // Document was deleted or doesn't exist
               write({ type: 'delete', value: { id: change.documentId } as TItem });
             } else {
-              const doc = store.getMaterialized(change.documentId);
-              if (doc) {
-                write({ type: 'update', value: doc });
-              }
+              write({ type: 'update', value: doc });
             }
           }
           commit();
