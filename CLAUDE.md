@@ -119,7 +119,7 @@ Convex component providing CRDT storage layer.
 **Key Files:**
 - `src/component/` - Component implementation (deployed to Convex)
   - `schema.ts` - Internal `documents` table schema
-  - `public.ts` - Public API functions (submitDocument, pullChanges, changeStream, getDocumentMetadata)
+  - `public.ts` - Public API functions (insertDocument, updateDocument, deleteDocument, pullChanges, changeStream)
   - `convex.config.ts` - Component configuration
 - `src/client/` - Type-safe client API
   - `index.ts` - `ConvexReplicateStorage` class for interacting with component
@@ -133,7 +133,7 @@ Convex component providing CRDT storage layer.
 {
   collectionName: string;    // Collection identifier
   documentId: string;        // Document identifier
-  document: any;             // Automerge CRDT data
+  crdtBytes: ArrayBuffer;    // Automerge CRDT bytes (opaque to server)
   version: number;           // Version for conflict detection
   timestamp: number;         // Last modification time
 }
@@ -151,18 +151,22 @@ Framework-agnostic utilities for replication and SSR.
 **Key Files:**
 - `src/index.ts` - Main exports (replication helpers, storage, logger, collection options)
 - `src/replication.ts` - Dual-storage write/read helpers:
-  - `submitDocumentHelper()` - Write to both component and main table
-  - `pullChangesHelper()` - Read from main table for incremental sync
+  - `insertDocumentHelper()` - Insert new document to both component and main table
+  - `updateDocumentHelper()` - Update document in both component and main table
+  - `deleteDocumentHelper()` - Delete document from both component and main table
+  - `pullChangesHelper()` - Read CRDT bytes from component for incremental sync
   - `changeStreamHelper()` - Detect changes for reactive queries
 - `src/ssr.ts` - `loadCollection()` for server-side data loading
-- `src/store.ts` - `AutomergeDocumentStore` for managing Automerge documents
-- `src/adapter.ts` - `SyncAdapter` for abstracting storage backends
-- `src/convexAutomergeCollectionOptions.ts` - TanStack DB collection options
+- `src/store.ts` - `AutomergeDocumentStore` for managing Automerge documents (client-side only)
+- `src/adapter.ts` - `SyncAdapter` for abstracting storage backends (client-side only)
+- `src/convexAutomergeCollectionOptions.ts` - TanStack DB collection options (client-side only)
 - `src/logger.ts` - LogTape logger configuration
 
 **Build Output:**
 - TypeScript compilation to `dist/` directory
-- Exports: `.` (main), `./replication`, `./ssr`
+- Exports: `.` (main - all features), `./replication` (server-safe helpers only), `./ssr` (SSR utilities)
+
+**IMPORTANT**: Server-side Convex code must import from `@convex-replicate/core/replication` to avoid bundling Automerge WASM!
 
 **Dependencies:**
 - Requires `@tanstack/db` for collection options
@@ -209,33 +213,85 @@ const tasksStorage = new ConvexReplicateStorage(components.replicate, 'tasks');
 
 ```typescript
 // convex/tasks.ts (continued)
-import { submitDocumentHelper, pullChangesHelper, changeStreamHelper } from '@convex-replicate/core';
+import {
+  insertDocumentHelper,
+  updateDocumentHelper,
+  deleteDocumentHelper,
+  pullChangesHelper,
+  changeStreamHelper,
+} from '@convex-replicate/core/replication';  // IMPORTANT: Use /replication to avoid Automerge on server!
 import { mutation, query } from './_generated/server';
 import { v } from 'convex/values';
 
-export const updateTask = mutation({
-  args: { id: v.string(), document: v.any(), version: v.number() },
+export const insertDocument = mutation({
+  args: {
+    collectionName: v.string(),
+    documentId: v.string(),
+    crdtBytes: v.bytes(),
+    materializedDoc: v.any(),
+    version: v.number(),
+  },
   handler: async (ctx, args) => {
-    // Writes to both component storage AND main 'tasks' table
-    return await submitDocumentHelper(ctx, components, 'tasks', args);
+    // Writes CRDT bytes to component AND materialized doc to main 'tasks' table
+    return await insertDocumentHelper(ctx, components, 'tasks', {
+      id: args.documentId,
+      crdtBytes: args.crdtBytes,
+      materializedDoc: args.materializedDoc,
+      version: args.version,
+    });
+  },
+});
+
+export const updateDocument = mutation({
+  args: {
+    collectionName: v.string(),
+    documentId: v.string(),
+    crdtBytes: v.bytes(),
+    materializedDoc: v.any(),
+    version: v.number(),
+  },
+  handler: async (ctx, args) => {
+    return await updateDocumentHelper(ctx, components, 'tasks', {
+      id: args.documentId,
+      crdtBytes: args.crdtBytes,
+      materializedDoc: args.materializedDoc,
+      version: args.version,
+    });
+  },
+});
+
+export const deleteDocument = mutation({
+  args: {
+    collectionName: v.string(),
+    documentId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return await deleteDocumentHelper(ctx, components, 'tasks', {
+      id: args.documentId,
+    });
   },
 });
 
 export const pullChanges = query({
   args: {
+    collectionName: v.string(),
     checkpoint: v.object({ lastModified: v.number() }),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    // Reads from main 'tasks' table for efficient queries
-    return await pullChangesHelper(ctx, 'tasks', args);
+    // Returns CRDT bytes from component (not main table)
+    return await pullChangesHelper(ctx, components, 'tasks', {
+      checkpoint: args.checkpoint,
+      limit: args.limit,
+    });
   },
 });
 
 export const changeStream = query({
+  args: { collectionName: v.string() },
   handler: async (ctx) => {
     // Returns latest timestamp/count for change detection
-    return await changeStreamHelper(ctx, 'tasks');
+    return await changeStreamHelper(ctx, components, 'tasks');
   },
 });
 ```
@@ -273,17 +329,21 @@ await adapter.sync();
 
 ### ConvexReplicateStorage Methods
 
-- **`submitDocument(ctx, documentId, document, version)`** - Submit document to component storage
-- **`pullChanges(ctx, checkpoint, limit?)`** - Pull incremental changes from component
+- **`insertDocument(ctx, documentId, crdtBytes, version)`** - Insert new document with CRDT bytes
+- **`updateDocument(ctx, documentId, crdtBytes, version)`** - Update existing document with CRDT bytes
+- **`deleteDocument(ctx, documentId)`** - Delete document from storage
+- **`pullChanges(ctx, checkpoint, limit?)`** - Pull CRDT bytes for incremental sync
 - **`changeStream(ctx)`** - Subscribe to collection changes (reactive query)
-- **`getDocumentMetadata(ctx, documentId)`** - Get document version and timestamp
-- **`for(documentId)`** - Create document-scoped API
 
-### Replication Helpers
+### Replication Helpers (Server-Side)
 
-- **`submitDocumentHelper(ctx, components, tableName, args)`** - Dual-write to component + main table
-- **`pullChangesHelper(ctx, tableName, args)`** - Read from main table with pagination
-- **`changeStreamHelper(ctx, tableName)`** - Latest timestamp/count for change detection
+**IMPORTANT**: Import from `@convex-replicate/core/replication` to avoid bundling Automerge on server!
+
+- **`insertDocumentHelper(ctx, components, tableName, args)`** - Insert to both component (CRDT bytes) + main table (materialized doc)
+- **`updateDocumentHelper(ctx, components, tableName, args)`** - Update both component + main table
+- **`deleteDocumentHelper(ctx, components, tableName, args)`** - Delete from both component + main table
+- **`pullChangesHelper(ctx, components, tableName, args)`** - Read CRDT bytes from component with pagination
+- **`changeStreamHelper(ctx, components, tableName)`** - Latest timestamp/count for change detection
 
 ### SSR Utilities
 
@@ -358,10 +418,12 @@ bun run dev  # Starts both Vite and Convex dev servers
 ### Document Lifecycle
 
 1. **Create** - Client generates Automerge document with unique ID
-2. **Submit** - Call `submitDocumentHelper` to write to component + main table
-3. **Sync** - Component stores CRDT data, main table gets materialized version
-4. **Update** - Client merges changes offline, submits new version on reconnect
-5. **Conflict** - Automerge automatically merges concurrent changes (CRDT magic)
+2. **Save as bytes** - Client calls `Automerge.save()` to get CRDT bytes
+3. **Insert** - Call `insertDocumentHelper` with both CRDT bytes + materialized doc
+4. **Dual-write** - Component stores CRDT bytes, main table stores materialized doc
+5. **Update** - Client merges changes offline using `Automerge.change()`, saves as bytes
+6. **Submit update** - Call `updateDocumentHelper` with new CRDT bytes + materialized doc
+7. **Conflict** - Automerge automatically merges concurrent changes on client (CRDT magic)
 
 ### Incremental Sync
 
@@ -377,9 +439,9 @@ const result = await convex.query(api.tasks.pullChanges, {
   limit: 100,
 });
 
-// Process changes
+// Process changes - merge CRDT bytes
 for (const change of result.changes) {
-  await store.merge(change.documentId, change.document);
+  await store.merge(change.documentId, change.crdtBytes);
 }
 
 // Update checkpoint for next sync
