@@ -59,7 +59,7 @@ sequenceDiagram
 
     Note over Sync: Every 5 seconds
     Sync->>Store: Get unreplicated docs
-    Sync->>Convex: submitDocument mutation
+    Sync->>Convex: insertDocument/updateDocument mutation
     Convex->>Table: Insert/Update materialized doc
 
     Note over Convex,Table: Change detected
@@ -80,7 +80,7 @@ graph LR
     Component[Component Storage<br/>CRDT Layer<br/>Conflict Resolution]
     MainTable[Main Application Table<br/>Materialized Docs<br/>Efficient Queries]
 
-    Client -->|submitDocument| Component
+    Client -->|insertDocument/updateDocument| Component
     Component -->|also writes to| MainTable
     MainTable -->|pullChanges| Client
 ```
@@ -115,10 +115,11 @@ graph LR
 **What it provides:**
 - `ConvexReplicateStorage` - Type-safe API for interacting with the component
 - Internal CRDT storage table with indexes
-- `submitDocument()` - Store documents in CRDT layer
+- `insertDocument()` - Insert new documents with CRDT bytes
+- `updateDocument()` - Update existing documents with CRDT bytes
+- `deleteDocument()` - Delete documents
 - `pullChanges()` - Incremental sync with checkpoints
 - `changeStream()` - Real-time change detection
-- `getDocumentMetadata()` - Document metadata queries
 
 **Use when:**
 - Setting up the backend Convex storage layer
@@ -183,23 +184,73 @@ export default defineSchema({
 
 ### Step 3: Create Replication Functions
 
-Create wrapper functions to interact with the component:
+Create functions that use replication helpers for dual-storage pattern:
 
 ```typescript
-// convex/replicate.ts
+// convex/tasks.ts
 import { mutation, query } from './_generated/server';
 import { components } from './_generated/api';
 import { v } from 'convex/values';
+import {
+  insertDocumentHelper,
+  updateDocumentHelper,
+  deleteDocumentHelper,
+  pullChangesHelper,
+  changeStreamHelper,
+} from '@convex-replicate/core';
 
-export const submitDocument = mutation({
+/**
+ * TanStack DB endpoints - called by convexAutomergeCollectionOptions
+ * These receive CRDT bytes from client and write to both:
+ * 1. Component storage (CRDT bytes for conflict resolution)
+ * 2. Main table (materialized docs for efficient queries)
+ */
+
+export const insertDocument = mutation({
   args: {
     collectionName: v.string(),
     documentId: v.string(),
-    document: v.any(),
+    crdtBytes: v.bytes(),
+    materializedDoc: v.any(),
     version: v.number(),
   },
   handler: async (ctx, args) => {
-    return await ctx.runMutation(components.replicate.public.submitDocument, args);
+    return await insertDocumentHelper(ctx, components, 'tasks', {
+      id: args.documentId,
+      crdtBytes: args.crdtBytes,
+      materializedDoc: args.materializedDoc,
+      version: args.version,
+    });
+  },
+});
+
+export const updateDocument = mutation({
+  args: {
+    collectionName: v.string(),
+    documentId: v.string(),
+    crdtBytes: v.bytes(),
+    materializedDoc: v.any(),
+    version: v.number(),
+  },
+  handler: async (ctx, args) => {
+    return await updateDocumentHelper(ctx, components, 'tasks', {
+      id: args.documentId,
+      crdtBytes: args.crdtBytes,
+      materializedDoc: args.materializedDoc,
+      version: args.version,
+    });
+  },
+});
+
+export const deleteDocument = mutation({
+  args: {
+    collectionName: v.string(),
+    documentId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return await deleteDocumentHelper(ctx, components, 'tasks', {
+      id: args.documentId,
+    });
   },
 });
 
@@ -210,14 +261,17 @@ export const pullChanges = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    return await ctx.runQuery(components.replicate.public.pullChanges, args);
+    return await pullChangesHelper(ctx, components, 'tasks', {
+      checkpoint: args.checkpoint,
+      limit: args.limit,
+    });
   },
 });
 
 export const changeStream = query({
   args: { collectionName: v.string() },
-  handler: async (ctx, args) => {
-    return await ctx.runQuery(components.replicate.public.changeStream, args);
+  handler: async (ctx) => {
+    return await changeStreamHelper(ctx, components, 'tasks');
   },
 });
 ```
@@ -248,7 +302,7 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
       tasksCollection = createCollection(
         convexAutomergeCollectionOptions<Task>({
           convexClient,
-          api: api.replicate,  // Points to replicate.ts functions
+          api: api.tasks,  // Points to tasks.ts functions
           collectionName: 'tasks',
           getKey: (task) => task.id,
           initialData,
@@ -335,7 +389,7 @@ export const Route = createFileRoute('/tasks')({
     const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
 
     const tasks = await loadCollection<Task>(httpClient, {
-      api: api.replicate,
+      api: api.tasks,
       collection: 'tasks',
       limit: 100,
     });
@@ -375,17 +429,33 @@ interface Task {
 
 const tasksStorage = new ConvexReplicateStorage<Task>(components.replicate, 'tasks');
 
-export const submitTask = mutation({
+export const insertTask = mutation({
   args: {
     id: v.string(),
-    document: v.any(),
+    crdtBytes: v.bytes(),
     version: v.number(),
   },
   handler: async (ctx, args) => {
-    return await tasksStorage.submitDocument(
+    return await tasksStorage.insertDocument(
       ctx,
       args.id,
-      args.document,
+      args.crdtBytes,
+      args.version
+    );
+  },
+});
+
+export const updateTask = mutation({
+  args: {
+    id: v.string(),
+    crdtBytes: v.bytes(),
+    version: v.number(),
+  },
+  handler: async (ctx, args) => {
+    return await tasksStorage.updateDocument(
+      ctx,
+      args.id,
+      args.crdtBytes,
       args.version
     );
   },
@@ -453,7 +523,9 @@ Creates collection options for TanStack DB with Automerge integration.
 interface ConvexAutomergeCollectionOptions<T> {
   convexClient: ConvexClient;
   api: {
-    submitDocument: FunctionReference;
+    insertDocument: FunctionReference;
+    updateDocument: FunctionReference;
+    deleteDocument: FunctionReference;
     pullChanges: FunctionReference;
     changeStream: FunctionReference;
   };
@@ -470,7 +542,7 @@ interface ConvexAutomergeCollectionOptions<T> {
 const collection = createCollection(
   convexAutomergeCollectionOptions<Task>({
     convexClient,
-    api: api.replicate,
+    api: api.tasks,
     collectionName: 'tasks',
     getKey: (task) => task.id,
     initialData,
@@ -494,7 +566,7 @@ Loads collection data during SSR for instant page loads.
 **Example:**
 ```typescript
 const tasks = await loadCollection<Task>(httpClient, {
-  api: api.replicate,
+  api: api.tasks,
   collection: 'tasks',
   limit: 50,
 });
@@ -528,14 +600,34 @@ new ConvexReplicateStorage<TDocument>(component, collectionName)
 
 **Methods:**
 
-##### `submitDocument(ctx, documentId, document, version)`
-Submit a document to component storage.
+##### `insertDocument(ctx, documentId, crdtBytes, version)`
+Insert a new document with CRDT bytes.
 
 **Parameters:**
 - `ctx` - Convex mutation context
 - `documentId` - Unique document identifier
-- `document` - Document data
+- `crdtBytes` - ArrayBuffer containing Automerge CRDT bytes
 - `version` - CRDT version number
+
+**Returns:** `Promise<{ success: boolean }>`
+
+##### `updateDocument(ctx, documentId, crdtBytes, version)`
+Update an existing document with CRDT bytes.
+
+**Parameters:**
+- `ctx` - Convex mutation context
+- `documentId` - Unique document identifier
+- `crdtBytes` - ArrayBuffer containing Automerge CRDT bytes
+- `version` - CRDT version number
+
+**Returns:** `Promise<{ success: boolean }>`
+
+##### `deleteDocument(ctx, documentId)`
+Delete a document.
+
+**Parameters:**
+- `ctx` - Convex mutation context
+- `documentId` - Unique document identifier
 
 **Returns:** `Promise<{ success: boolean }>`
 
@@ -552,7 +644,7 @@ Pull document changes for incremental sync.
 Promise<{
   changes: Array<{
     documentId: string;
-    document: TDocument;
+    crdtBytes: ArrayBuffer;
     version: number;
     timestamp: number;
   }>;
@@ -568,24 +660,6 @@ Subscribe to collection changes.
 - `ctx` - Convex query context
 
 **Returns:** `Promise<{ timestamp: number; count: number }>`
-
-##### `getDocumentMetadata(ctx, documentId)`
-Get metadata for a specific document.
-
-**Returns:**
-```typescript
-Promise<{
-  documentId: string;
-  version: number;
-  timestamp: number;
-  document: TDocument;
-} | null>
-```
-
-##### `for(documentId)`
-Create a document-scoped API.
-
-**Returns:** Object with `submit()` and `getMetadata()` methods pre-bound to the document ID.
 
 ## Performance
 
@@ -632,7 +706,7 @@ Complete working example: `examples/tanstack-start/`
 - `src/useTasks.ts` - Hook with TanStack DB integration
 - `src/routes/index.tsx` - Component usage with SSR
 - `src/routes/__root.tsx` - Logging configuration
-- `convex/replicate.ts` - Replication function wrappers
+- `convex/tasks.ts` - Replication functions using dual-storage helpers
 - `convex/schema.ts` - Schema with required indexes
 
 ## Development
