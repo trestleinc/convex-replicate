@@ -1,4 +1,4 @@
-import { mutation, query } from './functions';
+import { mutation, query } from './_generated/server';
 import { components } from './_generated/api';
 import { v } from 'convex/values';
 import {

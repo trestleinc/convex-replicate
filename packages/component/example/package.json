@@ -8,7 +8,7 @@
     "dev:frontend": "vite",
     "dev": "npm-run-all --parallel dev:backend dev:frontend",
     "logs": "convex logs",
-    "lint": "tsc -p convex && eslint convex"
+    "typecheck": "tsc -p convex"
   },
   "dependencies": {
     "@automerge/automerge": "^3.2.0",
@@ -22,19 +22,13 @@
     "react-window": "^1.8.10"
   },
   "devDependencies": {
-    "@eslint/eslintrc": "^3.1.0",
-    "@eslint/js": "^9.9.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@types/react-window": "^1.8.8",
     "@vitejs/plugin-react": "^4.3.1",
-    "eslint": "^9.9.0",
-    "eslint-plugin-react-hooks": "^5.1.0-rc.0",
-    "eslint-plugin-react-refresh": "^0.4.9",
     "globals": "^15.9.0",
     "npm-run-all": "^4.1.5",
     "typescript": "^5.5.0",
-    "typescript-eslint": "^8.0.1",
     "vite": "^5.4.1",
     "vite-plugin-top-level-await": "1.6.0",
     "vite-plugin-wasm": "3.5.0"
