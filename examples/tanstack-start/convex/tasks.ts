@@ -7,7 +7,7 @@ import {
   deleteDocumentHelper,
   pullChangesHelper,
   changeStreamHelper,
-} from '@convex-replicate/core';
+} from '@convex-replicate/core/replication';
 
 /**
  * TanStack DB endpoints - called by convexAutomergeCollectionOptions
