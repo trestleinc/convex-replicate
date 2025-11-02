@@ -25,7 +25,8 @@
     "format": "biome format --write .",
     "format:check": "biome format .",
     "check": "biome check .",
-    "check:fix": "biome check --write ."
+    "check:fix": "biome check --write .",
+    "release": "./scripts/release.sh"
   },
   "dependencies": {
     "@automerge/automerge": "3.1.2",
