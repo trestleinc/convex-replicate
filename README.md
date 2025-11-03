@@ -129,14 +129,20 @@ graph LR
 ## Installation
 
 ```bash
-# For React applications with TanStack DB (includes required peer dependencies)
-bun add @trestleinc/convex-replicate-core @trestleinc/convex-replicate-component convex @tanstack/react-db @automerge/automerge @automerge/automerge-repo-storage-indexeddb
+# Using bun (automatically installs peer dependencies)
+bun add @trestleinc/convex-replicate-core @trestleinc/convex-replicate-component convex @tanstack/react-db
 
-# Or with npm
+# Using npm (peer dependencies must be installed explicitly)
 npm install @trestleinc/convex-replicate-core @trestleinc/convex-replicate-component convex @tanstack/react-db @automerge/automerge @automerge/automerge-repo-storage-indexeddb
+
+# Using yarn
+yarn add @trestleinc/convex-replicate-core @trestleinc/convex-replicate-component convex @tanstack/react-db @automerge/automerge @automerge/automerge-repo-storage-indexeddb
+
+# Using pnpm
+pnpm add @trestleinc/convex-replicate-core @trestleinc/convex-replicate-component convex @tanstack/react-db @automerge/automerge @automerge/automerge-repo-storage-indexeddb
 ```
 
-**Note:** Starting from v0.2.1, Automerge is a peer dependency. You must install `@automerge/automerge` and `@automerge/automerge-repo-storage-indexeddb` separately. This reduces package size by 57% and gives you control over Automerge versions. See [MIGRATION-0.2.1.md](./MIGRATION-0.2.1.md) for details.
+**Note:** Starting from v0.2.1, Automerge is a peer dependency. Bun automatically installs peer dependencies, but npm/yarn/pnpm require explicit installation. This reduces package size by 57% and gives you control over Automerge versions. See [MIGRATION-0.2.1.md](./MIGRATION-0.2.1.md) for details.
 
 ## Quick Start
 

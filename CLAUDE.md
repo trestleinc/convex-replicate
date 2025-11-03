@@ -491,9 +491,14 @@ export const Route = createFileRoute('/tasks')({
 
 ### Missing Peer Dependencies (v0.2.1+)
 - **Error**: `Cannot find module '@automerge/automerge'`
-- **Solution**: Install Automerge peer dependencies:
+- **Cause**: Only affects npm/yarn/pnpm users (Bun installs peer dependencies automatically)
+- **Solution**: Install Automerge peer dependencies manually:
   ```bash
-  bun add @automerge/automerge @automerge/automerge-repo-storage-indexeddb
+  # npm
+  npm install @automerge/automerge @automerge/automerge-repo-storage-indexeddb
+  
+  # yarn/pnpm
+  yarn/pnpm add @automerge/automerge @automerge/automerge-repo-storage-indexeddb
   ```
 - See [MIGRATION-0.2.1.md](./MIGRATION-0.2.1.md) for details
 

@@ -23,19 +23,25 @@ Version 0.2.1 moves Automerge from being bundled to a peer dependency, resulting
 
 ### Step 1: Install Automerge Dependencies
 
-You must now install Automerge packages yourself:
+**Using Bun (Automatic):**
+Bun automatically installs peer dependencies, so just upgrade the packages:
 
 \`\`\`bash
-# Using bun
-bun add @automerge/automerge @automerge/automerge-repo-storage-indexeddb
+bun add @trestleinc/convex-replicate-core@^0.2.1 @trestleinc/convex-replicate-component@^0.2.1
+# Automerge peer dependencies are installed automatically! ✨
+\`\`\`
 
-# Using npm
+**Using npm/yarn/pnpm (Manual):**
+You must explicitly install peer dependencies:
+
+\`\`\`bash
+# npm
 npm install @automerge/automerge @automerge/automerge-repo-storage-indexeddb
 
-# Using yarn
+# yarn
 yarn add @automerge/automerge @automerge/automerge-repo-storage-indexeddb
 
-# Using pnpm
+# pnpm
 pnpm add @automerge/automerge @automerge/automerge-repo-storage-indexeddb
 \`\`\`
 
