@@ -25,8 +25,8 @@ This is a monorepo providing:
 - Integration with TanStack DB for reactive state management
 
 **Monorepo Structure:**
-- `packages/component/` - Convex component for CRDT storage (@convex-replicate/component)
-- `packages/core/` - Framework-agnostic replication helpers and SSR utilities (@convex-replicate/core)
+- `packages/component/` - Convex component for CRDT storage (@trestleinc/convex-replicate-component)
+- `packages/core/` - Framework-agnostic replication helpers and SSR utilities (@trestleinc/convex-replicate-core)
 - `packages/sharded-counter/` - Sharded counter example/component (experimental)
 - `examples/tanstack-start/` - Example app using TanStack Start
 
@@ -34,14 +34,14 @@ This is a monorepo providing:
 
 ### Build Commands
 - `bun run build` - Build all packages (component → core in sequence)
-- `bun run build:component` - Build only @convex-replicate/component package
-- `bun run build:core` - Build only @convex-replicate/core package
+- `bun run build:component` - Build only @trestleinc/convex-replicate-component package
+- `bun run build:core` - Build only @trestleinc/convex-replicate-core package
 - `bun run clean` - Remove all dist/ directories from packages
 
 ### Type Checking
 - `bun run typecheck` - Type check all packages
-- `bun run typecheck:component` - Type check only @convex-replicate/component
-- `bun run typecheck:core` - Type check only @convex-replicate/core (uses tsc --noEmit)
+- `bun run typecheck:component` - Type check only @trestleinc/convex-replicate-component
+- `bun run typecheck:core` - Type check only @trestleinc/convex-replicate-core (uses tsc --noEmit)
 
 **Note:** Component package uses both ESM and CommonJS builds, while core uses TypeScript compilation.
 
@@ -112,7 +112,7 @@ ConvexReplicate implements a dual-storage architecture for offline-first applica
 
 ## Package Architecture
 
-### @convex-replicate/component (`packages/component/`)
+### @trestleinc/convex-replicate-component (`packages/component/`)
 
 Convex component providing CRDT storage layer.
 
@@ -144,7 +144,7 @@ Convex component providing CRDT storage layer.
 - `by_collection` - Query all documents in a collection
 - `by_timestamp` - Incremental sync support
 
-### @convex-replicate/core (`packages/core/`)
+### @trestleinc/convex-replicate-core (`packages/core/`)
 
 Framework-agnostic utilities for replication and SSR.
 
@@ -166,7 +166,7 @@ Framework-agnostic utilities for replication and SSR.
 - TypeScript compilation to `dist/` directory
 - Exports: `.` (main - all features), `./replication` (server-safe helpers only), `./ssr` (SSR utilities)
 
-**IMPORTANT**: Server-side Convex code must import from `@convex-replicate/core/replication` to avoid bundling Automerge WASM!
+**IMPORTANT**: Server-side Convex code must import from `@trestleinc/convex-replicate-core/replication` to avoid bundling Automerge WASM!
 
 **Dependencies:**
 - Requires `@tanstack/db` for collection options
@@ -191,7 +191,7 @@ Framework-agnostic utilities for replication and SSR.
 ```typescript
 // convex/convex.config.ts
 import { defineApp } from 'convex/server';
-import replicate from '@convex-replicate/component/convex.config';
+import replicate from '@trestleinc/convex-replicate-component/convex.config';
 
 const app = defineApp();
 app.use(replicate, { name: 'replicate' });
@@ -204,7 +204,7 @@ export default app;
 ```typescript
 // convex/tasks.ts
 import { components } from './_generated/api';
-import { ConvexReplicateStorage } from '@convex-replicate/component';
+import { ConvexReplicateStorage } from '@trestleinc/convex-replicate-component';
 
 const tasksStorage = new ConvexReplicateStorage(components.replicate, 'tasks');
 ```
@@ -219,7 +219,7 @@ import {
   deleteDocumentHelper,
   pullChangesHelper,
   changeStreamHelper,
-} from '@convex-replicate/core/replication';  // IMPORTANT: Use /replication to avoid Automerge on server!
+} from '@trestleinc/convex-replicate-core/replication';  // IMPORTANT: Use /replication to avoid Automerge on server!
 import { mutation, query } from './_generated/server';
 import { v } from 'convex/values';
 
@@ -299,9 +299,9 @@ export const changeStream = query({
 ### 4. Client-Side Integration (TanStack DB)
 
 ```typescript
-import { AutomergeDocumentStore } from '@convex-replicate/core';
-import { SyncAdapter } from '@convex-replicate/core';
-import { convexAutomergeCollectionOptions } from '@convex-replicate/core';
+import { AutomergeDocumentStore } from '@trestleinc/convex-replicate-core';
+import { SyncAdapter } from '@trestleinc/convex-replicate-core';
+import { convexAutomergeCollectionOptions } from '@trestleinc/convex-replicate-core';
 import { createDB } from '@tanstack/db';
 
 // Create Automerge store with IndexedDB persistence
@@ -337,7 +337,7 @@ await adapter.sync();
 
 ### Replication Helpers (Server-Side)
 
-**IMPORTANT**: Import from `@convex-replicate/core/replication` to avoid bundling Automerge on server!
+**IMPORTANT**: Import from `@trestleinc/convex-replicate-core/replication` to avoid bundling Automerge on server!
 
 - **`insertDocumentHelper(ctx, components, tableName, args)`** - Insert to both component (CRDT bytes) + main table (materialized doc)
 - **`updateDocumentHelper(ctx, components, tableName, args)`** - Update both component + main table
@@ -378,7 +378,7 @@ export default defineSchema({
 ConvexReplicate uses LogTape for structured logging.
 
 ```typescript
-import { configureLogger, getConvexReplicateLogger } from '@convex-replicate/core';
+import { configureLogger, getConvexReplicateLogger } from '@trestleinc/convex-replicate-core';
 
 // Configure logging
 configureLogger({
@@ -454,7 +454,7 @@ Load initial data on server for instant rendering:
 
 ```typescript
 // TanStack Start loader
-import { loadCollection } from '@convex-replicate/core/ssr';
+import { loadCollection } from '@trestleinc/convex-replicate-core/ssr';
 import { ConvexHttpClient } from 'convex/browser';
 import { api } from '../convex/_generated/api';
 

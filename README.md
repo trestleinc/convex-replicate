@@ -28,7 +28,7 @@ graph TB
     TanStack[TanStack DB<br/>Reactive Collections]
     Store[AutomergeDocumentStore<br/>CRDT Storage]
     Adapter[SyncAdapter<br/>Push/Pull Sync]
-    Component[Convex Component<br/>@convex-replicate/component]
+    Component[Convex Component<br/>@trestleinc/convex-replicate-component]
     MainTable[Main App Tables<br/>tasks, etc.]
 
     App --> Hook
@@ -92,7 +92,7 @@ graph LR
 
 ## Packages
 
-### `@convex-replicate/core`
+### `@trestleinc/convex-replicate-core`
 
 **Framework-agnostic utilities** - Replication helpers and SSR utilities for Convex Replicate.
 
@@ -108,7 +108,7 @@ graph LR
 - Need SSR/SSG support (Next.js, Remix, TanStack Start)
 - Building custom framework integrations
 
-### `@convex-replicate/component`
+### `@trestleinc/convex-replicate-component`
 
 **Convex component for CRDT storage** - Plug-and-play Convex component providing the backend storage layer.
 
@@ -130,10 +130,10 @@ graph LR
 
 ```bash
 # For React applications with TanStack DB
-bun add @convex-replicate/core @convex-replicate/component convex @tanstack/react-db
+bun add @trestleinc/convex-replicate-core @trestleinc/convex-replicate-component convex @tanstack/react-db
 
 # Or with npm
-npm install @convex-replicate/core @convex-replicate/component convex @tanstack/react-db
+npm install @trestleinc/convex-replicate-core @trestleinc/convex-replicate-component convex @tanstack/react-db
 ```
 
 ## Quick Start
@@ -145,7 +145,7 @@ Add the replicate component to your Convex app configuration:
 ```typescript
 // convex/convex.config.ts
 import { defineApp } from 'convex/server';
-import replicate from '@convex-replicate/component/convex.config';
+import replicate from '@trestleinc/convex-replicate-component/convex.config';
 
 const app = defineApp();
 app.use(replicate);
@@ -197,7 +197,7 @@ import {
   deleteDocumentHelper,
   pullChangesHelper,
   changeStreamHelper,
-} from '@convex-replicate/core';
+} from '@trestleinc/convex-replicate-core';
 
 /**
  * TanStack DB endpoints - called by convexAutomergeCollectionOptions
@@ -283,7 +283,7 @@ Create a hook that wraps TanStack DB with Automerge collection options:
 ```typescript
 // src/useTasks.ts
 import { createCollection } from '@tanstack/react-db';
-import { convexAutomergeCollectionOptions } from '@convex-replicate/core';
+import { convexAutomergeCollectionOptions } from '@trestleinc/convex-replicate-core';
 import { api } from '../convex/_generated/api';
 import { convexClient } from './router';
 import { useMemo } from 'react';
@@ -380,7 +380,7 @@ Preload data on the server for instant page loads:
 ```typescript
 // TanStack Start loader
 import { createFileRoute } from '@tanstack/react-router';
-import { loadCollection } from '@convex-replicate/core/ssr';
+import { loadCollection } from '@trestleinc/convex-replicate-core/ssr';
 import { ConvexHttpClient } from 'convex/browser';
 import { api } from '../convex/_generated/api';
 
@@ -416,7 +416,7 @@ For direct backend integration, you can use `ConvexReplicateStorage`:
 
 ```typescript
 // convex/tasks.ts
-import { ConvexReplicateStorage } from '@convex-replicate/component';
+import { ConvexReplicateStorage } from '@trestleinc/convex-replicate-component';
 import { mutation, query } from './_generated/server';
 import { components } from './_generated/api';
 import { v } from 'convex/values';
@@ -501,7 +501,7 @@ await configure({
 Get a logger instance for custom logging:
 
 ```typescript
-import { getConvexReplicateLogger } from '@convex-replicate/core';
+import { getConvexReplicateLogger } from '@trestleinc/convex-replicate-core';
 
 const logger = getConvexReplicateLogger(['my-module']);
 
@@ -512,7 +512,7 @@ logger.error('Operation failed', { error });
 
 ## API Reference
 
-### `@convex-replicate/core`
+### `@trestleinc/convex-replicate-core`
 
 #### `convexAutomergeCollectionOptions<T>(config)`
 
@@ -587,7 +587,7 @@ const logger = getConvexReplicateLogger(['hooks', 'useTasks']);
 logger.debug('Task created', { id: taskId });
 ```
 
-### `@convex-replicate/component`
+### `@trestleinc/convex-replicate-component`
 
 #### `ConvexReplicateStorage<TDocument>`
 

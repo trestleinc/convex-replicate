@@ -1,5 +1,5 @@
 {
-  "name": "@convex-replicate/core",
+  "name": "@trestleinc/convex-replicate-core",
   "description": "Framework-agnostic replication utilities for ConvexReplicate.",
   "version": "0.1.0",
   "license": "Apache-2.0",

@@ -1,5 +1,8 @@
 import { createCollection } from '@tanstack/react-db';
-import { convexAutomergeCollectionOptions, getConvexReplicateLogger } from '@convex-replicate/core';
+import {
+  convexAutomergeCollectionOptions,
+  getConvexReplicateLogger,
+} from '@trestleinc/convex-replicate-core';
 import { api } from '../convex/_generated/api';
 import { convexClient } from './router';
 import { useMemo } from 'react';

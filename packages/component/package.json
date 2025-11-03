@@ -1,5 +1,5 @@
 {
-  "name": "@convex-replicate/component",
+  "name": "@trestleinc/convex-replicate-component",
   "description": "CRDT replication component for Convex Replicate.",
   "repository": "github:trestleinc/convex-replicate",
   "homepage": "https://github.com/trestleinc/convex-replicate#readme",

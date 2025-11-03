@@ -1,5 +1,5 @@
 import { defineApp } from 'convex/server';
-import replicate from '@convex-replicate/component/convex.config';
+import replicate from '@trestleinc/convex-replicate-component/convex.config';
 
 const app = defineApp();
 app.use(replicate);
