@@ -10,7 +10,7 @@ import {
 } from '@trestleinc/convex-replicate-core/replication';
 
 /**
- * TanStack DB endpoints - called by convexAutomergeCollectionOptions
+ * TanStack DB endpoints - called by convexCollectionOptions
  *
  * These receive CRDT bytes from the client and use replication helpers
  * to write to both the component (CRDT bytes) and main table (materialized docs).

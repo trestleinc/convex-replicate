@@ -1,7 +1,7 @@
 import type { ConvexClient } from 'convex/browser';
 import type { FunctionReference } from 'convex/server';
 import type { AutomergeDocumentStore } from './store';
-import { getConvexReplicateLogger } from './logger';
+import { getLogger } from './logger';
 
 export interface StorageAPI {
   insertDocument: FunctionReference<
@@ -68,7 +68,7 @@ export class SyncAdapter<T extends { id: string }> {
   private pushInterval?: ReturnType<typeof setInterval>;
   private unsubscribe?: () => void;
   private checkpoint = { lastModified: 0 };
-  private logger = getConvexReplicateLogger(['adapter']);
+  private logger = getLogger(['adapter']);
 
   constructor(
     private store: AutomergeDocumentStore<T>,

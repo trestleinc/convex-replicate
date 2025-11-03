@@ -97,7 +97,7 @@ graph LR
 **Framework-agnostic utilities** - Replication helpers and SSR utilities for Convex Replicate.
 
 **What it provides:**
-- `convexAutomergeCollectionOptions` - TanStack DB collection options for Automerge integration
+- `convexCollectionOptions` - TanStack DB collection options for Automerge integration
 - `loadCollection()` - SSR data preloading for instant page loads
 - `AutomergeDocumentStore` - Local CRDT document storage
 - `SyncAdapter` - Push/pull synchronization adapter
@@ -113,7 +113,7 @@ graph LR
 **Convex component for CRDT storage** - Plug-and-play Convex component providing the backend storage layer.
 
 **What it provides:**
-- `ConvexReplicateStorage` - Type-safe API for interacting with the component
+- `ConvexStorage` - Type-safe API for interacting with the component
 - Internal CRDT storage table with indexes
 - `insertDocument()` - Insert new documents with CRDT bytes
 - `updateDocument()` - Update existing documents with CRDT bytes
@@ -200,7 +200,7 @@ import {
 } from '@trestleinc/convex-replicate-core';
 
 /**
- * TanStack DB endpoints - called by convexAutomergeCollectionOptions
+ * TanStack DB endpoints - called by convexCollectionOptions
  * These receive CRDT bytes from client and write to both:
  * 1. Component storage (CRDT bytes for conflict resolution)
  * 2. Main table (materialized docs for efficient queries)
@@ -283,7 +283,7 @@ Create a hook that wraps TanStack DB with Automerge collection options:
 ```typescript
 // src/useTasks.ts
 import { createCollection } from '@tanstack/react-db';
-import { convexAutomergeCollectionOptions } from '@trestleinc/convex-replicate-core';
+import { convexCollectionOptions } from '@trestleinc/convex-replicate-core';
 import { api } from '../convex/_generated/api';
 import { convexClient } from './router';
 import { useMemo } from 'react';
@@ -300,7 +300,7 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
   return useMemo(() => {
     if (!tasksCollection) {
       tasksCollection = createCollection(
-        convexAutomergeCollectionOptions<Task>({
+        convexCollectionOptions<Task>({
           convexClient,
           api: api.tasks,  // Points to tasks.ts functions
           collectionName: 'tasks',
@@ -412,11 +412,11 @@ function TasksPage() {
 
 ### Direct Component Usage (Advanced)
 
-For direct backend integration, you can use `ConvexReplicateStorage`:
+For direct backend integration, you can use `ConvexStorage`:
 
 ```typescript
 // convex/tasks.ts
-import { ConvexReplicateStorage } from '@trestleinc/convex-replicate-component';
+import { ConvexStorage } from '@trestleinc/convex-replicate-component';
 import { mutation, query } from './_generated/server';
 import { components } from './_generated/api';
 import { v } from 'convex/values';
@@ -427,7 +427,7 @@ interface Task {
   isCompleted: boolean;
 }
 
-const tasksStorage = new ConvexReplicateStorage<Task>(components.replicate, 'tasks');
+const tasksStorage = new ConvexStorage<Task>(components.replicate, 'tasks');
 
 export const insertTask = mutation({
   args: {
@@ -501,9 +501,9 @@ await configure({
 Get a logger instance for custom logging:
 
 ```typescript
-import { getConvexReplicateLogger } from '@trestleinc/convex-replicate-core';
+import { getLogger } from '@trestleinc/convex-replicate-core';
 
-const logger = getConvexReplicateLogger(['my-module']);
+const logger = getLogger(['my-module']);
 
 logger.info('Operation started', { userId: '123' });
 logger.warn('Something unexpected', { reason: 'timeout' });
@@ -514,7 +514,7 @@ logger.error('Operation failed', { error });
 
 ### `@trestleinc/convex-replicate-core`
 
-#### `convexAutomergeCollectionOptions<T>(config)`
+#### `convexCollectionOptions<T>(config)`
 
 Creates collection options for TanStack DB with Automerge integration.
 
@@ -540,7 +540,7 @@ interface ConvexAutomergeCollectionOptions<T> {
 **Example:**
 ```typescript
 const collection = createCollection(
-  convexAutomergeCollectionOptions<Task>({
+  convexCollectionOptions<Task>({
     convexClient,
     api: api.tasks,
     collectionName: 'tasks',
@@ -572,7 +572,7 @@ const tasks = await loadCollection<Task>(httpClient, {
 });
 ```
 
-#### `getConvexReplicateLogger(category)`
+#### `getLogger(category)`
 
 Get a logger instance for custom logging.
 
@@ -583,19 +583,19 @@ Get a logger instance for custom logging.
 
 **Example:**
 ```typescript
-const logger = getConvexReplicateLogger(['hooks', 'useTasks']);
+const logger = getLogger(['hooks', 'useTasks']);
 logger.debug('Task created', { id: taskId });
 ```
 
 ### `@trestleinc/convex-replicate-component`
 
-#### `ConvexReplicateStorage<TDocument>`
+#### `ConvexStorage<TDocument>`
 
 Type-safe API for interacting with the replicate component.
 
 **Constructor:**
 ```typescript
-new ConvexReplicateStorage<TDocument>(component, collectionName)
+new ConvexStorage<TDocument>(component, collectionName)
 ```
 
 **Methods:**

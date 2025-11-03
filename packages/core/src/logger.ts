@@ -1,4 +1,9 @@
-import { type Logger, configure, getConsoleSink, getLogger } from '@logtape/logtape';
+import {
+  type Logger,
+  configure,
+  getConsoleSink,
+  getLogger as getLogTapeLogger,
+} from '@logtape/logtape';
 
 let isConfigured = false;
 
@@ -21,6 +26,6 @@ export async function configureLogger(enableLogging = false): Promise<void> {
   isConfigured = true;
 }
 
-export function getConvexReplicateLogger(category: string[]): Logger {
-  return getLogger(['convex-replicate', ...category]);
+export function getLogger(category: string[]): Logger {
+  return getLogTapeLogger(['convex-replicate', ...category]);
 }

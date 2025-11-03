@@ -1,10 +1,44 @@
 import type { ConvexClient } from 'convex/browser';
-import type { CollectionConfig, SyncConfig } from '@tanstack/db';
+import type {
+  CollectionConfig,
+  SyncConfig,
+  UtilsRecord,
+  NonSingleResult,
+  Collection,
+} from '@tanstack/db';
 import { AutomergeDocumentStore } from './store';
 import type { StorageAPI } from './adapter';
-import { getConvexReplicateLogger } from './logger';
+import { getLogger } from './logger';
 
-interface ConvexAutomergeCollectionConfig<TItem extends { id: string }> {
+/**
+ * Type helper for Convex collections without schema validation.
+ * Use this to type your collection variables.
+ *
+ * @template TItem - The item type with at minimum an id field
+ *
+ * @example
+ * ```typescript
+ * import { ConvexCollection } from '@trestleinc/convex-replicate-core';
+ *
+ * interface Task {
+ *   id: string;
+ *   text: string;
+ *   isCompleted: boolean;
+ * }
+ *
+ * let tasksCollection: ConvexCollection<Task> | undefined;
+ * ```
+ */
+export type ConvexCollection<TItem extends { id: string }> = Collection<
+  TItem,
+  string | number,
+  UtilsRecord,
+  never,
+  TItem
+> &
+  NonSingleResult;
+
+interface ConvexCollectionConfig<TItem extends { id: string }> {
   convexClient: ConvexClient;
   api: StorageAPI;
   collectionName: string;
@@ -15,12 +49,12 @@ interface ConvexAutomergeCollectionConfig<TItem extends { id: string }> {
   enableReplicate?: boolean;
 }
 
-export function convexAutomergeCollectionOptions<TItem extends { id: string }>(
-  config: ConvexAutomergeCollectionConfig<TItem>
-): CollectionConfig<TItem> {
+export function convexCollectionOptions<TItem extends { id: string }>(
+  config: ConvexCollectionConfig<TItem>
+): CollectionConfig<TItem, string | number, never, UtilsRecord> & NonSingleResult {
   const store = new AutomergeDocumentStore<TItem>(config.collectionName);
   let checkpoint = { lastModified: 0 };
-  const logger = getConvexReplicateLogger(['collection', config.collectionName]);
+  const logger = getLogger(['collection', config.collectionName]);
 
   const sync: SyncConfig<TItem, string | number>['sync'] = (params) => {
     logger.info('Sync function invoked', {

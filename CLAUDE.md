@@ -97,7 +97,7 @@ ConvexReplicate implements a dual-storage architecture for offline-first applica
 - Stores Automerge CRDT documents for conflict-free replication
 - Handles automatic merging of concurrent offline changes
 - Source of truth for conflict resolution
-- Accessed via `ConvexReplicateStorage` client API
+- Accessed via `ConvexStorage` client API
 
 ### Main Application Tables
 - Stores materialized/denormalized documents
@@ -122,7 +122,7 @@ Convex component providing CRDT storage layer.
   - `public.ts` - Public API functions (insertDocument, updateDocument, deleteDocument, pullChanges, changeStream)
   - `convex.config.ts` - Component configuration
 - `src/client/` - Type-safe client API
-  - `index.ts` - `ConvexReplicateStorage` class for interacting with component
+  - `index.ts` - `ConvexStorage` class for interacting with component
 
 **Build Output:**
 - Dual package (ESM + CommonJS) in `dist/esm/` and `dist/commonjs/`
@@ -159,7 +159,7 @@ Framework-agnostic utilities for replication and SSR.
 - `src/ssr.ts` - `loadCollection()` for server-side data loading
 - `src/store.ts` - `AutomergeDocumentStore` for managing Automerge documents (client-side only)
 - `src/adapter.ts` - `SyncAdapter` for abstracting storage backends (client-side only)
-- `src/convexAutomergeCollectionOptions.ts` - TanStack DB collection options (client-side only)
+- `src/convexCollectionOptions.ts` - TanStack DB collection options (client-side only)
 - `src/logger.ts` - LogTape logger configuration
 
 **Build Output:**
@@ -204,9 +204,9 @@ export default app;
 ```typescript
 // convex/tasks.ts
 import { components } from './_generated/api';
-import { ConvexReplicateStorage } from '@trestleinc/convex-replicate-component';
+import { ConvexStorage } from '@trestleinc/convex-replicate-component';
 
-const tasksStorage = new ConvexReplicateStorage(components.replicate, 'tasks');
+const tasksStorage = new ConvexStorage(components.replicate, 'tasks');
 ```
 
 ### 3. Use Replication Helpers
@@ -301,7 +301,7 @@ export const changeStream = query({
 ```typescript
 import { AutomergeDocumentStore } from '@trestleinc/convex-replicate-core';
 import { SyncAdapter } from '@trestleinc/convex-replicate-core';
-import { convexAutomergeCollectionOptions } from '@trestleinc/convex-replicate-core';
+import { convexCollectionOptions } from '@trestleinc/convex-replicate-core';
 import { createDB } from '@tanstack/db';
 
 // Create Automerge store with IndexedDB persistence
@@ -317,7 +317,7 @@ const adapter = new SyncAdapter({
 // Create reactive database
 const db = createDB({
   collections: {
-    tasks: convexAutomergeCollectionOptions,
+    tasks: convexCollectionOptions,
   },
 });
 
@@ -327,7 +327,7 @@ await adapter.sync();
 
 ## Key API Concepts
 
-### ConvexReplicateStorage Methods
+### ConvexStorage Methods
 
 - **`insertDocument(ctx, documentId, crdtBytes, version)`** - Insert new document with CRDT bytes
 - **`updateDocument(ctx, documentId, crdtBytes, version)`** - Update existing document with CRDT bytes
@@ -378,7 +378,7 @@ export default defineSchema({
 ConvexReplicate uses LogTape for structured logging.
 
 ```typescript
-import { configureLogger, getConvexReplicateLogger } from '@trestleinc/convex-replicate-core';
+import { configureLogger, getLogger } from '@trestleinc/convex-replicate-core';
 
 // Configure logging
 configureLogger({
@@ -387,7 +387,7 @@ configureLogger({
 });
 
 // Get logger instance
-const logger = getConvexReplicateLogger('my-module');
+const logger = getLogger('my-module');
 
 logger.info('Operation started', { userId: '123' });
 logger.warn('Something unexpected', { reason: 'timeout' });

@@ -1,6 +1,6 @@
 import { mutation, query } from './_generated/server';
 import { components } from './_generated/api';
-import { ConvexReplicateStorage } from '../../src/client';
+import { ConvexStorage } from '../../src/client';
 import { v } from 'convex/values';
 
 interface TestDocument {
@@ -8,10 +8,7 @@ interface TestDocument {
   message: string;
 }
 
-const testStorage = new ConvexReplicateStorage<TestDocument>(
-  components.replicate,
-  'test-collection'
-);
+const testStorage = new ConvexStorage<TestDocument>(components.replicate, 'test-collection');
 
 /**
  * Insert a new test document with CRDT bytes

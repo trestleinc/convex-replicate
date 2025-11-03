@@ -5,12 +5,12 @@ import type { Task } from '../useTasks';
 import { useTasks } from '../useTasks';
 import { ConvexHttpClient } from 'convex/browser';
 import { loadCollection } from '@trestleinc/convex-replicate-core/ssr';
-import { getConvexReplicateLogger } from '@trestleinc/convex-replicate-core';
+import { getLogger } from '@trestleinc/convex-replicate-core';
 import { useLiveQuery } from '@tanstack/react-db';
 import { api } from '../../convex/_generated/api';
 
 const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
-const logger = getConvexReplicateLogger(['loader']);
+const logger = getLogger(['loader']);
 
 export const Route = createFileRoute('/')({
   loader: async () => {
@@ -107,7 +107,7 @@ function LiveTasksView({ initialTasks }: { initialTasks: ReadonlyArray<Task> }) 
   };
 
   const handleToggleComplete = (id: string, isCompleted: boolean) => {
-    collection.update(id, (draft) => {
+    collection.update(id, (draft: Task) => {
       draft.isCompleted = !isCompleted;
     });
   };
@@ -119,7 +119,7 @@ function LiveTasksView({ initialTasks }: { initialTasks: ReadonlyArray<Task> }) 
 
   const handleEditSave = (id: string) => {
     if (editText.trim()) {
-      collection.update(id, (draft) => {
+      collection.update(id, (draft: Task) => {
         draft.text = editText.trim();
       });
       setEditingId(null);

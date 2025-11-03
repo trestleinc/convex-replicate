@@ -1,6 +1,6 @@
 import * as Automerge from '@automerge/automerge';
 import { IndexedDBStorageAdapter } from '@automerge/automerge-repo-storage-indexeddb';
-import { getConvexReplicateLogger } from './logger';
+import { getLogger } from './logger';
 
 type DeletableDocument = { deleted?: boolean };
 
@@ -20,7 +20,7 @@ export class AutomergeDocumentStore<T extends { id: string }> {
   private listeners = new Set<(docs: T[]) => void>();
   private isInitialized = false;
   private storage: IndexedDBStorageAdapter | null = null;
-  private logger = getConvexReplicateLogger(['store']);
+  private logger = getLogger(['store']);
 
   constructor(private readonly collectionName: string) {
     if (typeof indexedDB !== 'undefined') {
