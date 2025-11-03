@@ -26,7 +26,11 @@
     "format:check": "biome format .",
     "check": "biome check .",
     "check:fix": "biome check --write .",
-    "version-packages": "node scripts/version-packages.js"
+    "version-packages": "node scripts/version-packages.js",
+    "publish:component": "cd packages/component && bun publish",
+    "publish:core": "cd packages/core && bun publish",
+    "publish:all": "bun run build && bun run check:fix && bun run publish:component && bun run publish:core",
+    "prepublish": "bun run build && bun run check:fix"
   },
   "dependencies": {
     "@automerge/automerge": "3.1.2",
