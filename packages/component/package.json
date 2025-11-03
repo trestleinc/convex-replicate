@@ -6,7 +6,7 @@
   "bugs": {
     "url": "https://github.com/trestleinc/convex-replicate/issues"
   },
-  "version": "0.2.0",
+  "version": "0.2.1",
   "license": "Apache-2.0",
   "keywords": [
     "convex",
@@ -23,7 +23,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
-    "test:coverage": "vitest run --coverage --coverage.reporter=text"
+    "test:coverage": "vitest run --coverage --coverage.reporter=text",
+    "clean": "rm -rf dist"
   },
   "files": [
     "dist",

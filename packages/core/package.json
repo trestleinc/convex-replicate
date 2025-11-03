@@ -1,7 +1,7 @@
 {
   "name": "@trestleinc/convex-replicate-core",
   "description": "Framework-agnostic replication utilities for ConvexReplicate.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "license": "Apache-2.0",
   "private": false,
   "repository": "github:trestleinc/convex-replicate",
@@ -40,17 +40,22 @@
     }
   },
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
+    "build": "rslib build",
+    "dev": "rslib build --watch",
     "clean": "rm -rf dist"
   },
   "dependencies": {
     "@tanstack/db": "0.4.13"
   },
   "peerDependencies": {
+    "@automerge/automerge": "^3.1.2",
+    "@automerge/automerge-repo-storage-indexeddb": "^2.4.0",
     "convex": "^1.28.0"
   },
   "publishConfig": {
     "access": "public"
+  },
+  "devDependencies": {
+    "@rslib/core": "0.17.0"
   }
 }

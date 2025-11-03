@@ -43,7 +43,7 @@ This is a monorepo providing:
 - `bun run typecheck:component` - Type check only @trestleinc/convex-replicate-component
 - `bun run typecheck:core` - Type check only @trestleinc/convex-replicate-core (uses tsc --noEmit)
 
-**Note:** Component package uses both ESM and CommonJS builds, while core uses TypeScript compilation.
+**Note:** Component package uses TypeScript compiler (tsc) with dual ESM and CommonJS builds. Core package uses Rslib (Rspack-based) for faster builds with module externalization.
 
 ### Example App Development
 - `bun run dev:example` - Start TanStack Start dev server + Convex dev environment (runs both concurrently)
@@ -163,22 +163,30 @@ Framework-agnostic utilities for replication and SSR.
 - `src/logger.ts` - LogTape logger configuration
 
 **Build Output:**
-- TypeScript compilation to `dist/` directory
+- Built with **Rslib** (Rspack-based bundler) to `dist/` directory
+- Configured with ESM shims for `__dirname` and `__filename` support
+- Externals: `@automerge/automerge`, `@automerge/automerge-repo-storage-indexeddb` (not bundled)
 - Exports: `.` (main - all features), `./replication` (server-safe helpers only), `./ssr` (SSR utilities)
+
+**Build Configuration:**
+- `packages/core/rslib.config.ts` - Rslib configuration with 3 entry points
+- Package size: ~65KB (reduced 57% from 150KB in v0.2.0 by externalizing Automerge)
 
 **IMPORTANT**: Server-side Convex code must import from `@trestleinc/convex-replicate-core/replication` to avoid bundling Automerge WASM!
 
 **Dependencies:**
 - Requires `@tanstack/db` for collection options
-- Peer dependency on `convex ^1.28.0`
+- **Peer dependencies** (v0.2.1+): `@automerge/automerge ^3.1.2`, `@automerge/automerge-repo-storage-indexeddb ^2.4.0`, `convex ^1.28.0`
 
 ## Technology Stack
 
 - **Language:** TypeScript (strict mode)
 - **Runtime:** Bun
-- **Build:** TypeScript compiler (both packages)
+- **Build Tools:**
+  - **Component package**: TypeScript compiler (tsc) with dual ESM + CommonJS builds
+  - **Core package**: Rslib (Rspack-based, fast builds with externalization support)
 - **Linting:** Biome v2
-- **CRDTs:** Automerge 3.x with IndexedDB storage
+- **CRDTs:** Automerge 3.x with IndexedDB storage (peer dependency)
 - **Backend:** Convex (cloud database and functions)
 - **State Management:** TanStack DB for reactive collections
 - **Logging:** LogTape
@@ -479,10 +487,19 @@ export const Route = createFileRoute('/tasks')({
 - Ensure component builds before core: `bun run build:component && bun run build:core`
 - Clear dist folders if stale: `bun run clean`
 - Component requires both ESM and CommonJS builds
+- Core package uses Rslib - if build fails, check `packages/core/rslib.config.ts`
+
+### Missing Peer Dependencies (v0.2.1+)
+- **Error**: `Cannot find module '@automerge/automerge'`
+- **Solution**: Install Automerge peer dependencies:
+  ```bash
+  bun add @automerge/automerge @automerge/automerge-repo-storage-indexeddb
+  ```
+- See [MIGRATION-0.2.1.md](./MIGRATION-0.2.1.md) for details
 
 ### Type Errors
 - Run `bun run typecheck` to check all packages
-- Ensure `convex` peer dependency version matches (^1.28.0)
+- Ensure peer dependencies are installed (Automerge, Convex ^1.28.0)
 - Check that Convex codegen is up to date: `convex dev` in example
 
 ### Linting/Formatting
@@ -495,6 +512,9 @@ export const Route = createFileRoute('/tasks')({
 - **Don't run dev servers** - They're managed by another process
 - **Build order matters** - Component before Core
 - **Dual-storage is required** - Both component and main tables needed
+- **Automerge is peer dependency** - Must be installed by users (v0.2.1+)
 - **Automerge is the CRDT engine** - Not RxDB (common confusion)
+- **Core uses Rslib** - Fast Rspack-based bundler with externalization (v0.2.1+)
+- **Component uses tsc** - TypeScript compiler (Convex needs source files)
 - **LogTape for logging** - Not console.* (Biome warns on console usage)
 - **Context7 for docs** - Always use for library documentation lookups

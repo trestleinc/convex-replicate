@@ -129,12 +129,14 @@ graph LR
 ## Installation
 
 ```bash
-# For React applications with TanStack DB
-bun add @trestleinc/convex-replicate-core @trestleinc/convex-replicate-component convex @tanstack/react-db
+# For React applications with TanStack DB (includes required peer dependencies)
+bun add @trestleinc/convex-replicate-core @trestleinc/convex-replicate-component convex @tanstack/react-db @automerge/automerge @automerge/automerge-repo-storage-indexeddb
 
 # Or with npm
-npm install @trestleinc/convex-replicate-core @trestleinc/convex-replicate-component convex @tanstack/react-db
+npm install @trestleinc/convex-replicate-core @trestleinc/convex-replicate-component convex @tanstack/react-db @automerge/automerge @automerge/automerge-repo-storage-indexeddb
 ```
+
+**Note:** Starting from v0.2.1, Automerge is a peer dependency. You must install `@automerge/automerge` and `@automerge/automerge-repo-storage-indexeddb` separately. This reduces package size by 57% and gives you control over Automerge versions. See [MIGRATION-0.2.1.md](./MIGRATION-0.2.1.md) for details.
 
 ## Quick Start
 
