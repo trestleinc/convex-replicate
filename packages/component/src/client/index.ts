@@ -44,7 +44,7 @@ import { api } from '../component/_generated/api';
  *
  * @template TDocument - The document type being stored (must have an id field)
  */
-export class ConvexReplicateStorage<TDocument extends { id: string } = { id: string }> {
+export class ConvexReplicateStorage<_TDocument extends { id: string } = { id: string }> {
   /**
    * Create a new ConvexReplicateStorage instance scoped to a specific collection.
    *
