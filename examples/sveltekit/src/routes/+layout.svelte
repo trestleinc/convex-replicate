@@ -4,7 +4,7 @@ import favicon from '$lib/assets/favicon.svg';
 import { configure, getConsoleSink } from '@logtape/logtape';
 import { onMount } from 'svelte';
 
-let { children } = $props();
+const { children } = $props();
 
 // Configure LogTape for logging
 onMount(async () => {

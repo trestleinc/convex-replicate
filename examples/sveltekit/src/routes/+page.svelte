@@ -5,7 +5,7 @@ import { getTasksCollection, type Task } from '$lib/stores/tasks.svelte';
 import { browser } from '$app/environment';
 import type { PageData } from './$types';
 
-let { data }: { data: PageData } = $props();
+const { data }: { data: PageData } = $props();
 
 let newTaskText = $state('');
 let editingId = $state<string | null>(null);
@@ -19,9 +19,9 @@ const collection = getTasksCollection(data.tasks);
 const query = useLiveQuery(collection as any);
 
 // Reactive data from the query
-let tasks = $derived((query.data || []) as Task[]);
-let isLoading = $derived(query.isLoading ?? false);
-let isError = $derived(query.isError ?? false);
+const tasks = $derived((query.data || []) as Task[]);
+const isLoading = $derived(query.isLoading ?? false);
+const isError = $derived(query.isError ?? false);
 
 function handleCreateTask(e: Event) {
   e.preventDefault();
