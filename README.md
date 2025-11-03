@@ -113,7 +113,7 @@ graph LR
 **Convex component for CRDT storage** - Plug-and-play Convex component providing the backend storage layer.
 
 **What it provides:**
-- `ConvexStorage` - Type-safe API for interacting with the component
+- `ReplicateStorage` - Type-safe API for interacting with the component
 - Internal CRDT storage table with indexes
 - `insertDocument()` - Insert new documents with CRDT bytes
 - `updateDocument()` - Update existing documents with CRDT bytes
@@ -412,11 +412,11 @@ function TasksPage() {
 
 ### Direct Component Usage (Advanced)
 
-For direct backend integration, you can use `ConvexStorage`:
+For direct backend integration, you can use `ReplicateStorage`:
 
 ```typescript
 // convex/tasks.ts
-import { ConvexStorage } from '@trestleinc/convex-replicate-component';
+import { ReplicateStorage } from '@trestleinc/convex-replicate-component';
 import { mutation, query } from './_generated/server';
 import { components } from './_generated/api';
 import { v } from 'convex/values';
@@ -427,7 +427,7 @@ interface Task {
   isCompleted: boolean;
 }
 
-const tasksStorage = new ConvexStorage<Task>(components.replicate, 'tasks');
+const tasksStorage = new ReplicateStorage<Task>(components.replicate, 'tasks');
 
 export const insertTask = mutation({
   args: {
@@ -589,13 +589,13 @@ logger.debug('Task created', { id: taskId });
 
 ### `@trestleinc/convex-replicate-component`
 
-#### `ConvexStorage<TDocument>`
+#### `ReplicateStorage<TDocument>`
 
 Type-safe API for interacting with the replicate component.
 
 **Constructor:**
 ```typescript
-new ConvexStorage<TDocument>(component, collectionName)
+new ReplicateStorage<TDocument>(component, collectionName)
 ```
 
 **Methods:**

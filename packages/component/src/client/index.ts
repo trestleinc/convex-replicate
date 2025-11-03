@@ -19,10 +19,10 @@ import { api } from '../component/_generated/api';
  * @example
  * ```typescript
  * import { components } from "./_generated/api";
- * import { ConvexStorage } from "@trestleinc/convex-replicate-component";
+ * import { ReplicateStorage } from "@trestleinc/convex-replicate-component";
  *
  * // Create a storage instance for the "tasks" collection
- * const tasksStorage = new ConvexStorage(components.replicate, "tasks");
+ * const tasksStorage = new ReplicateStorage(components.replicate, "tasks");
  *
  * export const submitTask = mutation({
  *   handler: async (ctx, args) => {
@@ -44,16 +44,16 @@ import { api } from '../component/_generated/api';
  *
  * @template TDocument - The document type being stored (must have an id field)
  */
-export class ConvexStorage<_TDocument extends { id: string } = { id: string }> {
+export class ReplicateStorage<_TDocument extends { id: string } = { id: string }> {
   /**
-   * Create a new ConvexStorage instance scoped to a specific collection.
+   * Create a new ReplicateStorage instance scoped to a specific collection.
    *
    * @param component - The replicate component from your generated API
    * @param collectionName - The name of the collection to interact with
    *
    * @example
    * ```typescript
-   * const tasksStorage = new ConvexStorage(
+   * const tasksStorage = new ReplicateStorage(
    *   components.replicate,
    *   "tasks"
    * );

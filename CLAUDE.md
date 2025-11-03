@@ -97,7 +97,7 @@ ConvexReplicate implements a dual-storage architecture for offline-first applica
 - Stores Automerge CRDT documents for conflict-free replication
 - Handles automatic merging of concurrent offline changes
 - Source of truth for conflict resolution
-- Accessed via `ConvexStorage` client API
+- Accessed via `ReplicateStorage` client API
 
 ### Main Application Tables
 - Stores materialized/denormalized documents
@@ -122,7 +122,7 @@ Convex component providing CRDT storage layer.
   - `public.ts` - Public API functions (insertDocument, updateDocument, deleteDocument, pullChanges, changeStream)
   - `convex.config.ts` - Component configuration
 - `src/client/` - Type-safe client API
-  - `index.ts` - `ConvexStorage` class for interacting with component
+  - `index.ts` - `ReplicateStorage` class for interacting with component
 
 **Build Output:**
 - Dual package (ESM + CommonJS) in `dist/esm/` and `dist/commonjs/`
@@ -204,9 +204,9 @@ export default app;
 ```typescript
 // convex/tasks.ts
 import { components } from './_generated/api';
-import { ConvexStorage } from '@trestleinc/convex-replicate-component';
+import { ReplicateStorage } from '@trestleinc/convex-replicate-component';
 
-const tasksStorage = new ConvexStorage(components.replicate, 'tasks');
+const tasksStorage = new ReplicateStorage(components.replicate, 'tasks');
 ```
 
 ### 3. Use Replication Helpers
@@ -327,7 +327,7 @@ await adapter.sync();
 
 ## Key API Concepts
 
-### ConvexStorage Methods
+### ReplicateStorage Methods
 
 - **`insertDocument(ctx, documentId, crdtBytes, version)`** - Insert new document with CRDT bytes
 - **`updateDocument(ctx, documentId, crdtBytes, version)`** - Update existing document with CRDT bytes

@@ -18,7 +18,7 @@ Version 0.2.0 introduces a comprehensive naming consistency refactor. All public
 
 | Old Name (v0.1.x) | New Name (v0.2.0) |
 |-------------------|-------------------|
-| `ConvexReplicateStorage` | `ConvexStorage` |
+| `ConvexReplicateStorage` | `ReplicateStorage` |
 
 ## Code Examples
 
@@ -73,9 +73,9 @@ createCollection(
 );
 
 // Component package
-import { ConvexStorage } from '@trestleinc/convex-replicate-component';
+import { ReplicateStorage } from '@trestleinc/convex-replicate-component';
 
-const storage = new ConvexStorage(components.replicate, 'tasks');
+const storage = new ReplicateStorage(components.replicate, 'tasks');
 ```
 
 ## Find & Replace Guide
@@ -94,7 +94,7 @@ If you're using a code editor with find-and-replace across files:
 
 2. **Component Package Imports:**
    - Find: `ConvexReplicateStorage`
-   - Replace: `ConvexStorage`
+   - Replace: `ReplicateStorage`
 
 3. **Import Statements:**
    - Find: `@convex-replicate/component`
