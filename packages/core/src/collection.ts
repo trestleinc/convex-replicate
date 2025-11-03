@@ -51,12 +51,14 @@ interface ConvexCollectionConfig<TItem extends { id: string }> {
 
 export function convexCollectionOptions<TItem extends { id: string }>(
   config: ConvexCollectionConfig<TItem>
-): CollectionConfig<TItem, string | number, never, UtilsRecord> & NonSingleResult {
+): CollectionConfig<TItem | (Partial<TItem> & TItem), string | number, never, UtilsRecord> &
+  NonSingleResult {
   const store = new AutomergeDocumentStore<TItem>(config.collectionName);
   let checkpoint = { lastModified: 0 };
   const logger = getLogger(['collection', config.collectionName]);
 
-  const sync: SyncConfig<TItem, string | number>['sync'] = (params) => {
+  // Type-safe sync function that handles TanStack DB's union type requirements
+  const sync: SyncConfig<TItem | (Partial<TItem> & TItem), string | number>['sync'] = (params) => {
     logger.info('Sync function invoked', {
       hasInitialData: !!config.initialData,
       initialDataCount: config.initialData?.length ?? 0,

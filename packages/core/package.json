@@ -1,30 +1,16 @@
 {
   "name": "@trestleinc/convex-replicate-core",
-  "description": "Framework-agnostic replication utilities for ConvexReplicate.",
   "version": "0.2.1",
-  "license": "Apache-2.0",
-  "private": false,
   "repository": "github:trestleinc/convex-replicate",
-  "homepage": "https://github.com/trestleinc/convex-replicate#readme",
-  "bugs": {
-    "url": "https://github.com/trestleinc/convex-replicate/issues"
-  },
-  "keywords": [
-    "convex",
-    "replicate",
-    "crdt",
-    "automerge",
-    "offline-first",
-    "tanstack"
-  ],
-  "type": "module",
   "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "files": [
-    "dist",
-    "README.md",
-    "LICENSE"
-  ],
+  "devDependencies": {
+    "@rslib/core": "0.17.0"
+  },
+  "peerDependencies": {
+    "@automerge/automerge": "^3.1.2",
+    "@automerge/automerge-repo-storage-indexeddb": "^2.4.0",
+    "convex": "^1.28.0"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -39,23 +25,37 @@
       "default": "./dist/ssr.js"
     }
   },
+  "bugs": {
+    "url": "https://github.com/trestleinc/convex-replicate/issues"
+  },
+  "description": "Framework-agnostic replication utilities for ConvexReplicate.",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "homepage": "https://github.com/trestleinc/convex-replicate#readme",
+  "keywords": [
+    "convex",
+    "replicate",
+    "crdt",
+    "automerge",
+    "offline-first",
+    "tanstack"
+  ],
+  "license": "Apache-2.0",
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "rslib build",
     "dev": "rslib build --watch",
     "clean": "rm -rf dist"
   },
+  "type": "module",
+  "types": "./dist/index.d.ts",
   "dependencies": {
-    "@tanstack/db": "0.4.13"
-  },
-  "peerDependencies": {
-    "@automerge/automerge": "^3.1.2",
-    "@automerge/automerge-repo-storage-indexeddb": "^2.4.0",
-    "convex": "^1.28.0"
-  },
-  "publishConfig": {
-    "access": "public"
-  },
-  "devDependencies": {
-    "@rslib/core": "0.17.0"
+    "@tanstack/db": "0.4.16"
   }
 }

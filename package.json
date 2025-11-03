@@ -4,7 +4,8 @@
   "license": "Apache-2.0",
   "private": true,
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "examples/*"
   ],
   "resolutions": {
     "convex": "1.28.0"
