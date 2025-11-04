@@ -8,7 +8,6 @@ import { api } from '../convex/_generated/api';
 import { convexClient } from './router';
 import { useMemo } from 'react';
 
-
 export interface Task {
   id: string;
   text: string;
@@ -21,7 +20,6 @@ let tasksCollection: ConvexCollection<Task>;
 export function useTasks(initialData?: ReadonlyArray<Task>) {
   return useMemo(() => {
     if (!tasksCollection) {
-
       // Step 1: Create raw collection with ALL config (params only passed once!)
       const rawCollection = createCollection(
         convexCollectionOptions<Task>({

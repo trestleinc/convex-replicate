@@ -280,13 +280,22 @@ export function createConvexCollection<T extends object>(
           // Send to Convex (will be persisted to both component + main table)
           // Note: idempotencyKey is NOT sent to Convex - it's for offline-transactions internal use only
           // Convert Uint8Array to ArrayBuffer for Convex v.bytes()
-          await convexClient.mutation(mutationFn, {
-            collectionName,
-            documentId: String(mutation.key),
-            crdtBytes: update.buffer,
-            materializedDoc: mutation.type === 'delete' ? null : mutation.modified,
-            version: Date.now(),
-          });
+          if (mutation.type === 'delete') {
+            // Delete only needs collectionName and documentId
+            await convexClient.mutation(mutationFn, {
+              collectionName,
+              documentId: String(mutation.key),
+            });
+          } else {
+            // Insert and update need full payload
+            await convexClient.mutation(mutationFn, {
+              collectionName,
+              documentId: String(mutation.key),
+              crdtBytes: update.buffer,
+              materializedDoc: mutation.modified,
+              version: Date.now(),
+            });
+          }
 
           logger.info('Synced to Convex', {
             type: mutation.type,
