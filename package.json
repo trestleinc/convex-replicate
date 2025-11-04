@@ -14,11 +14,13 @@
     "convex": "1.28.2"
   },
   "scripts": {
-    "build": "bun run build:component && bun run build:core",
+    "build": "bun run build:replicate",
+    "build:replicate": "cd packages/replicate && bun run build",
     "build:component": "cd packages/component && bun run build",
     "build:core": "cd packages/core && bun run build",
     "clean": "rm -rf packages/*/dist",
-    "typecheck": "bun run typecheck:component && bun run typecheck:core",
+    "typecheck": "bun run typecheck:replicate",
+    "typecheck:replicate": "cd packages/replicate && bun run typecheck",
     "typecheck:component": "cd packages/component && bun run typecheck",
     "typecheck:core": "cd packages/core && tsc --noEmit",
     "dev:example": "cd examples/tanstack-start && bun run dev",
@@ -30,9 +32,10 @@
     "check": "biome check .",
     "check:fix": "biome check --write .",
     "version-packages": "node scripts/version-packages.js",
+    "publish:replicate": "cd packages/replicate && bun publish",
     "publish:component": "cd packages/component && bun publish",
     "publish:core": "cd packages/core && bun publish",
-    "publish:all": "bun run build && bun run check:fix && bun run publish:component && bun run publish:core",
+    "publish:all": "bun run build && bun run check:fix && bun run publish:replicate",
     "prepublish": "bun run build && bun run check:fix"
   },
   "dependencies": {

@@ -7,7 +7,7 @@ import {
   deleteDocumentHelper,
   pullChangesHelper,
   changeStreamHelper,
-} from '@trestleinc/convex-replicate-core/replication';
+} from '@trestleinc/replicate/replication';
 
 /**
  * TanStack DB endpoints - called by convexCollectionOptions

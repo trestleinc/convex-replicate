@@ -1,16 +1,15 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "allowJs": true,
     "checkJs": true,
     "strict": true,
-
     "target": "ESNext",
     "lib": ["ES2021", "dom"],
     "forceConsistentCasingInFileNames": true,
     "allowSyntheticDefaultImports": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
-
     "isolatedModules": true,
     "declaration": true,
     "declarationMap": true,
@@ -18,5 +17,6 @@
     "outDir": "./dist",
     "skipLibCheck": true
   },
-  "include": ["./src/**/*"]
+  "include": ["./src/**/*"],
+  "exclude": ["node_modules", "dist", "src/**/_generated/**"]
 }

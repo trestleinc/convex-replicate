@@ -4,7 +4,7 @@ import { useState } from 'react';
 import type { Task } from '../useTasks';
 import { useTasks } from '../useTasks';
 import { ConvexHttpClient } from 'convex/browser';
-import { getLogger } from '@trestleinc/convex-replicate-core';
+import { getLogger } from '@trestleinc/replicate';
 import { useLiveQuery } from '@tanstack/react-db';
 import { api } from '../../convex/_generated/api';
 

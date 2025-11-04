@@ -31,8 +31,7 @@
   "dependencies": {
     "@lucide/svelte": "^0.552.0",
     "@tanstack/svelte-db": "0.1.39",
-    "@trestleinc/convex-replicate-component": "workspace:*",
-    "@trestleinc/convex-replicate-core": "workspace:*",
+    "@trestleinc/replicate": "workspace:*",
     "convex": "1.28.2",
     "convex-svelte": "^0.0.11"
   }

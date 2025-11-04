@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Important: Always Use Context7 for Library Documentation
 
-**CRITICAL**: When looking up documentation for any library (Automerge, Convex, TanStack, React, etc.), ALWAYS use the Context7 MCP tool (`mcp__context7__resolve-library-id` and `mcp__context7__get-library-docs`). NEVER use WebSearch for library documentation.
+**CRITICAL**: When looking up documentation for any library (Yjs, Convex, TanStack, React, etc.), ALWAYS use the Context7 MCP tool (`mcp__context7__resolve-library-id` and `mcp__context7__get-library-docs`). NEVER use WebSearch for library documentation.
 
 **Why:**
 - Context7 provides accurate, up-to-date documentation with code examples
@@ -17,12 +17,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**ConvexReplicate** - Offline-first data replication using Automerge CRDTs and Convex for automatic conflict resolution and real-time synchronization.
+**ConvexReplicate** - Offline-first data replication using Yjs CRDTs and Convex for automatic conflict resolution and real-time synchronization.
 
 This is a monorepo providing:
 - A Convex component for CRDT storage
 - Core replication utilities for building offline-first apps
-- Integration with TanStack DB for reactive state management
+- Integration with TanStack DB and offline-transactions for reactive state management and reliable sync
 
 **Monorepo Structure:**
 - `packages/component/` - Convex component for CRDT storage (@trestleinc/convex-replicate-component)
@@ -94,7 +94,7 @@ ConvexReplicate implements a dual-storage architecture for offline-first applica
 
 ### Component Storage (CRDT Layer)
 **Located in:** `packages/component/`
-- Stores Automerge CRDT documents for conflict-free replication
+- Stores Yjs CRDT documents for conflict-free replication
 - Handles automatic merging of concurrent offline changes
 - Source of truth for conflict resolution
 - Accessed via `ReplicateStorage` client API
@@ -133,7 +133,7 @@ Convex component providing CRDT storage layer.
 {
   collectionName: string;    // Collection identifier
   documentId: string;        // Document identifier
-  crdtBytes: ArrayBuffer;    // Automerge CRDT bytes (opaque to server)
+  crdtBytes: ArrayBuffer;    // Yjs CRDT bytes (opaque to server)
   version: number;           // Version for conflict detection
   timestamp: number;         // Last modification time
 }
@@ -157,7 +157,7 @@ Framework-agnostic utilities for replication and SSR.
   - `pullChangesHelper()` - Read CRDT bytes from component for incremental sync
   - `changeStreamHelper()` - Detect changes for reactive queries
 - `src/ssr.ts` - `loadCollection()` for server-side data loading
-- `src/store.ts` - `AutomergeDocumentStore` for managing Automerge documents (client-side only)
+- `src/collection.ts` - `createConvexCollection()` for wrapping TanStack DB collections with Yjs + offline support
 - `src/adapter.ts` - `SyncAdapter` for abstracting storage backends (client-side only)
 - `src/convexCollectionOptions.ts` - TanStack DB collection options (client-side only)
 - `src/logger.ts` - LogTape logger configuration
@@ -170,13 +170,13 @@ Framework-agnostic utilities for replication and SSR.
 
 **Build Configuration:**
 - `packages/core/rslib.config.ts` - Rslib configuration with 3 entry points
-- Package size: ~65KB (reduced 57% from 150KB in v0.2.0 by externalizing Automerge)
+- Package size: ~65KB (Yjs is ~6KB vs Automerge ~150KB - 96% smaller!)
 
-**IMPORTANT**: Server-side Convex code must import from `@trestleinc/convex-replicate-core/replication` to avoid bundling Automerge WASM!
+**IMPORTANT**: Server-side Convex code must import from `@trestleinc/convex-replicate-core/replication` for server-safe imports!
 
 **Dependencies:**
 - Requires `@tanstack/db` for collection options
-- **Peer dependencies** (v0.2.1+): `@automerge/automerge ^3.1.2`, `@automerge/automerge-repo-storage-indexeddb ^2.4.0`, `convex ^1.28.0`
+- **Peer dependencies** (v0.3.0+): `yjs ^13.6.11`, `@tanstack/offline-transactions ^0.1.0`, `convex ^1.28.0`
 
 ## Technology Stack
 
@@ -186,7 +186,7 @@ Framework-agnostic utilities for replication and SSR.
   - **Component package**: TypeScript compiler (tsc) with dual ESM + CommonJS builds
   - **Core package**: Rslib (Rspack-based, fast builds with externalization support)
 - **Linting:** Biome v2
-- **CRDTs:** Automerge 3.x with IndexedDB storage (peer dependency)
+- **CRDTs:** Yjs with IndexedDB storage (via TanStack DB)
 - **Backend:** Convex (cloud database and functions)
 - **State Management:** TanStack DB for reactive collections
 - **Logging:** LogTape
@@ -227,7 +227,7 @@ import {
   deleteDocumentHelper,
   pullChangesHelper,
   changeStreamHelper,
-} from '@trestleinc/convex-replicate-core/replication';  // IMPORTANT: Use /replication to avoid Automerge on server!
+} from '@trestleinc/convex-replicate-core/replication';  // IMPORTANT: Use /replication for server-safe imports!
 import { mutation, query } from './_generated/server';
 import { v } from 'convex/values';
 
@@ -304,23 +304,21 @@ export const changeStream = query({
 });
 ```
 
-### 4. Client-Side Integration (TanStack DB)
+### 4. Client-Side Integration (TanStack DB) - v0.3.0 Two-Step API
 
-Create a custom hook that integrates TanStack DB with Convex Replicate:
+Create a custom hook that integrates TanStack DB with Convex Replicate using the new two-step API:
 
 ```typescript
 // src/useTasks.ts
 import { createCollection } from '@tanstack/react-db';
 import {
   convexCollectionOptions,
-  getLogger,
+  createConvexCollection,  // NEW in v0.3.0
   type ConvexCollection,
 } from '@trestleinc/convex-replicate-core';
 import { api } from '../convex/_generated/api';
 import { convexClient } from './router';
 import { useMemo } from 'react';
-
-const logger = getLogger(['hooks', 'useTasks']);
 
 export interface Task {
   id: string;
@@ -332,12 +330,10 @@ export interface Task {
 let tasksCollection: ConvexCollection<Task>;
 
 export function useTasks(initialData?: ReadonlyArray<Task>) {
-  logger.debug('Hook called with initialData', { taskCount: initialData?.length ?? 0 });
-  
   return useMemo(() => {
     if (!tasksCollection) {
-      logger.debug('Creating collection with initialData', { taskCount: initialData?.length ?? 0 });
-      tasksCollection = createCollection(
+      // Step 1: Create raw TanStack DB collection with ALL config
+      const rawCollection = createCollection(
         convexCollectionOptions<Task>({
           convexClient,
           api: api.tasks,
@@ -346,6 +342,10 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
           initialData,
         })
       );
+
+      // Step 2: Wrap with Convex offline support (Yjs + TanStack)
+      // Config is automatically extracted from rawCollection
+      tasksCollection = createConvexCollection(rawCollection);
     }
     return tasksCollection;
   }, [initialData]);
@@ -409,7 +409,7 @@ export function TaskList() {
 
 ### Replication Helpers (Server-Side)
 
-**IMPORTANT**: Import from `@trestleinc/convex-replicate-core/replication` to avoid bundling Automerge on server!
+**IMPORTANT**: Import from `@trestleinc/convex-replicate-core/replication` for server-safe imports!
 
 - **`insertDocumentHelper(ctx, components, tableName, args)`** - Insert to both component (CRDT bytes) + main table (materialized doc)
 - **`updateDocumentHelper(ctx, components, tableName, args)`** - Update both component + main table
@@ -496,13 +496,13 @@ bun run dev  # Starts both Vite and Convex dev servers
 
 ### Document Lifecycle
 
-1. **Create** - Client generates Automerge document with unique ID
-2. **Save as bytes** - Client calls `Automerge.save()` to get CRDT bytes
+1. **Create** - Client generates Yjs document with unique ID
+2. **Save as bytes** - Client calls `Y.encodeStateAsUpdate()` to get CRDT bytes
 3. **Insert** - Call `insertDocumentHelper` with both CRDT bytes + materialized doc
 4. **Dual-write** - Component stores CRDT bytes, main table stores materialized doc
-5. **Update** - Client merges changes offline using `Automerge.change()`, saves as bytes
+5. **Update** - Client merges changes offline using Yjs updates, saves as bytes
 6. **Submit update** - Call `updateDocumentHelper` with new CRDT bytes + materialized doc
-7. **Conflict** - Automerge automatically merges concurrent changes on client (CRDT magic)
+7. **Conflict** - Yjs automatically merges concurrent changes on client (CRDT magic)
 
 ### Incremental Sync
 
@@ -560,22 +560,22 @@ export const Route = createFileRoute('/tasks')({
 - Component requires both ESM and CommonJS builds
 - Core package uses Rslib - if build fails, check `packages/core/rslib.config.ts`
 
-### Missing Peer Dependencies (v0.2.1+)
-- **Error**: `Cannot find module '@automerge/automerge'`
+### Missing Peer Dependencies (v0.3.0+)
+- **Error**: `Cannot find module 'yjs'` or `Cannot find module '@tanstack/offline-transactions'`
 - **Cause**: Only affects npm/yarn/pnpm users (Bun installs peer dependencies automatically)
-- **Solution**: Install Automerge peer dependencies manually:
+- **Solution**: Install peer dependencies manually:
   ```bash
   # npm
-  npm install @automerge/automerge @automerge/automerge-repo-storage-indexeddb
+  npm install yjs @tanstack/offline-transactions
   
   # yarn/pnpm
-  yarn/pnpm add @automerge/automerge @automerge/automerge-repo-storage-indexeddb
+  yarn/pnpm add yjs @tanstack/offline-transactions
   ```
-- See [MIGRATION-0.2.1.md](./MIGRATION-0.2.1.md) for details
+- See [MIGRATION-0.3.0.md](./MIGRATION-0.3.0.md) for details
 
 ### Type Errors
 - Run `bun run typecheck` to check all packages
-- Ensure peer dependencies are installed (Automerge, Convex ^1.28.0)
+- Ensure peer dependencies are installed (Yjs, TanStack offline-transactions, Convex ^1.28.0)
 - Check that Convex codegen is up to date: `convex dev` in example
 
 ### Linting/Formatting
@@ -588,9 +588,11 @@ export const Route = createFileRoute('/tasks')({
 - **Don't run dev servers** - They're managed by another process
 - **Build order matters** - Component before Core
 - **Dual-storage is required** - Both component and main tables needed
-- **Automerge is peer dependency** - Must be installed by users (v0.2.1+)
-- **Automerge is the CRDT engine** - Not RxDB (common confusion)
-- **Core uses Rslib** - Fast Rspack-based bundler with externalization (v0.2.1+)
+- **Yjs is peer dependency** - Must be installed by users (v0.3.0+)
+- **Yjs is the CRDT engine** - Replaced Automerge in v0.3.0 (96% smaller, no WASM)
+- **TanStack offline-transactions** - Handles outbox pattern and retry logic (v0.3.0+)
+- **Two-step collection creation** - `convexCollectionOptions` then `createConvexCollection` (v0.3.0+)
+- **Core uses Rslib** - Fast Rspack-based bundler with externalization
 - **Component uses tsc** - TypeScript compiler (Convex needs source files)
 - **LogTape for logging** - Not console.* (Biome warns on console usage)
 - **Context7 for docs** - Always use for library documentation lookups
