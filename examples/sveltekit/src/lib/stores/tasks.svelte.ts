@@ -1,6 +1,7 @@
 import { createCollection } from '@tanstack/svelte-db';
 import {
   convexCollectionOptions,
+  createConvexCollection,
   getLogger,
   type ConvexCollection,
 } from '@trestleinc/convex-replicate-core';
@@ -20,17 +21,22 @@ let tasksCollection: ConvexCollection<Task>;
 export function getTasksCollection(initialData?: ReadonlyArray<Task>): ConvexCollection<Task> {
   if (!tasksCollection) {
     logger.debug('Creating tasks collection', { taskCount: initialData?.length ?? 0 });
-    // Type assertion needed due to contravariance issues between TanStack DB's Collection generic
-    // and the ConvexCollection type. The runtime types are correct - this is a TypeScript limitation.
-    tasksCollection = createCollection(
+
+    // Step 1: Create raw TanStack DB collection
+    const rawCollection = createCollection(
       convexCollectionOptions<Task>({
-        convexClient,
-        api: api.tasks,
-        collectionName: 'tasks',
         getKey: (task) => task.id,
         initialData,
       })
-    ) as unknown as ConvexCollection<Task>;
+    );
+
+    // Step 2: Wrap with Convex offline support
+    // Type assertion needed due to TanStack DB version differences between Svelte and React packages
+    tasksCollection = createConvexCollection(rawCollection as any, {
+      convexClient,
+      api: api.tasks,
+      collectionName: 'tasks',
+    }) as ConvexCollection<Task>;
   }
   return tasksCollection;
 }

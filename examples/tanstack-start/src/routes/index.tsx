@@ -4,7 +4,6 @@ import { useState } from 'react';
 import type { Task } from '../useTasks';
 import { useTasks } from '../useTasks';
 import { ConvexHttpClient } from 'convex/browser';
-import { loadCollection } from '@trestleinc/convex-replicate-core/ssr';
 import { getLogger } from '@trestleinc/convex-replicate-core';
 import { useLiveQuery } from '@tanstack/react-db';
 import { api } from '../../convex/_generated/api';
@@ -15,11 +14,7 @@ const logger = getLogger(['loader']);
 export const Route = createFileRoute('/')({
   loader: async () => {
     logger.debug('Starting SSR data fetch');
-    const tasks = await loadCollection<Task>(httpClient, {
-      api: api.tasks,
-      collection: 'tasks',
-      limit: 100,
-    });
+    const tasks = await httpClient.query(api.tasks.getTasks);
     logger.debug('Fetched tasks from SSR', { taskCount: tasks.length });
     return { tasks };
   },
@@ -89,19 +84,13 @@ function LiveTasksView({ initialTasks }: { initialTasks: ReadonlyArray<Task> }) 
   const [editText, setEditText] = useState('');
 
   const collection = useTasks(initialTasks);
-  const { data: tasks, isLoading, isError } = useLiveQuery(collection);
-
-  logger.debug('useLiveQuery state', {
-    taskCount: tasks.length,
-    isLoading,
-    isError,
-  });
+  const { data: tasks, isLoading, isError } = useLiveQuery(collection as any);
 
   const handleCreateTask = (e: React.FormEvent) => {
     e.preventDefault();
     if (newTaskText.trim()) {
       const id = crypto.randomUUID();
-      collection.insert({ id, text: newTaskText.trim(), isCompleted: false });
+      collection.insert({ id, text: newTaskText.trim(), isCompleted: false, deleted: false });
       setNewTaskText('');
     }
   };

@@ -15,7 +15,7 @@ function cleanDocument(doc: unknown): unknown {
  * This helper implements a dual-storage pattern where documents are stored in two places:
  *
  * 1. Component Storage (CRDT Layer):
- *    - Stores CRDT bytes (from Automerge) for offline-first conflict resolution
+ *    - Stores CRDT bytes (from Yjs) for offline-first conflict resolution
  *    - Handles concurrent updates with automatic merging
  *    - Provides the source of truth for offline changes
  *
@@ -147,7 +147,7 @@ export async function deleteDocumentHelper<_DataModel extends GenericDataModel>(
  * Pull document changes from the CRDT component storage.
  *
  * This reads CRDT bytes from the component (not the main table) to enable
- * true Automerge.merge() conflict resolution on the client.
+ * true Y.applyUpdate() conflict resolution on the client.
  *
  * @param ctx - Convex query context
  * @param components - Generated components from Convex

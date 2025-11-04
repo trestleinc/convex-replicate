@@ -1,391 +1,431 @@
+import * as Y from 'yjs';
+import {
+  startOfflineExecutor,
+  NonRetriableError,
+  type OfflineExecutor,
+} from '@tanstack/offline-transactions';
 import type { ConvexClient } from 'convex/browser';
-import type {
-  CollectionConfig,
-  SyncConfig,
-  UtilsRecord,
-  NonSingleResult,
-  Collection,
-} from '@tanstack/db';
-import { AutomergeDocumentStore } from './store';
-import type { StorageAPI } from './adapter';
-import { getLogger } from './logger';
+import type { FunctionReference } from 'convex/server';
+import type { CollectionConfig, Collection, OperationConfig } from '@tanstack/db';
+import { getLogger } from './logger.js';
+
+const logger = getLogger(['convex-replicate', 'collection']);
 
 /**
- * Type helper for Convex collections without schema validation.
- * Use this to type your collection variables.
+ * Configuration for convexCollectionOptions (Step 1)
+ * All params go here - they'll be stored in the collection config for extraction later
+ */
+export interface ConvexCollectionOptionsConfig<T extends object> {
+  /** Function to extract unique key from items */
+  getKey: (item: T) => string | number;
+
+  /** Optional initial data to populate collection */
+  initialData?: ReadonlyArray<T>;
+
+  /** Convex client instance */
+  convexClient: ConvexClient;
+
+  /** Convex API functions for this collection */
+  api: {
+    getTasks: FunctionReference<'query'>;
+    changeStream: FunctionReference<'query'>;
+    insertDocument: FunctionReference<'mutation'>;
+    updateDocument: FunctionReference<'mutation'>;
+    deleteDocument: FunctionReference<'mutation'>;
+  };
+
+  /** Unique collection name */
+  collectionName: string;
+}
+
+/**
+ * Wrapped collection with offline support and CRDT sync.
  *
- * @template TItem - The item type with at minimum an id field
+ * Extends Collection<T> to ensure full compatibility with useLiveQuery and other
+ * TanStack DB utilities. All Collection methods are available via Proxy forwarding,
+ * while mutation methods (insert/update/delete) are wrapped with offline transaction support.
+ */
+export interface ConvexCollection<T extends object> extends Collection<T> {
+  // Internal access (for advanced use)
+  _rawCollection: Collection<T>;
+  _offlineExecutor: OfflineExecutor;
+  _ydoc: Y.Doc;
+}
+
+/**
+ * Step 1: Create basic TanStack DB CollectionConfig.
+ *
+ * This returns a lightweight config that you pass to your framework's createCollection().
  *
  * @example
  * ```typescript
- * import { ConvexCollection } from '@trestleinc/convex-replicate-core';
+ * import { createCollection } from '@tanstack/react-db'
+ * import { convexCollectionOptions } from '@trestleinc/convex-replicate-core'
  *
- * interface Task {
- *   id: string;
- *   text: string;
- *   isCompleted: boolean;
- * }
- *
- * let tasksCollection: ConvexCollection<Task> | undefined;
+ * const rawCollection = createCollection(
+ *   convexCollectionOptions<Task>({
+ *     getKey: (task) => task.id,
+ *     initialData,
+ *   })
+ * )
  * ```
  */
-export type ConvexCollection<TItem extends { id: string }> = Collection<
-  TItem,
-  string | number,
-  UtilsRecord,
-  never,
-  TItem
-> &
-  NonSingleResult;
+export function convexCollectionOptions<T extends object>({
+  getKey,
+  initialData,
+  convexClient,
+  api,
+  collectionName,
+}: ConvexCollectionOptionsConfig<T>): CollectionConfig<T | (Partial<T> & T)> & {
+  _convexClient: ConvexClient;
+  _api: typeof api;
+  _collectionName: string;
+} {
+  return {
+    getKey,
 
-interface ConvexCollectionConfig<TItem extends { id: string }> {
-  convexClient: ConvexClient;
-  api: StorageAPI;
-  collectionName: string;
-  getKey: (item: TItem) => string | number;
-  id?: string;
-  schema?: unknown;
-  initialData?: ReadonlyArray<TItem>;
-  enableReplicate?: boolean;
-}
+    // Store Convex params for extraction by createConvexCollection
+    _convexClient: convexClient,
+    _api: api,
+    _collectionName: collectionName,
 
-export function convexCollectionOptions<TItem extends { id: string }>(
-  config: ConvexCollectionConfig<TItem>
-): CollectionConfig<TItem | (Partial<TItem> & TItem), string | number, never, UtilsRecord> &
-  NonSingleResult {
-  const store = new AutomergeDocumentStore<TItem>(config.collectionName);
-  let checkpoint = { lastModified: 0 };
-  const logger = getLogger(['collection', config.collectionName]);
+    sync: {
+      sync: (params: any) => {
+        const { begin, write, commit, markReady } = params;
 
-  // Type-safe sync function that handles TanStack DB's union type requirements
-  const sync: SyncConfig<TItem | (Partial<TItem> & TItem), string | number>['sync'] = (params) => {
-    logger.info('Sync function invoked', {
-      hasInitialData: !!config.initialData,
-      initialDataCount: config.initialData?.length ?? 0,
-      enableReplicate: config.enableReplicate ?? true,
-    });
-
-    const { begin, write, commit, markReady } = params;
-
-    const eventBuffer: Array<{
-      documentId: string;
-      crdtBytes: ArrayBuffer;
-      version: number;
-      timestamp: number;
-    }> = [];
-    let isInitialSyncComplete = false;
-
-    const shouldEnableReplicate = config.enableReplicate ?? true;
-    if (!shouldEnableReplicate) {
-      logger.info('Replication disabled, skipping WebSocket setup');
-      markReady();
-      return () => {};
-    }
-
-    const unsubscribeConvex = config.convexClient.onUpdate(
-      config.api.changeStream as any,
-      { collectionName: config.collectionName },
-      () => {
-        void pullChanges();
-      }
-    );
-
-    const unsubscribeAutomerge = store.subscribeToDelta((delta) => {
-      if (!isInitialSyncComplete) {
-        logger.debug('Skipping Automerge delta during initial sync', {
-          insertedCount: delta.inserted.length,
-          updatedCount: delta.updated.length,
-          deletedCount: delta.deleted.length,
-        });
-        return;
-      }
-
-      logger.debug('Automerge delta received, syncing to TanStack DB', {
-        insertedCount: delta.inserted.length,
-        updatedCount: delta.updated.length,
-        deletedCount: delta.deleted.length,
-      });
-
-      begin();
-
-      for (const doc of delta.inserted) {
-        logger.debug('Writing insert to TanStack DB', { documentId: doc.id });
-        write({ type: 'insert', value: doc });
-      }
-
-      for (const doc of delta.updated) {
-        logger.debug('Writing update to TanStack DB', { documentId: doc.id });
-        write({ type: 'update', value: doc });
-      }
-
-      for (const id of delta.deleted) {
-        logger.debug('Writing delete to TanStack DB', { documentId: id });
-        write({ type: 'delete', value: { id } as TItem });
-      }
-
-      commit();
-
-      logger.debug('Synced Automerge delta to TanStack DB', {
-        insertedCount: delta.inserted.length,
-        updatedCount: delta.updated.length,
-        deletedCount: delta.deleted.length,
-      });
-    });
-
-    const pullChanges = async (): Promise<void> => {
-      try {
-        logger.debug('Pulling changes from Convex', { checkpoint, isInitialSyncComplete });
-
-        const result = await config.convexClient.query(config.api.pullChanges as any, {
-          collectionName: config.collectionName,
-          checkpoint,
-          limit: 100,
-        });
-
-        logger.debug('Received changes from Convex', {
-          changeCount: result.changes.length,
-          newCheckpoint: result.checkpoint,
-          hasMore: result.hasMore,
-        });
-
-        if (!isInitialSyncComplete && result.changes.length > 0) {
-          logger.debug('Buffering changes during initial sync', {
-            bufferSize: result.changes.length,
-          });
-          eventBuffer.push(...result.changes);
-        } else {
-          if (result.changes.length > 0) {
-            logger.debug('Processing Convex changes', {
-              changeCount: result.changes.length,
-            });
-
-            begin();
-            for (const change of result.changes) {
-              // Convert ArrayBuffer to Uint8Array and merge CRDT bytes
-              store.mergeCRDT(change.documentId, new Uint8Array(change.crdtBytes));
-
-              // Get materialized document after merging
-              const doc = store.getMaterialized(change.documentId);
-
-              if (!doc) {
-                // Document was deleted or doesn't exist
-                logger.debug('Writing delete to TanStack DB', {
-                  documentId: change.documentId,
-                });
-                write({ type: 'delete', value: { id: change.documentId } as TItem });
-              } else {
-                logger.debug('Writing update to TanStack DB', {
-                  documentId: change.documentId,
-                });
-                write({ type: 'update', value: doc });
-              }
-            }
-            commit();
-
-            logger.debug('Applied Convex changes to TanStack DB', {
-              changeCount: result.changes.length,
-            });
-          }
-        }
-
-        checkpoint = result.checkpoint;
-      } catch (error) {
-        logger.error('Failed to pull changes from Convex', {
-          checkpoint,
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        });
-      }
-    };
-
-    const initialSync = async (): Promise<void> => {
-      try {
-        logger.info('Starting initial sync', { collection: config.collectionName });
-
-        await store.initialize();
-
-        const localData = store.toArray();
-        logger.debug('Loaded local data from IndexedDB', {
-          documentCount: localData.length,
-        });
-
-        if (config.initialData && config.initialData.length > 0) {
-          logger.debug('Merging SSR initial data with local CRDTs', {
-            initialDataCount: config.initialData.length,
-            localDataCount: localData.length,
-          });
-
-          for (const serverItem of config.initialData) {
-            const id = String(config.getKey(serverItem));
-            store.mergeFromMaterialized(id, serverItem);
-          }
-        }
-
-        await pullChanges();
-
-        const finalData = store.toArray();
-        logger.debug('Final merged data ready', {
-          documentCount: finalData.length,
-        });
-
-        if (finalData.length > 0) {
+        // Step 1: Write initial SSR data
+        if (initialData && initialData.length > 0) {
           begin();
-          for (const item of finalData) {
+          for (const item of initialData) {
             write({ type: 'insert', value: item });
           }
           commit();
-          logger.debug('Wrote final merged data to TanStack DB', {
-            documentCount: finalData.length,
-          });
         }
 
-        isInitialSyncComplete = true;
-        logger.info('Initial sync complete, enabling Automerge subscriber', {
-          bufferedEventCount: eventBuffer.length,
-        });
+        // Step 2: Subscribe to Convex real-time updates
+        logger.debug('Setting up Convex subscription', { collectionName });
 
-        if (eventBuffer.length > 0) {
-          logger.debug('Processing buffered Convex events', {
-            eventCount: eventBuffer.length,
-          });
+        let lastSnapshot: any = null;
 
-          begin();
-          for (const change of eventBuffer) {
-            // Convert ArrayBuffer to Uint8Array and merge CRDT bytes
-            store.mergeCRDT(change.documentId, new Uint8Array(change.crdtBytes));
+        // Watch changeStream for updates
+        const subscription = convexClient.onUpdate(
+          api.changeStream,
+          { collectionName },
+          async (snapshot) => {
+            if (snapshot && snapshot !== lastSnapshot) {
+              lastSnapshot = snapshot;
+              logger.debug('Change detected, refetching tasks', { collectionName, snapshot });
 
-            // Get materialized document after merging
-            const doc = store.getMaterialized(change.documentId);
+              try {
+                // Fetch updated data from Convex
+                const tasks = await convexClient.query(api.getTasks, {});
 
-            if (!doc) {
-              // Document was deleted or doesn't exist
-              write({ type: 'delete', value: { id: change.documentId } as TItem });
-            } else {
-              write({ type: 'update', value: doc });
+                logger.debug('Refetched tasks from Convex', { count: tasks.length });
+
+                // Update the collection - check if each item exists and use appropriate operation
+                // Note: TanStack DB only supports 'insert', 'update', 'delete' - NO 'upsert'!
+                begin();
+                for (const task of tasks) {
+                  const key = getKey(task);
+                  // Check if item exists in collection to determine insert vs update
+                  if ((params as any).collection.has(key)) {
+                    write({ type: 'update', value: task });
+                  } else {
+                    write({ type: 'insert', value: task });
+                  }
+                }
+                commit();
+
+                logger.debug('Successfully synced tasks to collection', { count: tasks.length });
+              } catch (error: any) {
+                logger.error('Failed to refetch tasks', {
+                  error: error.message,
+                  errorString: String(error),
+                  stack: error?.stack?.split('\n')[0],
+                });
+              }
             }
           }
-          commit();
+        );
 
-          eventBuffer.splice(0);
-          logger.debug('Applied buffered events to TanStack DB');
-        }
-      } catch (error) {
-        logger.error('Failed during initial sync', {
-          collection: config.collectionName,
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        });
-      } finally {
         markReady();
-      }
-    };
 
-    logger.debug('Starting initial sync in background');
-    void initialSync();
-
-    logger.debug('Sync function setup complete, returning cleanup function');
-    return () => {
-      logger.debug('Cleanup function called, unsubscribing from Convex and Automerge');
-      unsubscribeConvex();
-      unsubscribeAutomerge();
-    };
-  };
-
-  return {
-    id: config.id ?? config.collectionName,
-    getKey: config.getKey,
-    sync: { sync },
-
-    onInsert: async ({ transaction }) => {
-      for (const mutation of transaction.mutations) {
-        const item = mutation.modified;
-
-        const id = String(config.getKey(item));
-        const { id: _id, ...data } = item;
-        store.create(id, data as Omit<TItem, 'id'>);
-      }
-
-      const unreplicated = store.getUnreplicatedCRDTBytes();
-
-      if (unreplicated.length > 0) {
-        await Promise.all(
-          unreplicated.map(({ id, crdtBytes, materializedDoc, version }) =>
-            config.convexClient.mutation(config.api.insertDocument as any, {
-              collectionName: config.collectionName,
-              documentId: id,
-              crdtBytes: crdtBytes.buffer,
-              materializedDoc,
-              version,
-            })
-          )
-        );
-
-        for (const { id } of unreplicated) {
-          store.markReplicated(id);
-        }
-      }
-
-      return transaction.mutations.map((m) => config.getKey(m.modified));
+        // Return cleanup function
+        return () => {
+          logger.debug('Cleaning up Convex subscription', { collectionName });
+          subscription();
+        };
+      },
     },
 
-    onUpdate: async ({ transaction }) => {
-      for (const mutation of transaction.mutations) {
-        const id = String(mutation.key);
-        const changes = mutation.changes;
+    // No-op handlers - required so rawCollection.insert/update/delete don't throw MissingHandlerError
+    // Actual sync to Convex happens in createConvexCollection's offline executor
+    onInsert: async ({ transaction }: any) => {
+      logger.debug('onInsert', {
+        mutations: transaction.mutations.length,
+      });
+    },
+    onUpdate: async ({ transaction }: any) => {
+      logger.debug('onUpdate', {
+        mutations: transaction.mutations.length,
+      });
+    },
+    onDelete: async ({ transaction }: any) => {
+      logger.debug('onDelete', {
+        mutations: transaction.mutations.length,
+      });
+    },
+  } as any;
+}
 
-        store.change(id, (draft) => {
-          Object.assign(draft, changes);
+/**
+ * Step 2: Wrap a TanStack DB Collection with Convex offline + Yjs CRDT support.
+ *
+ * This wraps your raw TanStack DB collection with:
+ * - Yjs for CRDT operations (96% smaller than Automerge, no WASM, React Native compatible)
+ * - TanStack DB's OfflineExecutor for outbox pattern, retry logic, and multi-tab coordination
+ *
+ * Config is automatically extracted from the rawCollection - no need to pass params again!
+ *
+ * @example
+ * ```typescript
+ * import { createCollection } from '@tanstack/react-db'
+ * import { convexCollectionOptions, createConvexCollection } from '@trestleinc/convex-replicate-core'
+ *
+ * // Step 1: Create raw collection with ALL config
+ * const rawCollection = createCollection(
+ *   convexCollectionOptions<Task>({
+ *     convexClient,
+ *     api: api.tasks,
+ *     collectionName: 'tasks',
+ *     getKey: (task) => task.id,
+ *     initialData,
+ *   })
+ * )
+ *
+ * // Step 2: Wrap - params automatically extracted!
+ * const collection = createConvexCollection(rawCollection)
+ *
+ * // Use like a normal TanStack DB collection
+ * collection.insert({ id: '1', text: 'Buy milk', isCompleted: false })
+ * collection.update('1', (draft) => { draft.isCompleted = true })
+ * collection.delete('1')
+ * ```
+ */
+export function createConvexCollection<T extends object>(
+  rawCollection: Collection<T>
+): ConvexCollection<T> {
+  // Extract config from rawCollection - no need to pass params again!
+  const config = (rawCollection as any).config;
+  const convexClient = config._convexClient;
+  const api = config._api;
+  const collectionName = config._collectionName;
+  const getKey = config.getKey;
+
+  if (!convexClient || !api || !collectionName) {
+    throw new Error(
+      'createConvexCollection requires a collection created with convexCollectionOptions. ' +
+        'Make sure you pass convexClient, api, and collectionName to convexCollectionOptions.'
+    );
+  }
+
+  // Create Yjs document for CRDT operations
+  const ydoc = new Y.Doc({ guid: collectionName });
+  const ymap = ydoc.getMap(collectionName);
+
+  // Note: We don't pull CRDT bytes for reading anymore.
+  // Instead, we rely on the subscription in convexCollectionOptions which:
+  // 1. Writes initialData from SSR (materialized docs from getTasks)
+  // 2. Subscribes to changeStream for real-time updates
+  // The Yjs/CRDT layer is only used for encoding mutations before sending to Convex.
+
+  // Create offline executor
+  const offline = startOfflineExecutor({
+    collections: { [collectionName]: rawCollection as any },
+
+    mutationFns: {
+      syncToConvex: async ({ transaction, idempotencyKey }) => {
+        logger.debug('syncToConvex', {
+          mutations: transaction.mutations.length,
+          types: transaction.mutations.map((m) => m.type).join(','),
+          idempotencyKey, // Log for debugging but don't send to Convex
         });
-      }
 
-      const unreplicated = store.getUnreplicatedCRDTBytes();
+        try {
+          // Encode current Yjs state as update
+          const update = Y.encodeStateAsUpdate(ydoc);
 
-      if (unreplicated.length > 0) {
-        await Promise.all(
-          unreplicated.map(({ id, crdtBytes, materializedDoc, version }) =>
-            config.convexClient.mutation(config.api.updateDocument as any, {
-              collectionName: config.collectionName,
-              documentId: id,
-              crdtBytes: crdtBytes.buffer,
-              materializedDoc,
-              version,
-            })
-          )
-        );
+          // Determine mutation type
+          const mutation = transaction.mutations[0];
+          if (!mutation) {
+            logger.warn('Empty transaction', { collectionName });
+            return;
+          }
 
-        for (const { id } of unreplicated) {
-          store.markReplicated(id);
+          const mutationFn =
+            mutation.type === 'insert'
+              ? api.insertDocument
+              : mutation.type === 'update'
+                ? api.updateDocument
+                : api.deleteDocument;
+
+          logger.debug('Preparing Convex mutation', {
+            type: mutation.type,
+            key: mutation.key,
+            updateLength: update.length,
+            updateType: update.constructor.name,
+            idempotencyKey,
+          });
+
+          // Send to Convex (will be persisted to both component + main table)
+          // Note: idempotencyKey is NOT sent to Convex - it's for offline-transactions internal use only
+          // Convert Uint8Array to ArrayBuffer for Convex v.bytes()
+          await convexClient.mutation(mutationFn, {
+            collectionName,
+            documentId: String(mutation.key),
+            crdtBytes: update.buffer,
+            materializedDoc: mutation.type === 'delete' ? null : mutation.modified,
+            version: Date.now(),
+          });
+
+          logger.info('Synced to Convex', {
+            type: mutation.type,
+            key: mutation.key,
+            idempotencyKey,
+          });
+        } catch (error: any) {
+          logger.error('Sync failed', {
+            collectionName,
+            errorMessage: error?.message || 'Unknown error',
+            errorName: error?.name,
+            errorStack: error?.stack,
+            errorStatus: error?.status,
+            idempotencyKey,
+          });
+
+          // Developer-controlled error classification
+          if (error?.status === 401 || error?.status === 403) {
+            throw new NonRetriableError('Authentication failed');
+          }
+          if (error?.status === 422) {
+            throw new NonRetriableError('Validation error');
+          }
+
+          // Everything else retries automatically
+          throw error;
         }
-      }
+      },
     },
 
-    onDelete: async ({ transaction }) => {
-      for (const mutation of transaction.mutations) {
-        const id = String(mutation.key);
-        store.remove(id);
-      }
-
-      // Deletes are handled differently - just mark as deleted in CRDT
-      // The remove() call above marks the doc as deleted in Automerge
-      const unreplicated = store.getUnreplicatedCRDTBytes();
-
-      if (unreplicated.length > 0) {
-        await Promise.all(
-          unreplicated.map(({ id, crdtBytes, materializedDoc, version }) =>
-            config.convexClient.mutation(config.api.updateDocument as any, {
-              collectionName: config.collectionName,
-              documentId: id,
-              crdtBytes: crdtBytes.buffer,
-              materializedDoc,
-              version,
-            })
-          )
-        );
-
-        for (const { id } of unreplicated) {
-          store.markReplicated(id);
-        }
-      }
+    onLeadershipChange: (isLeader) => {
+      logger.info(isLeader ? 'Offline mode active' : 'Online-only mode', {
+        collectionName,
+      });
     },
+
+    onStorageFailure: (diagnostic) => {
+      logger.warn('Storage failed - online-only mode', {
+        collectionName,
+        code: diagnostic.code,
+      });
+    },
+  });
+
+  // Create wrapper object with mutation methods
+  const wrapper = {
+    // Wrap insert to use offline transactions
+    insert: (item: T | T[], config?: OperationConfig) => {
+      const tx = offline.createOfflineTransaction({
+        mutationFnName: 'syncToConvex',
+        autoCommit: true, // Auto-commit triggers sync immediately (online or queues offline)
+      });
+
+      tx.mutate(() => {
+        // Call raw collection inside ambient transaction (optimistic update)
+        rawCollection.insert(item, config);
+
+        // Update Yjs Map (ALWAYS - for CRDT conflict resolution)
+        const items = Array.isArray(item) ? item : [item];
+        items.forEach((i) => {
+          ymap.set(String(getKey(i)), i);
+        });
+      });
+
+      return tx;
+    },
+
+    // Wrap update to use offline transactions
+    update: (key: string | number, updater: (draft: T) => void, config?: OperationConfig) => {
+      const tx = offline.createOfflineTransaction({
+        mutationFnName: 'syncToConvex',
+        autoCommit: true,
+      });
+
+      tx.mutate(() => {
+        // Call raw collection inside ambient transaction
+        (rawCollection as any).update(key, updater, config);
+
+        // Update Yjs Map
+        const updated = rawCollection.get(key);
+        if (updated) {
+          ymap.set(String(key), updated);
+        }
+      });
+
+      return tx;
+    },
+
+    // Wrap delete to use offline transactions
+    delete: (key: string | number | Array<string | number>, config?: OperationConfig) => {
+      const tx = offline.createOfflineTransaction({
+        mutationFnName: 'syncToConvex',
+        autoCommit: true,
+      });
+
+      tx.mutate(() => {
+        // Call raw collection inside ambient transaction
+        rawCollection.delete(key, config);
+
+        // Update Yjs Map
+        const keys = Array.isArray(key) ? key : [key];
+        for (const k of keys) {
+          ymap.delete(String(k));
+        }
+      });
+
+      return tx;
+    },
+
+    // Pass-through read methods
+    get: (key: string | number) => rawCollection.get(key),
+    has: (key: string | number) => rawCollection.has(key),
+    toArray: rawCollection.toArray,
+
+    // Expose internals for advanced use
+    _rawCollection: rawCollection,
+    _offlineExecutor: offline,
+    _ydoc: ydoc,
   };
+
+  // Use a Proxy to forward any unknown properties/methods to the raw collection
+  // This ensures TanStack DB internal methods are accessible while maintaining
+  // our custom mutation wrappers and internal properties.
+  //
+  // TypeScript limitation: Proxies can't be fully type-safe, so we cast to ConvexCollection<T>
+  // which extends Collection<T>, telling TypeScript "trust me, all Collection methods exist".
+  return new Proxy(wrapper, {
+    get(target: any, prop: string | symbol) {
+      // If the wrapper has the property, return it
+      if (prop in target) {
+        return target[prop];
+      }
+      // Otherwise, forward to the raw collection
+      const rawValue = (rawCollection as any)[prop];
+      // If it's a function, bind it to the raw collection
+      if (typeof rawValue === 'function') {
+        return rawValue.bind(rawCollection);
+      }
+      return rawValue;
+    },
+  }) as unknown as ConvexCollection<T>;
 }

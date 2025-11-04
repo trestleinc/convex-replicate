@@ -1,6 +1,14 @@
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
 
+/**
+ * Insert a new document with CRDT bytes (Yjs format).
+ *
+ * @param collectionName - Collection identifier
+ * @param documentId - Unique document identifier
+ * @param crdtBytes - ArrayBuffer containing Yjs CRDT bytes (Y.encodeStateAsUpdate)
+ * @param version - CRDT version number
+ */
 export const insertDocument = mutation({
   args: {
     collectionName: v.string(),
@@ -37,6 +45,14 @@ export const insertDocument = mutation({
   },
 });
 
+/**
+ * Update an existing document with new CRDT bytes (Yjs format).
+ *
+ * @param collectionName - Collection identifier
+ * @param documentId - Unique document identifier
+ * @param crdtBytes - ArrayBuffer containing Yjs CRDT bytes (Y.encodeStateAsUpdate)
+ * @param version - CRDT version number
+ */
 export const updateDocument = mutation({
   args: {
     collectionName: v.string(),
@@ -71,6 +87,12 @@ export const updateDocument = mutation({
   },
 });
 
+/**
+ * Delete a document from CRDT storage.
+ *
+ * @param collectionName - Collection identifier
+ * @param documentId - Unique document identifier
+ */
 export const deleteDocument = mutation({
   args: {
     collectionName: v.string(),
@@ -95,6 +117,14 @@ export const deleteDocument = mutation({
   },
 });
 
+/**
+ * Pull CRDT changes for incremental sync.
+ * Returns Yjs CRDT bytes for documents modified since the checkpoint.
+ *
+ * @param collectionName - Collection identifier
+ * @param checkpoint - Last sync checkpoint
+ * @param limit - Maximum number of changes to return (default: 100)
+ */
 export const pullChanges = query({
   args: {
     collectionName: v.string(),
@@ -150,6 +180,12 @@ export const pullChanges = query({
   },
 });
 
+/**
+ * Subscribe to changes in a collection.
+ * Returns the latest timestamp and count for change detection.
+ *
+ * @param collectionName - Collection identifier
+ */
 export const changeStream = query({
   args: {
     collectionName: v.string(),

@@ -1,29 +1,29 @@
 import { createCollection } from '@tanstack/react-db';
 import {
   convexCollectionOptions,
-  getLogger,
+  createConvexCollection,
   type ConvexCollection,
 } from '@trestleinc/convex-replicate-core';
 import { api } from '../convex/_generated/api';
 import { convexClient } from './router';
 import { useMemo } from 'react';
 
-const logger = getLogger(['hooks', 'useTasks']);
 
 export interface Task {
   id: string;
   text: string;
   isCompleted: boolean;
+  deleted?: boolean;
 }
 
 let tasksCollection: ConvexCollection<Task>;
 
 export function useTasks(initialData?: ReadonlyArray<Task>) {
-  logger.debug('Hook called with initialData', { taskCount: initialData?.length ?? 0 });
   return useMemo(() => {
     if (!tasksCollection) {
-      logger.debug('Creating collection with initialData', { taskCount: initialData?.length ?? 0 });
-      tasksCollection = createCollection(
+
+      // Step 1: Create raw collection with ALL config (params only passed once!)
+      const rawCollection = createCollection(
         convexCollectionOptions<Task>({
           convexClient,
           api: api.tasks,
@@ -32,6 +32,9 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
           initialData,
         })
       );
+
+      // Step 2: Wrap - params automatically extracted from rawCollection!
+      tasksCollection = createConvexCollection(rawCollection);
     }
     return tasksCollection;
   }, [initialData]);
