@@ -22,21 +22,19 @@ export function getTasksCollection(initialData?: ReadonlyArray<Task>): ConvexCol
   if (!tasksCollection) {
     logger.debug('Creating tasks collection', { taskCount: initialData?.length ?? 0 });
 
-    // Step 1: Create raw TanStack DB collection
+    // Step 1: Create raw TanStack DB collection with ALL config (0.3.0 API)
     const rawCollection = createCollection(
       convexCollectionOptions<Task>({
+        convexClient,
+        api: api.tasks,
+        collectionName: 'tasks',
         getKey: (task) => task.id,
         initialData,
       })
     );
 
-    // Step 2: Wrap with Convex offline support
-    // Type assertion needed due to TanStack DB version differences between Svelte and React packages
-    tasksCollection = createConvexCollection(rawCollection as any, {
-      convexClient,
-      api: api.tasks,
-      collectionName: 'tasks',
-    }) as ConvexCollection<Task>;
+    // Step 2: Wrap with Convex offline support - params automatically extracted!
+    tasksCollection = createConvexCollection(rawCollection as any) as ConvexCollection<Task>;
   }
   return tasksCollection;
 }
