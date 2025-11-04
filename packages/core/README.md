@@ -44,6 +44,7 @@ import { createCollection } from '@tanstack/react-db';
 import { convexCollectionOptions, type ConvexCollection } from '@trestleinc/convex-replicate-core';
 import { api } from '../convex/_generated/api';
 import { convexClient } from './router';
+import { useMemo } from 'react';
 
 export interface Task {
   id: string;
@@ -54,18 +55,20 @@ export interface Task {
 let tasksCollection: ConvexCollection<Task>;
 
 export function useTasks(initialData?: ReadonlyArray<Task>) {
-  if (!tasksCollection) {
-    tasksCollection = createCollection(
-      convexCollectionOptions<Task>({
-        convexClient,
-        api: api.tasks,          // Convex functions from tasks.ts
-        collectionName: 'tasks',
-        getKey: (task) => task.id,
-        initialData,
-      })
-    );
-  }
-  return tasksCollection;
+  return useMemo(() => {
+    if (!tasksCollection) {
+      tasksCollection = createCollection(
+        convexCollectionOptions<Task>({
+          convexClient,
+          api: api.tasks,          // Convex functions from tasks.ts
+          collectionName: 'tasks',
+          getKey: (task) => task.id,
+          initialData,
+        })
+      );
+    }
+    return tasksCollection;
+  }, [initialData]);
 }
 ```
 
@@ -204,26 +207,36 @@ export const changeStream = query({
 
 ### SSR: Data Preloading
 
-Load data on the server for instant page loads:
+Load data on the server for instant page loads. Create a dedicated query that reads from your main table:
+
+**Step 1: Create an SSR-friendly query**
+
+```typescript
+// convex/tasks.ts
+export const getTasks = query({
+  handler: async (ctx) => {
+    return await ctx.db
+      .query('tasks')
+      .filter((q) => q.neq(q.field('deleted'), true))
+      .collect();
+  },
+});
+```
+
+**Step 2: Load data in your route loader**
 
 ```typescript
 // TanStack Start route
 import { createFileRoute } from '@tanstack/react-router';
-import { loadCollection } from '@trestleinc/convex-replicate-core/ssr';
 import { ConvexHttpClient } from 'convex/browser';
 import { api } from '../convex/_generated/api';
 import type { Task } from '../useTasks';
 
+const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
+
 export const Route = createFileRoute('/tasks')({
   loader: async () => {
-    const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
-
-    const tasks = await loadCollection<Task>(httpClient, {
-      api: api.tasks,
-      collection: 'tasks',
-      limit: 100,
-    });
-
+    const tasks = await httpClient.query(api.tasks.getTasks);
     return { tasks };
   },
 });
@@ -237,6 +250,8 @@ function TasksPage() {
   return <TaskList tasks={tasks} />;
 }
 ```
+
+> **Note:** The `loadCollection` utility is available but has limitations. Using a dedicated query like above is simpler and more efficient.
 
 ### Logging
 

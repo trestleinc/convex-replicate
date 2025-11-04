@@ -172,23 +172,30 @@ import { v } from 'convex/values';
 
 export default defineSchema({
   tasks: defineTable({
-    id: v.string(),              // Client-generated UUID
-    text: v.string(),            // Your data
-    isCompleted: v.boolean(),    // Your data
-    version: v.number(),         // CRDT version
-    timestamp: v.number(),       // Last modification time
-    deleted: v.optional(v.boolean()), // Soft delete flag
+    // Required fields for Convex Replicate:
+    id: v.string(),              // Client-generated UUID (document identifier)
+    version: v.number(),         // CRDT version (for conflict detection)
+    timestamp: v.number(),       // Last modification time (for incremental sync)
+    deleted: v.optional(v.boolean()), // Soft delete flag (marks documents as deleted without removing them)
+    
+    // Your application fields:
+    text: v.string(),
+    isCompleted: v.boolean(),
   })
-    .index('by_user_id', ['id'])      // Required for updates
-    .index('by_timestamp', ['timestamp']), // Required for sync
+    .index('by_user_id', ['id'])      // Required for document lookups/updates
+    .index('by_timestamp', ['timestamp']), // Required for incremental sync
 });
 ```
 
 **Required fields:**
-- `id` - Client-generated UUID
-- `version` - CRDT version number
-- `timestamp` - Last modification timestamp
-- `deleted` - Optional soft delete flag
+- `id` - Client-generated UUID (document identifier)
+- `version` - CRDT version number (for optimistic concurrency control)
+- `timestamp` - Last modification timestamp (enables incremental sync)
+- `deleted` - Optional soft delete flag (allows "soft deletes" that can be synced to other devices)
+
+**Required indexes:**
+- `by_user_id` on `['id']` - Enables fast document lookups during updates
+- `by_timestamp` on `['timestamp']` - Enables efficient incremental synchronization
 
 ### Step 3: Create Replication Functions
 
@@ -205,7 +212,7 @@ import {
   deleteDocumentHelper,
   pullChangesHelper,
   changeStreamHelper,
-} from '@trestleinc/convex-replicate-core';
+} from '@trestleinc/convex-replicate-core/replication'; // IMPORTANT: Use /replication to avoid bundling Automerge on server!
 
 /**
  * TanStack DB endpoints - called by convexCollectionOptions
@@ -291,10 +298,16 @@ Create a hook that wraps TanStack DB with Automerge collection options:
 ```typescript
 // src/useTasks.ts
 import { createCollection } from '@tanstack/react-db';
-import { convexCollectionOptions } from '@trestleinc/convex-replicate-core';
+import {
+  convexCollectionOptions,
+  getLogger,
+  type ConvexCollection,
+} from '@trestleinc/convex-replicate-core';
 import { api } from '../convex/_generated/api';
 import { convexClient } from './router';
 import { useMemo } from 'react';
+
+const logger = getLogger(['hooks', 'useTasks']);
 
 export interface Task {
   id: string;
@@ -302,11 +315,16 @@ export interface Task {
   isCompleted: boolean;
 }
 
-let tasksCollection: ReturnType<typeof createCollection<Task>> | null = null;
+// Module-level singleton to prevent multiple collection instances
+// This ensures only one sync process runs, even across component remounts
+let tasksCollection: ConvexCollection<Task>;
 
 export function useTasks(initialData?: ReadonlyArray<Task>) {
+  logger.debug('Hook called with initialData', { taskCount: initialData?.length ?? 0 });
+  
   return useMemo(() => {
     if (!tasksCollection) {
+      logger.debug('Creating collection with initialData', { taskCount: initialData?.length ?? 0 });
       tasksCollection = createCollection(
         convexCollectionOptions<Task>({
           convexClient,
@@ -342,7 +360,7 @@ export function TaskList() {
   };
 
   const handleUpdate = (id: string, isCompleted: boolean) => {
-    collection.update(id, (draft) => {
+    collection.update(id, (draft: Task) => {
       draft.isCompleted = !isCompleted;
     });
   };
@@ -383,25 +401,36 @@ export function TaskList() {
 
 ### Server-Side Rendering (SSR)
 
-Preload data on the server for instant page loads:
+Preload data on the server for instant page loads. You'll need to create a separate query that reads from your main table:
+
+**Step 1: Create an SSR-friendly query**
 
 ```typescript
-// TanStack Start loader
+// convex/tasks.ts
+export const getTasks = query({
+  handler: async (ctx) => {
+    return await ctx.db
+      .query('tasks')
+      .filter((q) => q.neq(q.field('deleted'), true))
+      .collect();
+  },
+});
+```
+
+**Step 2: Load data in your route loader**
+
+```typescript
+// src/routes/index.tsx
 import { createFileRoute } from '@tanstack/react-router';
-import { loadCollection } from '@trestleinc/convex-replicate-core/ssr';
 import { ConvexHttpClient } from 'convex/browser';
 import { api } from '../convex/_generated/api';
+import type { Task } from '../useTasks';
 
-export const Route = createFileRoute('/tasks')({
+const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
+
+export const Route = createFileRoute('/')({
   loader: async () => {
-    const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
-
-    const tasks = await loadCollection<Task>(httpClient, {
-      api: api.tasks,
-      collection: 'tasks',
-      limit: 100,
-    });
-
+    const tasks = await httpClient.query(api.tasks.getTasks);
     return { tasks };
   },
 });
@@ -418,9 +447,18 @@ function TasksPage() {
 }
 ```
 
+> **Note:** The `loadCollection` utility from `@trestleinc/convex-replicate-core/ssr` is available but requires you to decode CRDT bytes. For most use cases, a simple query like `getTasks` above is easier and more efficient.
+
 ### Direct Component Usage (Advanced)
 
-For direct backend integration, you can use `ReplicateStorage`:
+> **⚠️ WARNING:** Using `ReplicateStorage` directly only writes to the component CRDT storage layer. It does NOT implement the dual-storage pattern (no writes to main table), which means:
+> - You cannot query this data efficiently in Convex
+> - You lose the benefits of reactive subscriptions on materialized docs
+> - You'll need to manually handle materialization
+> 
+> **Recommended:** Use the replication helpers (`insertDocumentHelper`, etc.) shown in Step 3 for the full dual-storage pattern.
+
+For advanced use cases where you need direct component access, you can use `ReplicateStorage`:
 
 ```typescript
 // convex/tasks.ts
@@ -488,7 +526,7 @@ export const watchTasks = query({
 
 ### Logging Configuration
 
-Configure logging for debugging and development:
+Configure logging for debugging and development using LogTape:
 
 ```typescript
 // src/routes/__root.tsx or app entry point
@@ -499,7 +537,7 @@ await configure({
   loggers: [
     {
       category: ['convex-replicate'],
-      lowestLevel: 'debug',
+      lowestLevel: 'debug',  // 'debug' | 'info' | 'warn' | 'error'
       sinks: ['console']
     }
   ],
@@ -511,7 +549,7 @@ Get a logger instance for custom logging:
 ```typescript
 import { getLogger } from '@trestleinc/convex-replicate-core';
 
-const logger = getLogger(['my-module']);
+const logger = getLogger(['my-module']); // Accepts string or string array
 
 logger.info('Operation started', { userId: '123' });
 logger.warn('Something unexpected', { reason: 'timeout' });
@@ -585,14 +623,20 @@ const tasks = await loadCollection<Task>(httpClient, {
 Get a logger instance for custom logging.
 
 **Parameters:**
-- `category` - Array of strings or single string for logger category
+- `category: string | string[]` - Logger category (string or array of strings)
 
 **Returns:** Logger with `debug()`, `info()`, `warn()`, `error()` methods
 
-**Example:**
+**Examples:**
 ```typescript
+// Single string
+const logger = getLogger('my-module');
+
+// String array for hierarchical categories
 const logger = getLogger(['hooks', 'useTasks']);
+
 logger.debug('Task created', { id: taskId });
+logger.info('Operation completed', { count: 5 });
 ```
 
 ### `@trestleinc/convex-replicate-component`

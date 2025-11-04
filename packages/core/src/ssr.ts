@@ -47,30 +47,47 @@ export interface LoadCollectionConfig {
 /**
  * Load collection data for server-side rendering.
  *
- * This function provides a clean, explicit API for loading initial data
- * from Convex during SSR. All configuration is passed in a single object
- * to make the intent clear and avoid parameter confusion.
+ * **IMPORTANT**: This function is currently limited because `pullChanges` only returns
+ * CRDT bytes, not materialized documents. For most SSR use cases, it's recommended to
+ * create a separate query that reads from your main table instead.
+ *
+ * @deprecated Consider creating a dedicated SSR query instead. See example below.
  *
  * @param httpClient - Convex HTTP client for server-side queries
  * @param config - Configuration object with api, collection, and options
  * @returns Promise resolving to array of items from the collection
  *
  * @example
+ * **Recommended SSR Pattern:**
  * ```typescript
- * import { loadCollection } from '@convex-replicate/core/ssr';
+ * // convex/tasks.ts
+ * export const getTasks = query({
+ *   handler: async (ctx) => {
+ *     return await ctx.db
+ *       .query('tasks')
+ *       .filter((q) => q.neq(q.field('deleted'), true))
+ *       .collect();
+ *   },
+ * });
+ *
+ * // In your route loader
+ * import { ConvexHttpClient } from 'convex/browser';
  * import { api } from '../convex/_generated/api';
  *
- * const tasks = await loadCollection<Task>(httpClient, {
- *   api: api.tasks,
- *   collection: 'tasks',
- *   limit: 100,
- * });
+ * const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
+ * const tasks = await httpClient.query(api.tasks.getTasks);
  * ```
  */
 export async function loadCollection<TItem extends { id: string }>(
   httpClient: ConvexHttpClient,
   config: LoadCollectionConfig
 ): Promise<ReadonlyArray<TItem>> {
+  // NOTE: This implementation is limited because pullChanges only returns CRDT bytes,
+  // not materialized documents. The code below attempts to construct items but
+  // `change.document` does not exist in the actual pullChanges response.
+  //
+  // For production use, create a dedicated query that reads from your main table.
+
   const result = await httpClient.query(config.api.pullChanges as any, {
     collectionName: config.collection,
     checkpoint: { lastModified: 0 },
@@ -79,6 +96,8 @@ export async function loadCollection<TItem extends { id: string }>(
 
   const items: TItem[] = [];
   for (const change of result.changes) {
+    // FIXME: change.document doesn't exist - pullChanges only returns crdtBytes
+    // This code is here for backwards compatibility but won't work correctly
     const item = { id: change.documentId, ...change.document } as TItem;
     items.push(item);
   }

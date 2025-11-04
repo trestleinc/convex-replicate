@@ -306,31 +306,95 @@ export const changeStream = query({
 
 ### 4. Client-Side Integration (TanStack DB)
 
+Create a custom hook that integrates TanStack DB with Convex Replicate:
+
 ```typescript
-import { AutomergeDocumentStore } from '@trestleinc/convex-replicate-core';
-import { SyncAdapter } from '@trestleinc/convex-replicate-core';
-import { convexCollectionOptions } from '@trestleinc/convex-replicate-core';
-import { createDB } from '@tanstack/db';
+// src/useTasks.ts
+import { createCollection } from '@tanstack/react-db';
+import {
+  convexCollectionOptions,
+  getLogger,
+  type ConvexCollection,
+} from '@trestleinc/convex-replicate-core';
+import { api } from '../convex/_generated/api';
+import { convexClient } from './router';
+import { useMemo } from 'react';
 
-// Create Automerge store with IndexedDB persistence
-const store = new AutomergeDocumentStore({ collectionName: 'tasks' });
+const logger = getLogger(['hooks', 'useTasks']);
 
-// Create sync adapter for Convex replication
-const adapter = new SyncAdapter({
-  store,
-  convexClient,
-  api: api.tasks,
-});
+export interface Task {
+  id: string;
+  text: string;
+  isCompleted: boolean;
+}
 
-// Create reactive database
-const db = createDB({
-  collections: {
-    tasks: convexCollectionOptions,
-  },
-});
+// Module-level singleton to prevent multiple collection instances
+let tasksCollection: ConvexCollection<Task>;
 
-// Start syncing
-await adapter.sync();
+export function useTasks(initialData?: ReadonlyArray<Task>) {
+  logger.debug('Hook called with initialData', { taskCount: initialData?.length ?? 0 });
+  
+  return useMemo(() => {
+    if (!tasksCollection) {
+      logger.debug('Creating collection with initialData', { taskCount: initialData?.length ?? 0 });
+      tasksCollection = createCollection(
+        convexCollectionOptions<Task>({
+          convexClient,
+          api: api.tasks,
+          collectionName: 'tasks',
+          getKey: (task) => task.id,
+          initialData,
+        })
+      );
+    }
+    return tasksCollection;
+  }, [initialData]);
+}
+```
+
+Use in React components:
+
+```typescript
+// src/routes/index.tsx
+import { useLiveQuery } from '@tanstack/react-db';
+import { useTasks } from '../useTasks';
+
+export function TaskList() {
+  const collection = useTasks();
+  const { data: tasks, isLoading } = useLiveQuery(collection);
+
+  const handleCreate = () => {
+    collection.insert({
+      id: crypto.randomUUID(),
+      text: 'New task',
+      isCompleted: false,
+    });
+  };
+
+  const handleUpdate = (id: string) => {
+    collection.update(id, (draft) => {
+      draft.isCompleted = !draft.isCompleted;
+    });
+  };
+
+  if (isLoading) return <div>Loading...</div>;
+
+  return (
+    <div>
+      <button onClick={handleCreate}>Add Task</button>
+      {tasks.map(task => (
+        <div key={task.id}>
+          <input
+            type="checkbox"
+            checked={task.isCompleted}
+            onChange={() => handleUpdate(task.id)}
+          />
+          <span>{task.text}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 ```
 
 ## Key API Concepts
@@ -386,16 +450,23 @@ export default defineSchema({
 ConvexReplicate uses LogTape for structured logging.
 
 ```typescript
-import { configureLogger, getLogger } from '@trestleinc/convex-replicate-core';
+import { configure, getConsoleSink } from '@logtape/logtape';
+import { getLogger } from '@trestleinc/convex-replicate-core';
 
-// Configure logging
-configureLogger({
-  level: 'debug', // 'debug' | 'info' | 'warn' | 'error'
-  enableConsole: true,
+// Configure logging (in app entry point)
+await configure({
+  sinks: { console: getConsoleSink() },
+  loggers: [
+    {
+      category: ['convex-replicate'],
+      lowestLevel: 'debug', // 'debug' | 'info' | 'warn' | 'error'
+      sinks: ['console']
+    }
+  ],
 });
 
 // Get logger instance
-const logger = getLogger('my-module');
+const logger = getLogger(['my-module']); // Accepts string or string array
 
 logger.info('Operation started', { userId: '123' });
 logger.warn('Something unexpected', { reason: 'timeout' });

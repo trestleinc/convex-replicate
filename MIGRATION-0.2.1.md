@@ -26,15 +26,15 @@ Version 0.2.1 moves Automerge from being bundled to a peer dependency, resulting
 **Using Bun (Automatic):**
 Bun automatically installs peer dependencies, so just upgrade the packages:
 
-\`\`\`bash
+```bash
 bun add @trestleinc/convex-replicate-core@^0.2.1 @trestleinc/convex-replicate-component@^0.2.1
 # Automerge peer dependencies are installed automatically! ✨
-\`\`\`
+```
 
 **Using npm/yarn/pnpm (Manual):**
 You must explicitly install peer dependencies:
 
-\`\`\`bash
+```bash
 # npm
 npm install @automerge/automerge @automerge/automerge-repo-storage-indexeddb
 
@@ -43,11 +43,11 @@ yarn add @automerge/automerge @automerge/automerge-repo-storage-indexeddb
 
 # pnpm
 pnpm add @automerge/automerge @automerge/automerge-repo-storage-indexeddb
-\`\`\`
+```
 
 ### Step 2: Update Your package.json
 
-\`\`\`json
+```json
 {
   "dependencies": {
     "@automerge/automerge": "^3.1.2",
@@ -56,7 +56,7 @@ pnpm add @automerge/automerge @automerge/automerge-repo-storage-indexeddb
     "@trestleinc/convex-replicate-component": "^0.2.1"
   }
 }
-\`\`\`
+```
 
 ### Step 3: No Code Changes Required!
 
@@ -66,12 +66,12 @@ Your application code remains the same. Convex Replicate still imports and uses 
 
 ### Smaller Package Size
 
-\`\`\`
+```
 Before: @trestleinc/convex-replicate-core → 150KB
 After:  @trestleinc/convex-replicate-core → 65KB
 
 Reduction: -57% (85KB saved) 🎉
-\`\`\`
+```
 
 ### Better Bundler Compatibility
 
@@ -97,14 +97,14 @@ You can now:
 ### TypeScript Errors
 
 **Solution:** Ensure your `package.json` includes both Automerge packages:
-\`\`\`json
+```json
 {
   "dependencies": {
     "@automerge/automerge": "^3.1.2",
     "@automerge/automerge-repo-storage-indexeddb": "^2.4.0"
   }
 }
-\`\`\`
+```
 
 ### WASM Loading Issues
 
