@@ -94,9 +94,6 @@ export const changeStream = query({
 
 export const getTasks = query({
   handler: async (ctx) => {
-    return await ctx.db
-      .query('tasks')
-      .filter((q) => q.neq(q.field('deleted'), true))
-      .collect();
+    return await ctx.db.query('tasks').collect();
   },
 });

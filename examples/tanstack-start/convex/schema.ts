@@ -8,6 +8,8 @@ export default defineSchema({
     isCompleted: v.boolean(),
     version: v.number(),
     timestamp: v.number(),
+    // Keep deleted field optional for backwards compatibility with existing data
+    // New items won't have it, but old items might
     deleted: v.optional(v.boolean()),
   })
     .index('by_user_id', ['id'])

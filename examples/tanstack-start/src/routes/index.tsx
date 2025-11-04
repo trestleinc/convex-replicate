@@ -90,7 +90,7 @@ function LiveTasksView({ initialTasks }: { initialTasks: ReadonlyArray<Task> }) 
     e.preventDefault();
     if (newTaskText.trim()) {
       const id = crypto.randomUUID();
-      collection.insert({ id, text: newTaskText.trim(), isCompleted: false, deleted: false });
+      collection.insert({ id, text: newTaskText.trim(), isCompleted: false });
       setNewTaskText('');
     }
   };

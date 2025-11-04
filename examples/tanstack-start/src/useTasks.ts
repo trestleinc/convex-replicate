@@ -12,7 +12,6 @@ export interface Task {
   id: string;
   text: string;
   isCompleted: boolean;
-  deleted?: boolean;
 }
 
 let tasksCollection: ConvexCollection<Task>;
