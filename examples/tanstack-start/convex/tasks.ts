@@ -55,10 +55,16 @@ export const deleteDocument = mutation({
   args: {
     collectionName: v.string(),
     documentId: v.string(),
+    crdtBytes: v.bytes(),
+    materializedDoc: v.any(),
+    version: v.number(),
   },
   handler: async (ctx, args) => {
     return await deleteDocumentHelper(ctx, components, 'tasks', {
       id: args.documentId,
+      crdtBytes: args.crdtBytes,
+      materializedDoc: args.materializedDoc,
+      version: args.version,
     });
   },
 });

@@ -142,23 +142,18 @@ export function convexCollectionOptions<T extends object>({
 
             // Track seen updates for instant replication confirmation
             // Items must have 'id' and 'timestamp' fields matching our schema
-            const serverKeys = new Set<string | number>();
-
             for (const item of items) {
               const itemAny = item as any;
               if (itemAny.id && itemAny.timestamp) {
                 seenUpdates.set(itemAny.id, itemAny.timestamp);
               }
-
-              // Track which items exist on server
-              const key = getKey(item as T);
-              serverKeys.add(key);
             }
 
             // Sync all items from server to TanStack DB
+            // Server-side filtering already excludes deleted items (WHERE deleted !== true)
+            // So we only need to insert/update items that are in the response
             begin();
 
-            // First pass: Insert/update items from server
             for (const item of items) {
               const key = getKey(item as T);
 
@@ -170,14 +165,11 @@ export function convexCollectionOptions<T extends object>({
               }
             }
 
-            // Second pass: Detect deletions (items in local collection but not on server)
-            for (const [localKey, localItem] of (params as any).collection.entries()) {
-              if (!serverKeys.has(localKey)) {
-                write({ type: 'delete', value: localItem });
-              }
-            }
-
             commit();
+
+            // ✅ NO second pass needed!
+            // Deleted items are filtered server-side and never appear in the subscription.
+            // Items with deleted: true are marked on the server but filtered by list() query.
 
             logger.debug('Successfully synced items to collection', {
               count: items.length,
@@ -386,11 +378,22 @@ export function createConvexCollection<T extends object>(
           // Convert Uint8Array to ArrayBuffer for Convex v.bytes()
           let result: any;
 
+          // IMPORTANT: Delete is now treated as UPDATE with deleted: true flag
+          // All mutation types (insert/update/delete) send CRDT bytes for consistency
           if (mutation.type === 'delete') {
-            // Delete only needs collectionName and documentId
+            // Get the item from collection to include in materializedDoc
+            const currentItem = rawCollection.get(mutation.key);
+
             result = await convexClient.mutation(mutationFn, {
               collectionName,
               documentId: String(mutation.key),
+              crdtBytes: update.buffer, // ✅ Now sends CRDT bytes
+              materializedDoc: {
+                ...(currentItem || mutation.modified || {}), // Include existing data
+                deleted: true,
+                deletedAt: Date.now(),
+              },
+              version: Date.now(),
             });
           } else {
             // Insert and update need full payload
@@ -553,7 +556,9 @@ export function createConvexCollection<T extends object>(
     },
 
     // Wrap delete to use offline transactions
-    delete: (key: string | number | Array<string | number>, config?: OperationConfig) => {
+    // IMPORTANT: Delete is treated as an UPDATE with deleted: true flag
+    // This maintains CRDT consistency and enables proper replication matching
+    delete: (key: string | number | (string | number)[], config?: OperationConfig) => {
       const tx = offline.createOfflineTransaction({
         mutationFnName: 'replicateToConvex',
         autoCommit: true,
@@ -563,10 +568,22 @@ export function createConvexCollection<T extends object>(
         // Call raw collection inside ambient transaction
         rawCollection.delete(key, config);
 
-        // Update Yjs Map
+        // Update Yjs Map: SET deleted flag instead of deleting from ymap
+        // This ensures CRDT bytes are sent to server for proper replication
         const keys = Array.isArray(key) ? key : [key];
         for (const k of keys) {
-          ymap.delete(String(k));
+          const itemKey = String(k);
+          let ydocItem = ymap.get(itemKey) as Y.Map<any> | undefined;
+
+          if (!ydocItem) {
+            // Create Y.Map if it doesn't exist (defensive coding)
+            ydocItem = new Y.Map();
+            ymap.set(itemKey, ydocItem);
+          }
+
+          // Mark as deleted in Yjs doc (will be encoded in CRDT bytes)
+          (ydocItem as Y.Map<any>).set('deleted', true);
+          (ydocItem as Y.Map<any>).set('deletedAt', Date.now());
         }
       });
 

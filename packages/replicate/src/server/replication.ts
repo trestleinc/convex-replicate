@@ -152,8 +152,14 @@ export async function updateDocumentHelper<_DataModel extends GenericDataModel>(
 /**
  * Soft delete a document from both the CRDT component and the main application table.
  *
+ * IMPORTANT: Delete is treated as an UPDATE operation with deleted: true flag.
+ * This ensures CRDT consistency, version tracking, and proper replication matching.
+ *
  * Marks the document as deleted but keeps it in the database for 30-day retention.
  * This enables:
+ * - CRDT consistency (Yjs doc stays in sync)
+ * - Replication matching (awaitReplication works with timestamp metadata)
+ * - Version tracking (proper conflict resolution)
  * - Undo/restore functionality
  * - Audit trails
  * - Data safety (no accidental permanent loss)
@@ -161,53 +167,62 @@ export async function updateDocumentHelper<_DataModel extends GenericDataModel>(
  * @param ctx - Convex mutation context
  * @param components - Generated components from Convex
  * @param tableName - Name of the main application table
- * @param args - Document ID
- * @returns Success indicator with metadata
+ * @param args - Document data with id, crdtBytes, materializedDoc (with deleted: true), and version
+ * @returns Success indicator with metadata including version
  */
 export async function deleteDocumentHelper<_DataModel extends GenericDataModel>(
   ctx: unknown,
   components: unknown,
   tableName: string,
-  args: { id: string }
+  args: { id: string; crdtBytes: ArrayBuffer; materializedDoc: unknown; version: number }
 ): Promise<{
   success: boolean;
   metadata: {
     documentId: string;
     timestamp: number;
+    version: number;
     collectionName: string;
   };
 }> {
-  // Use timestamp for replication matching and soft delete tracking
+  // Use consistent timestamp for both writes to enable sync matching
   const timestamp = Date.now();
 
-  // Soft delete from component (still stores CRDT bytes marked as deleted)
-  await (ctx as any).runMutation((components as any).replicate.public.deleteDocument, {
+  // Treat as update - write CRDT bytes to component for consistency
+  await (ctx as any).runMutation((components as any).replicate.public.updateDocument, {
     collectionName: tableName,
     documentId: args.id,
+    crdtBytes: args.crdtBytes,
+    version: args.version,
   });
 
-  // Soft delete from main table (mark as deleted instead of removing)
+  // Update materialized doc in main table with deleted flag
   const db = (ctx as any).db;
   const existing = await db
     .query(tableName)
     .withIndex('by_user_id', (q: unknown) => (q as any).eq('id', args.id))
     .first();
 
-  if (existing) {
-    // Soft delete: patch with deleted flags instead of db.delete()
-    await db.patch(existing._id, {
-      deleted: true,
-      deletedAt: timestamp,
-      timestamp, // Update timestamp for replication tracking
-    });
+  if (!existing) {
+    throw new Error(`Document ${args.id} not found in table ${tableName}`);
   }
 
-  // Return metadata for replication matching
+  const cleanDoc = cleanDocument(args.materializedDoc) as Record<string, unknown>;
+
+  await db.patch(existing._id, {
+    ...cleanDoc,
+    deleted: true,
+    deletedAt: timestamp,
+    version: args.version,
+    timestamp,
+  });
+
+  // Return metadata for replication matching (same as insert/update)
   return {
     success: true,
     metadata: {
       documentId: args.id,
       timestamp,
+      version: args.version,
       collectionName: tableName,
     },
   };
