@@ -1,4 +1,17 @@
-// Main exports - unified client API for @trestleinc/replicate
+/**
+ * Client-side utilities for browser/React code.
+ * Import this in your frontend components.
+ *
+ * @example
+ * ```typescript
+ * // src/useTasks.ts
+ * import {
+ *   convexCollectionOptions,
+ *   createConvexCollection,
+ *   type ConvexCollection,
+ * } from '@trestleinc/replicate/client';
+ * ```
+ */
 
 // Component client (ReplicateStorage class)
 export { ReplicateStorage } from './storage.js';
@@ -10,9 +23,6 @@ export {
   type ConvexCollection,
   type ConvexCollectionOptionsConfig,
 } from './collection.js';
-
-// Logger utilities
-export { configureLogger, getLogger } from './logger.js';
 
 // Re-export Yjs for convenience
 export * as Y from 'yjs';

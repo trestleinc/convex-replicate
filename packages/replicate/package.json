@@ -25,17 +25,17 @@
   },
   "exports": {
     "./package.json": "./package.json",
-    ".": {
+    "./client": {
       "import": {
         "@convex-dev/component-source": "./src/client/index.ts",
         "types": "./dist/client/index.d.ts",
         "default": "./dist/index.js"
       }
     },
-    "./replication": {
+    "./server": {
       "import": {
-        "types": "./dist/server/replication.d.ts",
-        "default": "./dist/replication.js"
+        "types": "./dist/server/index.d.ts",
+        "default": "./dist/server.js"
       }
     },
     "./ssr": {

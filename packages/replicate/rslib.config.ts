@@ -38,8 +38,8 @@ export default defineConfig({
       },
     },
     {
-      // Server replication - BUNDLED (default mode)
-      id: 'replication',
+      // Server (Convex backend) - BUNDLED (default mode)
+      id: 'server',
       format: 'esm',
       syntax: 'es2022',
       dts: {
@@ -59,7 +59,7 @@ export default defineConfig({
       },
       source: {
         entry: {
-          replication: './src/server/replication.ts', // ← Simple file entry (bundled)
+          server: './src/server/index.ts', // ← Exports all server utilities
         },
       },
     },

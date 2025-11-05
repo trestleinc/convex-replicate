@@ -100,7 +100,12 @@ export function convexCollectionOptions<T extends object>({
   _convexClient: ConvexClient;
   _api: typeof api;
   _collectionName: string;
+  _seenUpdates: Map<string, number>;
 } {
+  // Track seen document updates for instant replication confirmation
+  // Shared between subscription and awaitReplication
+  const seenUpdates = new Map<string, number>();
+
   return {
     getKey,
 
@@ -108,6 +113,7 @@ export function convexCollectionOptions<T extends object>({
     _convexClient: convexClient,
     _api: api,
     _collectionName: collectionName,
+    _seenUpdates: seenUpdates,
 
     sync: {
       sync: (params: any) => {
@@ -134,6 +140,15 @@ export function convexCollectionOptions<T extends object>({
               itemCount: items.length,
             });
 
+            // Track seen updates for instant replication confirmation
+            // Items must have 'id' and 'timestamp' fields matching our schema
+            for (const item of items) {
+              const itemAny = item as any;
+              if (itemAny.id && itemAny.timestamp) {
+                seenUpdates.set(itemAny.id, itemAny.timestamp);
+              }
+            }
+
             // Sync all items from server to TanStack DB
             begin();
             for (const item of items) {
@@ -150,6 +165,7 @@ export function convexCollectionOptions<T extends object>({
 
             logger.debug('Successfully synced items to collection', {
               count: items.length,
+              trackedUpdates: seenUpdates.size,
             });
           } catch (error: any) {
             logger.error('Failed to sync items from subscription', {
@@ -233,8 +249,9 @@ export function createConvexCollection<T extends object>(
   const api = config._api;
   const collectionName = config._collectionName;
   const getKey = config.getKey;
+  const seenUpdates = config._seenUpdates; // Shared with subscription
 
-  if (!convexClient || !api || !collectionName) {
+  if (!convexClient || !api || !collectionName || !seenUpdates) {
     throw new Error(
       'createConvexCollection requires a collection created with convexCollectionOptions. ' +
         'Make sure you pass convexClient, api, and collectionName to convexCollectionOptions.'
@@ -248,12 +265,12 @@ export function createConvexCollection<T extends object>(
   // Note: We don't fetch CRDT bytes for reading anymore.
   // Instead, we rely on the subscription in convexCollectionOptions which:
   // 1. Writes initialData from SSR (materialized docs)
-  // 2. Subscribes to stream for incremental real-time updates
+  // 2. Subscribes to list query which tracks seen updates in seenUpdates map
   // The Yjs/CRDT layer is only used for encoding mutations before sending to Convex.
 
   /**
    * Wait for a mutation to replicate back from the server.
-   * Polls stream query to find matching document by timestamp and documentId.
+   * First checks seenUpdates map (instant), then falls back to polling stream query.
    *
    * @param timestamp - The mutation timestamp to match
    * @param documentId - The document ID to match
@@ -265,56 +282,49 @@ export function createConvexCollection<T extends object>(
     timeout = 30000
   ): Promise<void> {
     const startTime = Date.now();
-    let checkpoint = { lastModified: timestamp - 1 }; // Start just before mutation timestamp
 
     logger.debug('awaitReplication started', { timestamp, documentId, timeout });
 
-    while (Date.now() - startTime < timeout) {
-      try {
-        const result = await convexClient.query(api.stream, {
-          collectionName,
-          checkpoint,
-          limit: 100,
-        });
-
-        // Check if our mutation is in the changes
-        for (const change of result.changes) {
-          if (change.documentId === documentId && change.timestamp >= timestamp) {
-            logger.debug('awaitReplication found match', {
-              documentId,
-              timestamp,
-              changeTimestamp: change.timestamp,
-              elapsed: Date.now() - startTime,
-            });
-            return; // Found it!
-          }
-        }
-
-        checkpoint = result.checkpoint;
-
-        // If no more changes, wait before polling again
-        if (!result.hasMore) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-      } catch (error: any) {
-        logger.error('awaitReplication query error', {
+    // Fast path: Check seenUpdates map first (instant lookup from subscription)
+    const checkSeenUpdates = () => {
+      const seenTimestamp = seenUpdates.get(documentId);
+      if (seenTimestamp && seenTimestamp >= timestamp) {
+        logger.debug('awaitReplication found in seenUpdates (instant)', {
           documentId,
           timestamp,
-          error: error?.message,
+          seenTimestamp,
+          elapsed: Date.now() - startTime,
         });
-        // Continue polling despite errors (may be transient)
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        return true;
       }
-    }
+      return false;
+    };
 
-    // Timeout reached
-    logger.warn('awaitReplication timeout', {
-      documentId,
-      timestamp,
-      timeout,
-      elapsed: Date.now() - startTime,
+    // Check immediately
+    if (checkSeenUpdates()) return;
+
+    // Poll the seenUpdates map (much faster than network queries)
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        clearInterval(intervalId);
+        logger.warn('awaitReplication timeout', {
+          documentId,
+          timestamp,
+          timeout,
+          elapsed: Date.now() - startTime,
+        });
+        reject(new Error(`Sync timeout for document ${documentId} after ${timeout}ms`));
+      }, timeout);
+
+      // Check every 50ms (subscription will update seenUpdates)
+      const intervalId = setInterval(() => {
+        if (checkSeenUpdates()) {
+          clearInterval(intervalId);
+          clearTimeout(timeoutId);
+          resolve();
+        }
+      }, 50);
     });
-    throw new Error(`Sync timeout for document ${documentId} after ${timeout}ms`);
   }
 
   // Create offline executor
@@ -387,24 +397,40 @@ export function createConvexCollection<T extends object>(
 
           // KEY CHANGE: Block until mutation replicates back from server
           // This prevents flicker by ensuring optimistic state stays until server confirms
+          // BUT: Only wait for FRESH mutations (< 2 seconds old) to enable fast offline queue sync
           if (result?.metadata) {
-            logger.debug('Waiting for replication confirmation', {
-              documentId: result.metadata.documentId,
-              timestamp: result.metadata.timestamp,
-              idempotencyKey,
-            });
+            const transactionAge = Date.now() - transaction.createdAt.getTime();
+            const isFreshMutation = transactionAge < 2000; // 2 second threshold
 
-            await awaitReplication(
-              result.metadata.timestamp,
-              result.metadata.documentId,
-              30000 // 30 second timeout
-            );
+            if (isFreshMutation) {
+              // Fresh mutation from user action - wait to prevent flicker
+              logger.debug('Waiting for replication confirmation (fresh mutation)', {
+                documentId: result.metadata.documentId,
+                timestamp: result.metadata.timestamp,
+                transactionAge,
+                idempotencyKey,
+              });
 
-            logger.info('Replication confirmed', {
-              documentId: result.metadata.documentId,
-              elapsed: Date.now() - result.metadata.timestamp,
-              idempotencyKey,
-            });
+              await awaitReplication(
+                result.metadata.timestamp,
+                result.metadata.documentId,
+                30000 // 30 second timeout
+              );
+
+              logger.info('Replication confirmed', {
+                documentId: result.metadata.documentId,
+                elapsed: Date.now() - result.metadata.timestamp,
+                idempotencyKey,
+              });
+            } else {
+              // Old transaction from offline queue - skip wait for fast sync
+              logger.debug('Skipping replication wait (offline queue replay)', {
+                documentId: result.metadata.documentId,
+                timestamp: result.metadata.timestamp,
+                transactionAge,
+                idempotencyKey,
+              });
+            }
           }
         } catch (error: any) {
           logger.error('Replication failed', {

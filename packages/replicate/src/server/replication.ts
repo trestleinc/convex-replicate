@@ -149,13 +149,19 @@ export async function updateDocumentHelper<_DataModel extends GenericDataModel>(
 }
 
 /**
- * Delete a document from both the CRDT component and the main application table.
+ * Soft delete a document from both the CRDT component and the main application table.
+ *
+ * Marks the document as deleted but keeps it in the database for 30-day retention.
+ * This enables:
+ * - Undo/restore functionality
+ * - Audit trails
+ * - Data safety (no accidental permanent loss)
  *
  * @param ctx - Convex mutation context
  * @param components - Generated components from Convex
  * @param tableName - Name of the main application table
  * @param args - Document ID
- * @returns Success indicator
+ * @returns Success indicator with metadata
  */
 export async function deleteDocumentHelper<_DataModel extends GenericDataModel>(
   ctx: unknown,
@@ -170,16 +176,16 @@ export async function deleteDocumentHelper<_DataModel extends GenericDataModel>(
     collectionName: string;
   };
 }> {
-  // Use timestamp for replication matching (deletes don't have version)
+  // Use timestamp for replication matching and soft delete tracking
   const timestamp = Date.now();
 
-  // Delete from component
+  // Soft delete from component (still stores CRDT bytes marked as deleted)
   await (ctx as any).runMutation((components as any).replicate.public.deleteDocument, {
     collectionName: tableName,
     documentId: args.id,
   });
 
-  // Delete from main table
+  // Soft delete from main table (mark as deleted instead of removing)
   const db = (ctx as any).db;
   const existing = await db
     .query(tableName)
@@ -187,7 +193,12 @@ export async function deleteDocumentHelper<_DataModel extends GenericDataModel>(
     .first();
 
   if (existing) {
-    await db.delete(existing._id);
+    // Soft delete: patch with deleted flags instead of db.delete()
+    await db.patch(existing._id, {
+      deleted: true,
+      deletedAt: timestamp,
+      timestamp, // Update timestamp for replication tracking
+    });
   }
 
   // Return metadata for replication matching
