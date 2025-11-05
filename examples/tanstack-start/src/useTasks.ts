@@ -3,7 +3,7 @@ import {
   convexCollectionOptions,
   createConvexCollection,
   type ConvexCollection,
-} from '@trestleinc/replicate';
+} from '@trestleinc/replicate/client';
 import { api } from '../convex/_generated/api';
 import { convexClient } from './router';
 import { useMemo } from 'react';

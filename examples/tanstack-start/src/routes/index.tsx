@@ -4,18 +4,14 @@ import { useState } from 'react';
 import type { Task } from '../useTasks';
 import { useTasks } from '../useTasks';
 import { ConvexHttpClient } from 'convex/browser';
-import { getLogger } from '@trestleinc/replicate';
 import { useLiveQuery } from '@tanstack/react-db';
 import { api } from '../../convex/_generated/api';
 
 const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
-const logger = getLogger(['loader']);
 
 export const Route = createFileRoute('/')({
   loader: async () => {
-    logger.debug('Starting SSR data fetch');
     const tasks = await httpClient.query(api.tasks.list);
-    logger.debug('Fetched tasks from SSR', { taskCount: tasks.length });
     return { tasks };
   },
   component: HomeComponent,

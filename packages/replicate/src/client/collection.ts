@@ -142,15 +142,23 @@ export function convexCollectionOptions<T extends object>({
 
             // Track seen updates for instant replication confirmation
             // Items must have 'id' and 'timestamp' fields matching our schema
+            const serverKeys = new Set<string | number>();
+
             for (const item of items) {
               const itemAny = item as any;
               if (itemAny.id && itemAny.timestamp) {
                 seenUpdates.set(itemAny.id, itemAny.timestamp);
               }
+
+              // Track which items exist on server
+              const key = getKey(item as T);
+              serverKeys.add(key);
             }
 
             // Sync all items from server to TanStack DB
             begin();
+
+            // First pass: Insert/update items from server
             for (const item of items) {
               const key = getKey(item as T);
 
@@ -161,6 +169,14 @@ export function convexCollectionOptions<T extends object>({
                 write({ type: 'insert', value: item as T });
               }
             }
+
+            // Second pass: Detect deletions (items in local collection but not on server)
+            for (const [localKey, localItem] of (params as any).collection.entries()) {
+              if (!serverKeys.has(localKey)) {
+                write({ type: 'delete', value: localItem });
+              }
+            }
+
             commit();
 
             logger.debug('Successfully synced items to collection', {

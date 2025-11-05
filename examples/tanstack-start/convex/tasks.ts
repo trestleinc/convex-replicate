@@ -6,7 +6,7 @@ import {
   updateDocumentHelper,
   deleteDocumentHelper,
   streamHelper,
-} from '@trestleinc/replicate/replication';
+} from '@trestleinc/replicate/server';
 
 /**
  * TanStack DB endpoints - called by convexCollectionOptions
@@ -84,6 +84,10 @@ export const stream = query({
 
 export const list = query({
   handler: async (ctx) => {
-    return await ctx.db.query('tasks').collect();
+    // Only return non-deleted items (soft delete filtering)
+    return await ctx.db
+      .query('tasks')
+      .filter((q) => q.or(q.eq(q.field('deleted'), undefined), q.eq(q.field('deleted'), false)))
+      .collect();
   },
 });
