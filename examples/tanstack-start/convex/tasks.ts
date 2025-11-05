@@ -5,7 +5,6 @@ import {
   insertDocumentHelper,
   updateDocumentHelper,
   deleteDocumentHelper,
-  streamHelper,
 } from '@trestleinc/replicate/server';
 
 /**
@@ -69,26 +68,11 @@ export const deleteDocument = mutation({
   },
 });
 
-export const stream = query({
-  args: {
-    collectionName: v.string(),
-    checkpoint: v.object({ lastModified: v.number() }),
-    limit: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    return await streamHelper(ctx, components, 'tasks', {
-      checkpoint: args.checkpoint,
-      limit: args.limit,
-    });
-  },
-});
-
 /**
- * Regular query endpoints for SSR/server-side operations
- * These read from the materialized main table for efficient queries
+ * Stream endpoint for real-time subscriptions
+ * Reads from the materialized main table and streams updates to clients
  */
-
-export const list = query({
+export const stream = query({
   handler: async (ctx) => {
     // Only return non-deleted items (soft delete filtering)
     return await ctx.db

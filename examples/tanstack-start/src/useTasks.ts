@@ -25,7 +25,6 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
           convexClient,
           api: {
             stream: api.tasks.stream,
-            list: api.tasks.list,
             insertDocument: api.tasks.insertDocument,
             updateDocument: api.tasks.updateDocument,
             deleteDocument: api.tasks.deleteDocument,

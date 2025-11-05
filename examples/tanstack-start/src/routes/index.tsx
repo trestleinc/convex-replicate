@@ -11,7 +11,7 @@ const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
 
 export const Route = createFileRoute('/')({
   loader: async () => {
-    const tasks = await httpClient.query(api.tasks.list);
+    const tasks = await httpClient.query(api.tasks.stream);
     return { tasks };
   },
   component: HomeComponent,

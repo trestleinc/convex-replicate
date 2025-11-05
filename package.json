@@ -40,18 +40,18 @@
   },
   "dependencies": {
     "@logtape/logtape": "1.1.2",
-    "@tanstack/db": "0.4.17",
-    "@tanstack/offline-transactions": "0.1.0",
+    "@tanstack/db": "0.4.19",
+    "@tanstack/offline-transactions": "0.1.2",
     "yjs": "13.6.27",
     "zod": "4.1.12"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.3.2",
+    "@biomejs/biome": "2.3.4",
     "@semantic-release/changelog": "6.0.3",
     "@semantic-release/exec": "7.1.0",
     "@semantic-release/git": "10.0.1",
     "@semantic-release/github": "12.0.1",
-    "@types/node": "22.18.12",
+    "@types/node": "24.10.0",
     "convex": "1.28.2",
     "semantic-release": "25.0.1",
     "typescript": "5.9.3"

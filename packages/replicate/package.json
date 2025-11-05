@@ -59,16 +59,16 @@
     "LICENSE"
   ],
   "dependencies": {
-    "yjs": "^13.6.11",
-    "@tanstack/offline-transactions": "^0.1.0",
-    "@logtape/logtape": "^0.8.2"
+    "yjs": "13.6.27",
+    "@tanstack/offline-transactions": "0.1.2",
+    "@logtape/logtape": "1.1.2"
   },
   "peerDependencies": {
-    "convex": "^1.28.0",
-    "@tanstack/db": "^0.4.17"
+    "convex": "1.28.2",
+    "@tanstack/db": "0.4.19"
   },
   "devDependencies": {
-    "@rslib/core": "0.17.0"
+    "@rslib/core": "0.17.1"
   },
   "main": "./dist/index.js",
   "types": "./dist/client/index.d.ts",
