@@ -40,7 +40,18 @@ export async function insertDocumentHelper<_DataModel extends GenericDataModel>(
   components: unknown,
   tableName: string,
   args: { id: string; crdtBytes: ArrayBuffer; materializedDoc: unknown; version: number }
-): Promise<{ success: boolean }> {
+): Promise<{
+  success: boolean;
+  metadata: {
+    documentId: string;
+    timestamp: number;
+    version: number;
+    collectionName: string;
+  };
+}> {
+  // Use consistent timestamp for both writes to enable sync matching
+  const timestamp = Date.now();
+
   // Write CRDT bytes to component
   await (ctx as any).runMutation((components as any).replicate.public.insertDocument, {
     collectionName: tableName,
@@ -57,10 +68,19 @@ export async function insertDocumentHelper<_DataModel extends GenericDataModel>(
     id: args.id,
     ...cleanDoc,
     version: args.version,
-    timestamp: Date.now(),
+    timestamp,
   });
 
-  return { success: true };
+  // Return metadata for sync matching
+  return {
+    success: true,
+    metadata: {
+      documentId: args.id,
+      timestamp,
+      version: args.version,
+      collectionName: tableName,
+    },
+  };
 }
 
 /**
@@ -77,7 +97,18 @@ export async function updateDocumentHelper<_DataModel extends GenericDataModel>(
   components: unknown,
   tableName: string,
   args: { id: string; crdtBytes: ArrayBuffer; materializedDoc: unknown; version: number }
-): Promise<{ success: boolean }> {
+): Promise<{
+  success: boolean;
+  metadata: {
+    documentId: string;
+    timestamp: number;
+    version: number;
+    collectionName: string;
+  };
+}> {
+  // Use consistent timestamp for both writes to enable sync matching
+  const timestamp = Date.now();
+
   // Write CRDT bytes to component
   await (ctx as any).runMutation((components as any).replicate.public.updateDocument, {
     collectionName: tableName,
@@ -102,10 +133,19 @@ export async function updateDocumentHelper<_DataModel extends GenericDataModel>(
   await db.patch(existing._id, {
     ...cleanDoc,
     version: args.version,
-    timestamp: Date.now(),
+    timestamp,
   });
 
-  return { success: true };
+  // Return metadata for sync matching
+  return {
+    success: true,
+    metadata: {
+      documentId: args.id,
+      timestamp,
+      version: args.version,
+      collectionName: tableName,
+    },
+  };
 }
 
 /**
@@ -122,7 +162,17 @@ export async function deleteDocumentHelper<_DataModel extends GenericDataModel>(
   components: unknown,
   tableName: string,
   args: { id: string }
-): Promise<{ success: boolean }> {
+): Promise<{
+  success: boolean;
+  metadata: {
+    documentId: string;
+    timestamp: number;
+    collectionName: string;
+  };
+}> {
+  // Use timestamp for sync matching (deletes don't have version)
+  const timestamp = Date.now();
+
   // Delete from component
   await (ctx as any).runMutation((components as any).replicate.public.deleteDocument, {
     collectionName: tableName,
@@ -140,7 +190,15 @@ export async function deleteDocumentHelper<_DataModel extends GenericDataModel>(
     await db.delete(existing._id);
   }
 
-  return { success: true };
+  // Return metadata for sync matching
+  return {
+    success: true,
+    metadata: {
+      documentId: args.id,
+      timestamp,
+      collectionName: tableName,
+    },
+  };
 }
 
 /**
