@@ -6,7 +6,8 @@ The port from TanStack Start to SvelteKit is now complete. Here's what was imple
 
 1. **Convex Backend Setup**
    - Created `src/convex/` directory with schema, config, and tasks endpoints
-   - Implemented all CRDT replication helpers (insert, update, delete, pullChanges, changeStream)
+   - Implemented CRDT replication helpers (insert, update, stream, pullChanges, changeStream)
+   - Soft delete pattern: uses `updateDocument` with `deleted: true` field
    - Component properly configured with replicate integration
 
 2. **Dependencies Installed**
@@ -33,7 +34,8 @@ The port from TanStack Start to SvelteKit is now complete. Here's what was imple
 
 6. **UI Components**
    - `+page.svelte`: Complete task management UI
-   - Create, update, delete, toggle complete functionality
+   - Create, update, soft delete (uses `collection.update` with `deleted: true`), toggle complete functionality
+   - Filters out deleted items in UI (treats `deleted` like `isCompleted`)
    - Edit mode with keyboard shortcuts (Enter/Escape)
    - Loading and error states
    - Disabled inputs during SSR for progressive enhancement

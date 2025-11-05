@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Soft delete pattern:** Simplified delete operations to use `collection.update()` with `deleted: true` field instead of `collection.delete()`
+- Removed `onDelete` handler (~80 lines of complex logic)
+- Removed `deletedKeys` tracking and cleanup code
+- Subscription handler now treats `deleted` as a regular field like `isCompleted`
+- UI filters out soft-deleted items for display
+- Server returns all items (including deleted) for proper Yjs CRDT synchronization
+
+### Fixed
+- Delete operations now work correctly across multiple clients without flicker
+- Yjs CRDT state remains consistent during delete operations
+- Subscription handler now syncs data to Yjs BEFORE TanStack DB for proper CRDT flow
+- SSR initialData now syncs to Yjs for consistent CRDT state
+
+### Removed
+- `deleteDocument` mutation (use `updateDocument` with `deleted: true` instead)
+- `deleteDocumentHelper` function (use `updateDocumentHelper` with `deleted: true` instead)
+- `onDelete` collection handler (uses `onUpdate` now)
+
+### Performance
+- 89 lines of complex delete handling code removed
+- Simpler architecture reduces cognitive overhead
+- Delete operations work exactly like field updates (no special cases)
+
 ## [0.3.0] - 2025-11-04
 
 ### Breaking Changes

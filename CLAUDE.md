@@ -119,7 +119,7 @@ Convex component providing CRDT storage layer.
 **Key Files:**
 - `src/component/` - Component implementation (deployed to Convex)
   - `schema.ts` - Internal `documents` table schema
-  - `public.ts` - Public API functions (insertDocument, updateDocument, deleteDocument, pullChanges, changeStream)
+  - `public.ts` - Public API functions (insertDocument, updateDocument, pullChanges, changeStream)
   - `convex.config.ts` - Component configuration
 - `src/client/` - Type-safe client API
   - `index.ts` - `ReplicateStorage` class for interacting with component
@@ -152,8 +152,7 @@ Framework-agnostic utilities for replication and SSR.
 - `src/index.ts` - Main exports (replication helpers, storage, logger, collection options)
 - `src/replication.ts` - Dual-storage write/read helpers:
   - `insertDocumentHelper()` - Insert new document to both component and main table
-  - `updateDocumentHelper()` - Update document in both component and main table
-  - `deleteDocumentHelper()` - Delete document from both component and main table
+  - `updateDocumentHelper()` - Update document in both component and main table (also used for soft deletes)
   - `pullChangesHelper()` - Read CRDT bytes from component for incremental sync
   - `changeStreamHelper()` - Detect changes for reactive queries
 - `src/ssr.ts` - `loadCollection()` for server-side data loading
@@ -224,7 +223,6 @@ const tasksStorage = new ReplicateStorage(components.replicate, 'tasks');
 import {
   insertDocumentHelper,
   updateDocumentHelper,
-  deleteDocumentHelper,
   pullChangesHelper,
   changeStreamHelper,
 } from '@trestleinc/convex-replicate-core/replication';  // IMPORTANT: Use /replication for server-safe imports!
@@ -259,6 +257,7 @@ export const updateDocument = mutation({
     version: v.number(),
   },
   handler: async (ctx, args) => {
+    // Also used for soft deletes (materializedDoc includes deleted: true)
     return await updateDocumentHelper(ctx, components, 'tasks', {
       id: args.documentId,
       crdtBytes: args.crdtBytes,
@@ -268,15 +267,14 @@ export const updateDocument = mutation({
   },
 });
 
-export const deleteDocument = mutation({
-  args: {
-    collectionName: v.string(),
-    documentId: v.string(),
-  },
-  handler: async (ctx, args) => {
-    return await deleteDocumentHelper(ctx, components, 'tasks', {
-      id: args.documentId,
-    });
+/**
+ * Stream endpoint for real-time subscriptions
+ * Returns ALL items including soft-deleted ones for proper Yjs CRDT synchronization
+ * UI layer filters out deleted items for display
+ */
+export const stream = query({
+  handler: async (ctx) => {
+    return await ctx.db.query('tasks').collect();
   },
 });
 
@@ -402,8 +400,7 @@ export function TaskList() {
 ### ReplicateStorage Methods
 
 - **`insertDocument(ctx, documentId, crdtBytes, version)`** - Insert new document with CRDT bytes
-- **`updateDocument(ctx, documentId, crdtBytes, version)`** - Update existing document with CRDT bytes
-- **`deleteDocument(ctx, documentId)`** - Delete document from storage
+- **`updateDocument(ctx, documentId, crdtBytes, version)`** - Update existing document with CRDT bytes (also used for soft deletes)
 - **`pullChanges(ctx, checkpoint, limit?)`** - Pull CRDT bytes for incremental sync
 - **`changeStream(ctx)`** - Subscribe to collection changes (reactive query)
 
@@ -412,8 +409,7 @@ export function TaskList() {
 **IMPORTANT**: Import from `@trestleinc/convex-replicate-core/replication` for server-safe imports!
 
 - **`insertDocumentHelper(ctx, components, tableName, args)`** - Insert to both component (CRDT bytes) + main table (materialized doc)
-- **`updateDocumentHelper(ctx, components, tableName, args)`** - Update both component + main table
-- **`deleteDocumentHelper(ctx, components, tableName, args)`** - Delete from both component + main table
+- **`updateDocumentHelper(ctx, components, tableName, args)`** - Update both component + main table (also used for soft deletes)
 - **`pullChangesHelper(ctx, components, tableName, args)`** - Read CRDT bytes from component with pagination
 - **`changeStreamHelper(ctx, components, tableName)`** - Latest timestamp/count for change detection
 
@@ -475,6 +471,82 @@ logger.error('Operation failed', { error });
 
 **Note:** Biome warns on `console.*` usage - use LogTape instead for consistency.
 
+## Delete Pattern: Soft Delete
+
+**CRITICAL**: Treat `deleted` like `isCompleted` - just a boolean field!
+
+ConvexReplicate uses **soft deletes** where items are marked with `deleted: true` rather than being physically removed. This is the ONLY supported delete pattern.
+
+### Why Soft Delete?
+
+- ✅ Works exactly like updating `isCompleted` (simple field update, no special logic)
+- ✅ Maintains CRDT consistency across all clients
+- ✅ No `onDelete` handler needed (uses `onUpdate`)
+- ✅ No `deleteDocument` mutation needed (uses `updateDocument`)
+- ✅ No complex tracking or reconciliation logic
+- ✅ UI simply filters out `deleted: true` items
+
+### Implementation
+
+**Client-side delete handler:**
+```typescript
+const handleDelete = (id: string) => {
+  // Soft delete - just set a field!
+  collection.update(id, (draft: Task) => {
+    draft.deleted = true;
+    draft.deletedAt = Date.now();
+  });
+};
+```
+
+**UI filtering:**
+```typescript
+// Filter deleted items in UI
+const { data: allTasks } = useLiveQuery(collection);
+const tasks = allTasks?.filter((task: Task) => !task.deleted) || [];
+```
+
+**SSR filtering:**
+```typescript
+export const Route = createFileRoute('/')({
+  loader: async () => {
+    const allTasks = await httpClient.query(api.tasks.stream);
+    // Filter out deleted items for SSR
+    const tasks = allTasks.filter((task: any) => !task.deleted);
+    return { tasks };
+  },
+});
+```
+
+**Server-side stream endpoint:**
+```typescript
+// Return ALL items including deleted (Yjs needs complete CRDT state)
+export const stream = query({
+  handler: async (ctx) => {
+    return await ctx.db.query('tasks').collect();
+  },
+});
+```
+
+### What NOT to Do
+
+❌ **Don't use `collection.delete(id)`** - This physically removes items, breaking CRDT sync
+❌ **Don't create separate `deleteDocument` mutation** - Use `updateDocument` with `deleted: true`
+❌ **Don't filter deleted items on server** - Return all items, filter in UI only
+❌ **Don't create `onDelete` handler** - Not needed, uses `onUpdate`
+
+### Architecture
+
+The subscription handler in `collection.ts`:
+1. Syncs ALL items (including `deleted: true`) to Yjs for complete CRDT state
+2. Syncs ALL items to TanStack DB collection (treat `deleted` as a regular field)
+3. UI filters out `deleted: true` items for display
+
+This ensures:
+- Client A marks `deleted: true` → Yjs syncs → Server receives → Broadcasts to all clients
+- Client B receives update → Yjs syncs → TanStack DB updates → UI filters it out
+- Multi-client CRDT sync works perfectly because all clients have complete state
+
 ## Example App
 
 The `examples/tanstack-start/` directory contains a complete working example:
@@ -502,7 +574,8 @@ bun run dev  # Starts both Vite and Convex dev servers
 4. **Dual-write** - Component stores CRDT bytes, main table stores materialized doc
 5. **Update** - Client merges changes offline using Yjs updates, saves as bytes
 6. **Submit update** - Call `updateDocumentHelper` with new CRDT bytes + materialized doc
-7. **Conflict** - Yjs automatically merges concurrent changes on client (CRDT magic)
+7. **Delete** - Client calls `collection.update()` to set `deleted: true` (soft delete, works like `isCompleted`)
+8. **Conflict** - Yjs automatically merges concurrent changes on client (CRDT magic)
 
 ### Incremental Sync
 

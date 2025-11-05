@@ -4,7 +4,6 @@ import { v } from 'convex/values';
 import {
   insertDocumentHelper,
   updateDocumentHelper,
-  deleteDocumentHelper,
   pullChangesHelper,
   changeStreamHelper,
 } from '@trestleinc/replicate/replication';
@@ -43,6 +42,7 @@ export const updateDocument = mutation({
     version: v.number(),
   },
   handler: async (ctx, args) => {
+    // Also used for soft deletes (materializedDoc includes deleted: true)
     return await updateDocumentHelper(ctx, components, 'tasks', {
       id: args.documentId,
       crdtBytes: args.crdtBytes,
@@ -52,15 +52,14 @@ export const updateDocument = mutation({
   },
 });
 
-export const deleteDocument = mutation({
-  args: {
-    collectionName: v.string(),
-    documentId: v.string(),
-  },
-  handler: async (ctx, args) => {
-    return await deleteDocumentHelper(ctx, components, 'tasks', {
-      id: args.documentId,
-    });
+/**
+ * Stream endpoint for real-time subscriptions
+ * Returns ALL items including soft-deleted ones for proper Yjs CRDT synchronization
+ * UI layer filters out deleted items for display
+ */
+export const stream = query({
+  handler: async (ctx) => {
+    return await ctx.db.query('tasks').collect();
   },
 });
 
@@ -89,14 +88,12 @@ export const changeStream = query({
 
 /**
  * Regular query endpoints for SSR/server-side operations
- * These read from the materialized main table for efficient queries
+ * Returns ALL items including deleted for proper CRDT state
+ * SSR loader will filter out deleted items
  */
 
 export const getTasks = query({
   handler: async (ctx) => {
-    return await ctx.db
-      .query('tasks')
-      .filter((q) => q.neq(q.field('deleted'), true))
-      .collect();
+    return await ctx.db.query('tasks').collect();
   },
 });

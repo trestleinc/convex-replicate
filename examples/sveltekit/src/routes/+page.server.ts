@@ -8,11 +8,14 @@ import type { Task } from '$lib/stores/tasks.svelte';
 const httpClient = new ConvexHttpClient(PUBLIC_CONVEX_URL);
 
 export const load: PageServerLoad = async () => {
-  const tasks = await loadCollection<Task>(httpClient, {
+  const allTasks = await loadCollection<Task>(httpClient, {
     api: api.tasks,
     collection: 'tasks',
     limit: 100,
   });
+
+  // Filter out deleted items for SSR (prevent flash of deleted content)
+  const tasks = allTasks.filter((task: any) => !task.deleted);
 
   return {
     tasks,

@@ -117,8 +117,7 @@ graph LR
 - `ReplicateStorage` - Type-safe API for interacting with the component
 - Internal CRDT storage table with indexes
 - `insertDocument()` - Insert new documents with CRDT bytes
-- `updateDocument()` - Update existing documents with CRDT bytes
-- `deleteDocument()` - Delete documents
+- `updateDocument()` - Update existing documents with CRDT bytes (also used for soft deletes)
 - `pullChanges()` - Incremental sync with checkpoints
 - `changeStream()` - Real-time change detection
 
@@ -211,7 +210,6 @@ import { v } from 'convex/values';
 import {
   insertDocumentHelper,
   updateDocumentHelper,
-  deleteDocumentHelper,
   pullChangesHelper,
   changeStreamHelper,
 } from '@trestleinc/convex-replicate-core/replication'; // IMPORTANT: Use /replication for server-safe imports!
@@ -259,15 +257,14 @@ export const updateDocument = mutation({
   },
 });
 
-export const deleteDocument = mutation({
-  args: {
-    collectionName: v.string(),
-    documentId: v.string(),
-  },
-  handler: async (ctx, args) => {
-    return await deleteDocumentHelper(ctx, components, 'tasks', {
-      id: args.documentId,
-    });
+/**
+ * Stream endpoint for real-time subscriptions
+ * Returns ALL items including soft-deleted ones for proper Yjs CRDT synchronization
+ * UI layer filters out deleted items for display
+ */
+export const stream = query({
+  handler: async (ctx) => {
+    return await ctx.db.query('tasks').collect();
   },
 });
 
@@ -351,7 +348,10 @@ import { useTasks } from '../useTasks';
 
 export function TaskList() {
   const collection = useTasks();
-  const { data: tasks, isLoading, isError } = useLiveQuery(collection);
+  const { data: allTasks, isLoading, isError } = useLiveQuery(collection);
+
+  // Filter out soft-deleted items (deleted is just a boolean field like isCompleted)
+  const tasks = allTasks?.filter((task: Task) => !(task as any).deleted) || [];
 
   const handleCreate = () => {
     collection.insert({
@@ -368,7 +368,11 @@ export function TaskList() {
   };
 
   const handleDelete = (id: string) => {
-    collection.delete(id);
+    // Soft delete - just set a field, like isCompleted!
+    collection.update(id, (draft: Task) => {
+      (draft as any).deleted = true;
+      (draft as any).deletedAt = Date.now();
+    });
   };
 
   if (isError) {
@@ -397,6 +401,60 @@ export function TaskList() {
     </div>
   );
 }
+```
+
+### Delete Pattern: Soft Delete
+
+**Treat `deleted` like `isCompleted` - just a boolean field!**
+
+Convex Replicate uses **soft deletes** where items are marked with a `deleted: true` field rather than being removed from the collection. This approach:
+
+- ✅ Works exactly like updating `isCompleted` (simple field update)
+- ✅ Maintains CRDT consistency across clients
+- ✅ No special `onDelete` handler or complex logic needed
+- ✅ UI filters out deleted items for display
+
+**Implementation:**
+
+```typescript
+// Delete handler (uses collection.update, not collection.delete)
+const handleDelete = (id: string) => {
+  collection.update(id, (draft: Task) => {
+    draft.deleted = true;
+    draft.deletedAt = Date.now();
+  });
+};
+
+// Filter deleted items in UI
+const { data: allTasks } = useLiveQuery(collection);
+const tasks = allTasks?.filter((task: Task) => !task.deleted) || [];
+
+// SSR loader should also filter
+export const Route = createFileRoute('/')({
+  loader: async () => {
+    const allTasks = await httpClient.query(api.tasks.stream);
+    const tasks = allTasks.filter((task: any) => !task.deleted);
+    return { tasks };
+  },
+});
+```
+
+**Why soft delete?**
+- Hard deletes (`collection.delete()`) physically remove items, breaking CRDT sync
+- Soft deletes keep items in Yjs for proper conflict resolution
+- Server returns all items (including deleted) for CRDT completeness
+- UI simply filters out `deleted: true` items
+
+**Server-side:** Return ALL items including deleted ones. The subscription needs complete CRDT state for proper synchronization:
+
+```typescript
+// convex/tasks.ts
+export const stream = query({
+  handler: async (ctx) => {
+    // Return ALL items (Yjs CRDT needs complete state)
+    return await ctx.db.query('tasks').collect();
+  },
+});
 ```
 
 ## Advanced Usage
@@ -572,9 +630,7 @@ interface ConvexCollectionOptionsConfig<T> {
   api: {
     insertDocument: FunctionReference;
     updateDocument: FunctionReference;
-    deleteDocument: FunctionReference;
-    pullChanges: FunctionReference;
-    changeStream: FunctionReference;
+    stream: FunctionReference;  // Real-time subscription endpoint
   };
   collectionName: string;
   getKey: (item: T) => string;
@@ -679,14 +735,7 @@ Update an existing document with Yjs CRDT bytes.
 
 **Returns:** `Promise<{ success: boolean }>`
 
-##### `deleteDocument(ctx, documentId)`
-Delete a document.
-
-**Parameters:**
-- `ctx` - Convex mutation context
-- `documentId` - Unique document identifier
-
-**Returns:** `Promise<{ success: boolean }>`
+**Note on deletes:** For soft deletes, use `updateDocument()` with a `deleted: true` field. Treat deletion as a field update, just like `isCompleted`.
 
 ##### `pullChanges(ctx, checkpoint, limit?)`
 Pull document changes for incremental sync.
