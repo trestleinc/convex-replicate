@@ -5,8 +5,7 @@ import {
   insertDocumentHelper,
   updateDocumentHelper,
   deleteDocumentHelper,
-  pullChangesHelper,
-  changeStreamHelper,
+  streamHelper,
 } from '@trestleinc/replicate/replication';
 
 /**
@@ -64,26 +63,17 @@ export const deleteDocument = mutation({
   },
 });
 
-export const pullChanges = query({
+export const stream = query({
   args: {
     collectionName: v.string(),
     checkpoint: v.object({ lastModified: v.number() }),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    return await pullChangesHelper(ctx, components, 'tasks', {
+    return await streamHelper(ctx, components, 'tasks', {
       checkpoint: args.checkpoint,
       limit: args.limit,
     });
-  },
-});
-
-export const changeStream = query({
-  args: {
-    collectionName: v.string(),
-  },
-  handler: async (ctx) => {
-    return await changeStreamHelper(ctx, components, 'tasks');
   },
 });
 
@@ -92,7 +82,7 @@ export const changeStream = query({
  * These read from the materialized main table for efficient queries
  */
 
-export const getTasks = query({
+export const list = query({
   handler: async (ctx) => {
     return await ctx.db.query('tasks').collect();
   },

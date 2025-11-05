@@ -25,7 +25,7 @@ function cleanDocument(doc: unknown): unknown {
  *    - Optimized for reactive subscriptions and complex queries
  *
  * WHY BOTH?
- * - Component: Handles conflict resolution and offline sync (CRDT bytes)
+ * - Component: Handles conflict resolution and offline replication (CRDT bytes)
  * - Main table: Enables efficient server-side queries (materialized docs)
  * - Similar to event sourcing: component = event log, main table = read model
  *
@@ -71,7 +71,7 @@ export async function insertDocumentHelper<_DataModel extends GenericDataModel>(
     timestamp,
   });
 
-  // Return metadata for sync matching
+  // Return metadata for replication matching
   return {
     success: true,
     metadata: {
@@ -136,7 +136,7 @@ export async function updateDocumentHelper<_DataModel extends GenericDataModel>(
     timestamp,
   });
 
-  // Return metadata for sync matching
+  // Return metadata for replication matching
   return {
     success: true,
     metadata: {
@@ -170,7 +170,7 @@ export async function deleteDocumentHelper<_DataModel extends GenericDataModel>(
     collectionName: string;
   };
 }> {
-  // Use timestamp for sync matching (deletes don't have version)
+  // Use timestamp for replication matching (deletes don't have version)
   const timestamp = Date.now();
 
   // Delete from component
@@ -190,7 +190,7 @@ export async function deleteDocumentHelper<_DataModel extends GenericDataModel>(
     await db.delete(existing._id);
   }
 
-  // Return metadata for sync matching
+  // Return metadata for replication matching
   return {
     success: true,
     metadata: {
@@ -202,10 +202,11 @@ export async function deleteDocumentHelper<_DataModel extends GenericDataModel>(
 }
 
 /**
- * Pull document changes from the CRDT component storage.
+ * Stream document changes from the CRDT component storage.
  *
  * This reads CRDT bytes from the component (not the main table) to enable
  * true Y.applyUpdate() conflict resolution on the client.
+ * Can be used for both polling (awaitReplication) and subscriptions (live updates).
  *
  * @param ctx - Convex query context
  * @param components - Generated components from Convex
@@ -213,7 +214,7 @@ export async function deleteDocumentHelper<_DataModel extends GenericDataModel>(
  * @param args - Checkpoint and limit for pagination
  * @returns Array of changes with CRDT bytes
  */
-export async function pullChangesHelper<_DataModel extends GenericDataModel>(
+export async function streamHelper<_DataModel extends GenericDataModel>(
   ctx: unknown,
   components: unknown,
   tableName: string,
@@ -228,30 +229,9 @@ export async function pullChangesHelper<_DataModel extends GenericDataModel>(
   checkpoint: { lastModified: number };
   hasMore: boolean;
 }> {
-  return (ctx as any).runQuery((components as any).replicate.public.pullChanges, {
+  return (ctx as any).runQuery((components as any).replicate.public.stream, {
     collectionName: tableName,
     checkpoint: args.checkpoint,
     limit: args.limit,
-  });
-}
-
-/**
- * Get the latest timestamp and count for a collection's change stream.
- *
- * This provides a lightweight way to detect when changes occur in the CRDT
- * component storage, triggering reactive updates in the client.
- *
- * @param ctx - Convex query context
- * @param components - Generated components from Convex
- * @param tableName - Name of the collection
- * @returns Latest timestamp and document count
- */
-export async function changeStreamHelper<_DataModel extends GenericDataModel>(
-  ctx: unknown,
-  components: unknown,
-  tableName: string
-): Promise<{ timestamp: number; count: number }> {
-  return (ctx as any).runQuery((components as any).replicate.public.changeStream, {
-    collectionName: tableName,
   });
 }

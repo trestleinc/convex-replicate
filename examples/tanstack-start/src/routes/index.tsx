@@ -14,7 +14,7 @@ const logger = getLogger(['loader']);
 export const Route = createFileRoute('/')({
   loader: async () => {
     logger.debug('Starting SSR data fetch');
-    const tasks = await httpClient.query(api.tasks.getTasks);
+    const tasks = await httpClient.query(api.tasks.list);
     logger.debug('Fetched tasks from SSR', { taskCount: tasks.length });
     return { tasks };
   },

@@ -29,7 +29,7 @@ import type { FunctionReference } from 'convex/server';
  * (e.g., api.tasks, api.users, etc.)
  */
 export type CollectionAPI = {
-  pullChanges: FunctionReference<'query', 'public' | 'internal'>;
+  stream: FunctionReference<'query', 'public' | 'internal'>;
 };
 
 /**
@@ -47,7 +47,7 @@ export interface LoadCollectionConfig {
 /**
  * Load collection data for server-side rendering.
  *
- * **IMPORTANT**: This function is currently limited because `pullChanges` only returns
+ * **IMPORTANT**: This function is currently limited because `stream` only returns
  * CRDT bytes, not materialized documents. For most SSR use cases, it's recommended to
  * create a separate query that reads from your main table instead.
  *
@@ -61,7 +61,7 @@ export interface LoadCollectionConfig {
  * **Recommended SSR Pattern:**
  * ```typescript
  * // convex/tasks.ts
- * export const getTasks = query({
+ * export const list = query({
  *   handler: async (ctx) => {
  *     return await ctx.db
  *       .query('tasks')
@@ -75,20 +75,20 @@ export interface LoadCollectionConfig {
  * import { api } from '../convex/_generated/api';
  *
  * const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
- * const tasks = await httpClient.query(api.tasks.getTasks);
+ * const tasks = await httpClient.query(api.tasks.list);
  * ```
  */
 export async function loadCollection<TItem extends { id: string }>(
   httpClient: ConvexHttpClient,
   config: LoadCollectionConfig
 ): Promise<ReadonlyArray<TItem>> {
-  // NOTE: This implementation is limited because pullChanges only returns CRDT bytes,
+  // NOTE: This implementation is limited because stream only returns CRDT bytes,
   // not materialized documents. The code below attempts to construct items but
-  // `change.document` does not exist in the actual pullChanges response.
+  // `change.document` does not exist in the actual stream response.
   //
   // For production use, create a dedicated query that reads from your main table.
 
-  const result = await httpClient.query(config.api.pullChanges as any, {
+  const result = await httpClient.query(config.api.stream as any, {
     collectionName: config.collection,
     checkpoint: { lastModified: 0 },
     limit: config.limit ?? 100,
@@ -96,7 +96,7 @@ export async function loadCollection<TItem extends { id: string }>(
 
   const items: TItem[] = [];
   for (const change of result.changes) {
-    // FIXME: change.document doesn't exist - pullChanges only returns crdtBytes
+    // FIXME: change.document doesn't exist - stream only returns crdtBytes
     // This code is here for backwards compatibility but won't work correctly
     const item = { id: change.documentId, ...change.document } as TItem;
     items.push(item);

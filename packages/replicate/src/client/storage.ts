@@ -37,7 +37,7 @@ import { api } from '../component/_generated/api';
  *
  * export const getTasks = query({
  *   handler: async (ctx, args) => {
- *     return await tasksStorage.pullChanges(ctx, args.checkpoint, args.limit);
+ *     return await tasksStorage.stream(ctx, args.checkpoint, args.limit);
  *   }
  * });
  * ```
@@ -127,17 +127,18 @@ export class ReplicateStorage<_TDocument extends { id: string } = { id: string }
   }
 
   /**
-   * Pull document changes from the replicate component storage.
+   * Stream CRDT changes for incremental replication.
    *
    * Retrieves CRDT bytes for documents that have been modified since the
-   * provided checkpoint, enabling incremental synchronization.
+   * provided checkpoint, enabling incremental replication.
+   * Can be used for both polling (awaitReplication) and subscriptions (live updates).
    *
    * @param ctx - Convex query context
    * @param checkpoint - Last known modification timestamp
    * @param limit - Maximum number of changes to retrieve (default: 100)
    * @returns Array of changes with updated checkpoint
    */
-  async pullChanges(
+  async stream(
     ctx: RunQueryCtx,
     checkpoint: { lastModified: number },
     limit?: number
@@ -151,39 +152,11 @@ export class ReplicateStorage<_TDocument extends { id: string } = { id: string }
     checkpoint: { lastModified: number };
     hasMore: boolean;
   }> {
-    return ctx.runQuery(this.component.public.pullChanges, {
+    return ctx.runQuery(this.component.public.stream, {
       collectionName: this.collectionName,
       checkpoint,
       limit,
     }) as any;
-  }
-
-  /**
-   * Subscribe to collection changes via a reactive query.
-   *
-   * Returns a lightweight summary (timestamp and count) that changes whenever
-   * documents in the collection are modified. Use this with Convex's reactive
-   * queries to trigger UI updates or data synchronization.
-   *
-   * @param ctx - Convex query context
-   * @returns Latest timestamp and document count
-   *
-   * @example
-   * ```typescript
-   * // Use in a query to reactively detect changes
-   * export const watchTasks = query({
-   *   handler: async (ctx) => {
-   *     const stream = await tasksStorage.changeStream(ctx);
-   *     // When stream.timestamp or stream.count changes, query reruns
-   *     return stream;
-   *   }
-   * });
-   * ```
-   */
-  async changeStream(ctx: RunQueryCtx): Promise<{ timestamp: number; count: number }> {
-    return ctx.runQuery(this.component.public.changeStream, {
-      collectionName: this.collectionName,
-    });
   }
 }
 

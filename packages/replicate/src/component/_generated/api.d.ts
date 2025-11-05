@@ -29,12 +29,6 @@ declare const fullApi: ApiFromModules<{
 }>;
 export type Mounts = {
   public: {
-    changeStream: FunctionReference<
-      "query",
-      "public",
-      { collectionName: string },
-      { count: number; timestamp: number }
-    >;
     deleteDocument: FunctionReference<
       "mutation",
       "public",
@@ -52,7 +46,7 @@ export type Mounts = {
       },
       { success: boolean }
     >;
-    pullChanges: FunctionReference<
+    stream: FunctionReference<
       "query",
       "public",
       {

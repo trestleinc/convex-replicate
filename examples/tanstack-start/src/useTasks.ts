@@ -23,7 +23,13 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
       const rawCollection = createCollection(
         convexCollectionOptions<Task>({
           convexClient,
-          api: api.tasks,
+          api: {
+            stream: api.tasks.stream,
+            list: api.tasks.list,
+            insertDocument: api.tasks.insertDocument,
+            updateDocument: api.tasks.updateDocument,
+            deleteDocument: api.tasks.deleteDocument,
+          },
           collectionName: 'tasks',
           getKey: (task) => task.id,
           initialData,

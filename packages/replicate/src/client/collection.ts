@@ -27,8 +27,8 @@ export interface ConvexCollectionOptionsConfig<T extends object> {
 
   /** Convex API functions for this collection */
   api: {
-    getTasks: FunctionReference<'query'>;
-    changeStream: FunctionReference<'query'>;
+    stream: FunctionReference<'query'>;
+    list: FunctionReference<'query'>; // For subscriptions to main table
     insertDocument: FunctionReference<'mutation'>;
     updateDocument: FunctionReference<'mutation'>;
     deleteDocument: FunctionReference<'mutation'>;
@@ -39,25 +39,25 @@ export interface ConvexCollectionOptionsConfig<T extends object> {
 }
 
 /**
- * Wrapped collection with offline support and CRDT sync.
+ * Wrapped collection with offline support and CRDT replication.
  *
  * Extends Collection<T> to ensure full compatibility with useLiveQuery and other
  * TanStack DB utilities. All Collection methods are available via Proxy forwarding,
  * while mutation methods (insert/update/delete) are wrapped with offline transaction support.
  */
 export interface ConvexCollection<T extends object> extends Collection<T> {
-  // Utilities for advanced sync control
+  // Utilities for advanced replication control
   utils: {
     /**
-     * Wait for a mutation to sync back from the server.
+     * Wait for a mutation to replicate back from the server.
      * Useful for ensuring data consistency before proceeding with dependent operations.
      *
      * @param timestamp - The mutation timestamp to match
      * @param documentId - The document ID to match
      * @param timeout - Timeout in milliseconds (default: 30000)
-     * @throws Error if sync times out
+     * @throws Error if replication times out
      */
-    awaitSync: (timestamp: number, documentId: string, timeout?: number) => Promise<void>;
+    awaitReplication: (timestamp: number, documentId: string, timeout?: number) => Promise<void>;
 
     /**
      * Manually refetch all data from the server.
@@ -122,51 +122,43 @@ export function convexCollectionOptions<T extends object>({
           commit();
         }
 
-        // Step 2: Subscribe to Convex real-time updates
+        // Step 2: Subscribe to Convex real-time updates via main table
         logger.debug('Setting up Convex subscription', { collectionName });
 
-        let lastSnapshot: any = null;
+        // Subscribe to the list query which reads from the main table
+        // Convex will automatically push updates when data changes
+        const subscription = convexClient.onUpdate(api.list, {}, async (items) => {
+          try {
+            logger.debug('List subscription update received', {
+              collectionName,
+              itemCount: items.length,
+            });
 
-        // Watch changeStream for updates
-        const subscription = convexClient.onUpdate(
-          api.changeStream,
-          { collectionName },
-          async (snapshot) => {
-            if (snapshot && snapshot !== lastSnapshot) {
-              lastSnapshot = snapshot;
-              logger.debug('Change detected, refetching tasks', { collectionName, snapshot });
+            // Sync all items from server to TanStack DB
+            begin();
+            for (const item of items) {
+              const key = getKey(item as T);
 
-              try {
-                // Fetch updated data from Convex
-                const tasks = await convexClient.query(api.getTasks, {});
-
-                logger.debug('Refetched tasks from Convex', { count: tasks.length });
-
-                // Update the collection - check if each item exists and use appropriate operation
-                // Note: TanStack DB only supports 'insert', 'update', 'delete' - NO 'upsert'!
-                begin();
-                for (const task of tasks) {
-                  const key = getKey(task);
-                  // Check if item exists in collection to determine insert vs update
-                  if ((params as any).collection.has(key)) {
-                    write({ type: 'update', value: task });
-                  } else {
-                    write({ type: 'insert', value: task });
-                  }
-                }
-                commit();
-
-                logger.debug('Successfully synced tasks to collection', { count: tasks.length });
-              } catch (error: any) {
-                logger.error('Failed to refetch tasks', {
-                  error: error.message,
-                  errorString: String(error),
-                  stack: error?.stack?.split('\n')[0],
-                });
+              // Check if item exists to determine insert vs update
+              if ((params as any).collection.has(key)) {
+                write({ type: 'update', value: item as T });
+              } else {
+                write({ type: 'insert', value: item as T });
               }
             }
+            commit();
+
+            logger.debug('Successfully synced items to collection', {
+              count: items.length,
+            });
+          } catch (error: any) {
+            logger.error('Failed to sync items from subscription', {
+              error: error.message,
+              errorString: String(error),
+              stack: error?.stack?.split('\n')[0],
+            });
           }
-        );
+        });
 
         markReady();
 
@@ -199,11 +191,11 @@ export function convexCollectionOptions<T extends object>({
 }
 
 /**
- * Step 2: Wrap a TanStack DB Collection with Convex offline + Yjs CRDT support.
+ * Step 2: Wrap a TanStack DB Collection with Convex offline replication + Yjs CRDT support.
  *
  * This wraps your raw TanStack DB collection with:
  * - Yjs for CRDT operations (96% smaller than Automerge, no WASM, React Native compatible)
- * - TanStack DB's OfflineExecutor for outbox pattern, retry logic, and multi-tab coordination
+ * - TanStack DB's OfflineExecutor for outbox pattern, retry logic, and multi-tab replication
  *
  * Config is automatically extracted from the rawCollection - no need to pass params again!
  *
@@ -253,29 +245,33 @@ export function createConvexCollection<T extends object>(
   const ydoc = new Y.Doc({ guid: collectionName });
   const ymap = ydoc.getMap(collectionName);
 
-  // Note: We don't pull CRDT bytes for reading anymore.
+  // Note: We don't fetch CRDT bytes for reading anymore.
   // Instead, we rely on the subscription in convexCollectionOptions which:
-  // 1. Writes initialData from SSR (materialized docs from getTasks)
-  // 2. Subscribes to changeStream for real-time updates
+  // 1. Writes initialData from SSR (materialized docs)
+  // 2. Subscribes to stream for incremental real-time updates
   // The Yjs/CRDT layer is only used for encoding mutations before sending to Convex.
 
   /**
-   * Wait for a mutation to sync back from the server.
-   * Polls pullChanges query to find matching document by timestamp and documentId.
+   * Wait for a mutation to replicate back from the server.
+   * Polls stream query to find matching document by timestamp and documentId.
    *
    * @param timestamp - The mutation timestamp to match
    * @param documentId - The document ID to match
    * @param timeout - Timeout in milliseconds (default: 30000)
    */
-  async function awaitSync(timestamp: number, documentId: string, timeout = 30000): Promise<void> {
+  async function awaitReplication(
+    timestamp: number,
+    documentId: string,
+    timeout = 30000
+  ): Promise<void> {
     const startTime = Date.now();
     let checkpoint = { lastModified: timestamp - 1 }; // Start just before mutation timestamp
 
-    logger.debug('awaitSync started', { timestamp, documentId, timeout });
+    logger.debug('awaitReplication started', { timestamp, documentId, timeout });
 
     while (Date.now() - startTime < timeout) {
       try {
-        const result = await convexClient.query(api.pullChanges, {
+        const result = await convexClient.query(api.stream, {
           collectionName,
           checkpoint,
           limit: 100,
@@ -284,7 +280,7 @@ export function createConvexCollection<T extends object>(
         // Check if our mutation is in the changes
         for (const change of result.changes) {
           if (change.documentId === documentId && change.timestamp >= timestamp) {
-            logger.debug('awaitSync found match', {
+            logger.debug('awaitReplication found match', {
               documentId,
               timestamp,
               changeTimestamp: change.timestamp,
@@ -301,7 +297,7 @@ export function createConvexCollection<T extends object>(
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
       } catch (error: any) {
-        logger.error('awaitSync query error', {
+        logger.error('awaitReplication query error', {
           documentId,
           timestamp,
           error: error?.message,
@@ -312,7 +308,7 @@ export function createConvexCollection<T extends object>(
     }
 
     // Timeout reached
-    logger.warn('awaitSync timeout', {
+    logger.warn('awaitReplication timeout', {
       documentId,
       timestamp,
       timeout,
@@ -326,8 +322,8 @@ export function createConvexCollection<T extends object>(
     collections: { [collectionName]: rawCollection as any },
 
     mutationFns: {
-      syncToConvex: async ({ transaction, idempotencyKey }) => {
-        logger.debug('syncToConvex', {
+      replicateToConvex: async ({ transaction, idempotencyKey }) => {
+        logger.debug('replicateToConvex', {
           mutations: transaction.mutations.length,
           types: transaction.mutations.map((m) => m.type).join(','),
           idempotencyKey, // Log for debugging but don't send to Convex
@@ -384,32 +380,34 @@ export function createConvexCollection<T extends object>(
           logger.info('Mutation sent to Convex', {
             type: mutation.type,
             key: mutation.key,
+            result,
+            hasMetadata: !!result?.metadata,
             idempotencyKey,
           });
 
-          // KEY CHANGE: Block until mutation syncs back from server
+          // KEY CHANGE: Block until mutation replicates back from server
           // This prevents flicker by ensuring optimistic state stays until server confirms
           if (result?.metadata) {
-            logger.debug('Waiting for mutation to sync back', {
+            logger.debug('Waiting for replication confirmation', {
               documentId: result.metadata.documentId,
               timestamp: result.metadata.timestamp,
               idempotencyKey,
             });
 
-            await awaitSync(
+            await awaitReplication(
               result.metadata.timestamp,
               result.metadata.documentId,
               30000 // 30 second timeout
             );
 
-            logger.info('Mutation confirmed in sync stream', {
+            logger.info('Replication confirmed', {
               documentId: result.metadata.documentId,
               elapsed: Date.now() - result.metadata.timestamp,
               idempotencyKey,
             });
           }
         } catch (error: any) {
-          logger.error('Sync failed', {
+          logger.error('Replication failed', {
             collectionName,
             errorMessage: error?.message || 'Unknown error',
             errorName: error?.name,
@@ -446,9 +444,9 @@ export function createConvexCollection<T extends object>(
     },
   });
 
-  // Create utils object for advanced sync control
+  // Create utils object for advanced replication control
   const utils = {
-    awaitSync,
+    awaitReplication,
     refetch: async () => {
       logger.debug('Manual refetch requested', { collectionName });
       try {
@@ -457,8 +455,8 @@ export function createConvexCollection<T extends object>(
 
         // This will trigger the sync to write new data
         // (Implementation would need access to begin/write/commit from sync config)
-        // For now, this is a placeholder - actual refetch happens via changeStream
-        logger.warn('Manual refetch not yet fully implemented - use changeStream subscription');
+        // For now, this is a placeholder - actual refetch happens via stream
+        logger.warn('Manual refetch not yet fully implemented - use stream subscription');
       } catch (error: any) {
         logger.error('Manual refetch failed', {
           error: error?.message,
@@ -473,8 +471,8 @@ export function createConvexCollection<T extends object>(
     // Wrap insert to use offline transactions
     insert: (item: T | T[], config?: OperationConfig) => {
       const tx = offline.createOfflineTransaction({
-        mutationFnName: 'syncToConvex',
-        autoCommit: true, // Auto-commit triggers sync immediately (online or queues offline)
+        mutationFnName: 'replicateToConvex',
+        autoCommit: true, // Auto-commit triggers replication immediately (online or queues offline)
       });
 
       tx.mutate(() => {
@@ -494,7 +492,7 @@ export function createConvexCollection<T extends object>(
     // Wrap update to use offline transactions
     update: (key: string | number, updater: (draft: T) => void, config?: OperationConfig) => {
       const tx = offline.createOfflineTransaction({
-        mutationFnName: 'syncToConvex',
+        mutationFnName: 'replicateToConvex',
         autoCommit: true,
       });
 
@@ -515,7 +513,7 @@ export function createConvexCollection<T extends object>(
     // Wrap delete to use offline transactions
     delete: (key: string | number | Array<string | number>, config?: OperationConfig) => {
       const tx = offline.createOfflineTransaction({
-        mutationFnName: 'syncToConvex',
+        mutationFnName: 'replicateToConvex',
         autoCommit: true,
       });
 
@@ -538,7 +536,7 @@ export function createConvexCollection<T extends object>(
     has: (key: string | number) => rawCollection.has(key),
     toArray: rawCollection.toArray,
 
-    // Expose utils for sync control
+    // Expose utils for replication control
     utils,
 
     // Expose internals for advanced use

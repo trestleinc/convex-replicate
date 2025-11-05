@@ -118,14 +118,15 @@ export const deleteDocument = mutation({
 });
 
 /**
- * Pull CRDT changes for incremental sync.
+ * Stream CRDT changes for incremental replication.
  * Returns Yjs CRDT bytes for documents modified since the checkpoint.
+ * Can be used for both polling (awaitReplication) and subscriptions (live updates).
  *
  * @param collectionName - Collection identifier
- * @param checkpoint - Last sync checkpoint
+ * @param checkpoint - Last replication checkpoint
  * @param limit - Maximum number of changes to return (default: 100)
  */
-export const pullChanges = query({
+export const stream = query({
   args: {
     collectionName: v.string(),
     checkpoint: v.object({
@@ -176,41 +177,6 @@ export const pullChanges = query({
       changes,
       checkpoint: newCheckpoint,
       hasMore: documents.length === limit,
-    };
-  },
-});
-
-/**
- * Subscribe to changes in a collection.
- * Returns the latest timestamp and count for change detection.
- *
- * @param collectionName - Collection identifier
- */
-export const changeStream = query({
-  args: {
-    collectionName: v.string(),
-  },
-  returns: v.object({
-    timestamp: v.number(),
-    count: v.number(),
-  }),
-  handler: async (ctx, args) => {
-    const allDocs = await ctx.db
-      .query('documents')
-      .withIndex('by_collection', (q) => q.eq('collectionName', args.collectionName))
-      .collect();
-
-    let latestTimestamp = 0;
-
-    for (const doc of allDocs) {
-      if (doc.timestamp > latestTimestamp) {
-        latestTimestamp = doc.timestamp;
-      }
-    }
-
-    return {
-      timestamp: latestTimestamp,
-      count: allDocs.length,
     };
   },
 });
