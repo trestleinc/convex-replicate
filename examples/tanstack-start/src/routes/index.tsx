@@ -11,7 +11,9 @@ const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
 
 export const Route = createFileRoute('/')({
   loader: async () => {
-    const tasks = await httpClient.query(api.tasks.stream);
+    const allTasks = await httpClient.query(api.tasks.stream);
+    // Filter out deleted items for SSR (prevent flash of deleted content)
+    const tasks = allTasks.filter((task: any) => !task.deleted);
     return { tasks };
   },
   component: HomeComponent,
@@ -80,7 +82,10 @@ function LiveTasksView({ initialTasks }: { initialTasks: ReadonlyArray<Task> }) 
   const [editText, setEditText] = useState('');
 
   const collection = useTasks(initialTasks);
-  const { data: tasks, isLoading, isError } = useLiveQuery(collection as any);
+  const { data: allTasks, isLoading, isError } = useLiveQuery(collection as any);
+
+  // Filter out soft-deleted items (deleted is just a field like isCompleted)
+  const tasks = allTasks?.filter((task: Task) => !(task as any).deleted) || [];
 
   const handleCreateTask = (e: React.FormEvent) => {
     e.preventDefault();
@@ -117,7 +122,11 @@ function LiveTasksView({ initialTasks }: { initialTasks: ReadonlyArray<Task> }) 
   };
 
   const handleDelete = (id: string) => {
-    collection.delete(id);
+    // Soft delete - just set a field, like isCompleted!
+    collection.update(id, (draft: Task) => {
+      (draft as any).deleted = true;
+      (draft as any).deletedAt = Date.now();
+    });
   };
 
   if (isError) {

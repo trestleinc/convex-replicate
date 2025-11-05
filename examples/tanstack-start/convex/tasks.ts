@@ -70,14 +70,12 @@ export const deleteDocument = mutation({
 
 /**
  * Stream endpoint for real-time subscriptions
- * Reads from the materialized main table and streams updates to clients
+ * Returns ALL items including deleted ones for proper Yjs CRDT synchronization
+ * UI layer filters out deleted items for display
  */
 export const stream = query({
   handler: async (ctx) => {
-    // Only return non-deleted items (soft delete filtering)
-    return await ctx.db
-      .query('tasks')
-      .filter((q) => q.or(q.eq(q.field('deleted'), undefined), q.eq(q.field('deleted'), false)))
-      .collect();
+    // Return ALL items including deleted (Yjs CRDT needs complete state)
+    return await ctx.db.query('tasks').collect();
   },
 });

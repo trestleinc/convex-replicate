@@ -85,7 +85,7 @@ export function convexCollectionOptions<T extends object>({
   // Track delta updates (NOT full state)
   // This is the key to efficient bandwidth usage: < 1KB per change instead of 100KB+
   let pendingUpdate: Uint8Array | null = null;
-  ydoc.on('update', (update, origin) => {
+  (ydoc as any).on('update', (update: Uint8Array, origin: any) => {
     // `update` contains ONLY what changed (delta)
     pendingUpdate = update;
     logger.debug('Yjs update event fired', {
@@ -234,88 +234,26 @@ export function convexCollectionOptions<T extends object>({
       }
     },
 
-    // ✅ REAL onDelete handler (soft delete with CRDT bytes)
-    onDelete: async ({ transaction }: any) => {
-      logger.debug('onDelete handler called', {
-        collectionName,
-        mutationCount: transaction.mutations.length,
-      });
-
-      try {
-        const deletedAt = Date.now();
-
-        // Mark as deleted in Yjs (soft delete maintains CRDT consistency)
-        ydoc.transact(() => {
-          transaction.mutations.forEach((mut: any) => {
-            const itemYMap = ymap.get(String(mut.key)) as Y.Map<any> | undefined;
-            if (itemYMap) {
-              itemYMap.set('deleted', true);
-              itemYMap.set('deletedAt', deletedAt);
-            } else {
-              // Create new Y.Map with deleted flag (defensive)
-              const newYMap = new Y.Map();
-              Object.entries((mut.original as Record<string, unknown>) || {}).forEach(([k, v]) => {
-                newYMap.set(k, v);
-              });
-              newYMap.set('deleted', true);
-              newYMap.set('deletedAt', deletedAt);
-              ymap.set(String(mut.key), newYMap);
-            }
-          });
-        }, 'delete');
-
-        // Send delta to Convex (with deleted flag in materialized doc)
-        if (pendingUpdate) {
-          logger.debug('Sending delete delta to Convex', {
-            collectionName,
-            documentId: String(transaction.mutations[0].key),
-            deltaSize: pendingUpdate.length,
-          });
-
-          await convexClient.mutation(api.deleteDocument, {
-            collectionName,
-            documentId: String(transaction.mutations[0].key),
-            crdtBytes: pendingUpdate.buffer,
-            materializedDoc: {
-              ...(transaction.mutations[0].original as Record<string, unknown>),
-              deleted: true,
-              deletedAt,
-            },
-            version: deletedAt,
-          });
-
-          pendingUpdate = null;
-          logger.info('Delete persisted to Convex', {
-            collectionName,
-            documentId: String(transaction.mutations[0].key),
-          });
-        }
-      } catch (error: any) {
-        logger.error('Delete failed', {
-          collectionName,
-          error: error?.message,
-          status: error?.status,
-        });
-
-        // Classify errors
-        if (error?.status === 401 || error?.status === 403) {
-          throw new NonRetriableError('Authentication failed');
-        }
-        if (error?.status === 422) {
-          throw new NonRetriableError('Validation error');
-        }
-
-        throw error;
-      }
-    },
-
     // Sync function for pulling data from server
     sync: {
       sync: (params: any) => {
         const { begin, write, commit, markReady } = params;
 
-        // Step 1: Write initial SSR data
+        // Step 1: Write initial SSR data to BOTH Yjs AND TanStack DB
         if (initialData && initialData.length > 0) {
+          // Sync to Yjs first (for CRDT state)
+          ydoc.transact(() => {
+            for (const item of initialData) {
+              const key = getKey(item);
+              const itemYMap = new Y.Map();
+              Object.entries(item as Record<string, unknown>).forEach(([k, v]) => {
+                itemYMap.set(k, v);
+              });
+              ymap.set(String(key), itemYMap);
+            }
+          }, 'ssr-init');
+
+          // Then sync to TanStack DB
           begin();
           for (const item of initialData) {
             write({ type: 'insert', value: item });
@@ -337,13 +275,30 @@ export function convexCollectionOptions<T extends object>({
               itemCount: items.length,
             });
 
-            // Sync all items from server to TanStack DB
+            // STEP 1: Sync ALL items to Yjs (complete CRDT state, including deleted)
+            ydoc.transact(() => {
+              for (const item of items) {
+                const key = getKey(item as T);
+                const itemYMap = new Y.Map();
+                Object.entries(item as Record<string, unknown>).forEach(([k, v]) => {
+                  itemYMap.set(k, v);
+                });
+                ymap.set(String(key), itemYMap);
+              }
+            }, 'subscription-sync');
+
+            logger.debug('Synced items to Yjs', {
+              collectionName,
+              count: items.length,
+            });
+
+            // STEP 2: Sync to TanStack DB (deleted is just a field like isCompleted)
             begin();
 
             for (const item of items) {
               const key = getKey(item as T);
 
-              // Check if item exists to determine insert vs update
+              // Simple update/insert logic - deleted is just another field!
               if ((params as any).collection.has(key)) {
                 write({ type: 'update', value: item as T });
               } else {
@@ -373,7 +328,7 @@ export function convexCollectionOptions<T extends object>({
         };
       },
     },
-  } as any;
+  };
 }
 
 /**
