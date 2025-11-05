@@ -69,6 +69,7 @@ export async function insertDocumentHelper<_DataModel extends GenericDataModel>(
     ...cleanDoc,
     version: args.version,
     timestamp,
+    deleted: false, // Explicitly mark as not deleted for soft delete filtering
   });
 
   // Return metadata for replication matching

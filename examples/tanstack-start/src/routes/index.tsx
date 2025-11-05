@@ -240,7 +240,6 @@ function LiveTasksView({ initialTasks }: { initialTasks: ReadonlyArray<Task> }) 
 
 function HomeComponent() {
   const { tasks: initialTasks } = Route.useLoaderData();
-  logger.debug('Component rendering with initialTasks', { taskCount: initialTasks.length });
 
   return (
     <ClientOnly fallback={<StaticTasksView tasks={initialTasks} />}>
