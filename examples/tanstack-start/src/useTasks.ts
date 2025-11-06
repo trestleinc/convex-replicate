@@ -1,10 +1,12 @@
 import { createCollection } from '@tanstack/react-db';
-import { convexAutomergeCollectionOptions, getConvexReplicateLogger } from '@convex-replicate/core';
+import {
+  convexCollectionOptions,
+  createConvexCollection,
+  type ConvexCollection,
+} from '@trestleinc/replicate/client';
 import { api } from '../convex/_generated/api';
 import { convexClient } from './router';
 import { useMemo } from 'react';
-
-const logger = getConvexReplicateLogger(['hooks', 'useTasks']);
 
 export interface Task {
   id: string;
@@ -12,22 +14,29 @@ export interface Task {
   isCompleted: boolean;
 }
 
-let tasksCollection: ReturnType<typeof createCollection<Task>> | null = null;
+let tasksCollection: ConvexCollection<Task>;
 
 export function useTasks(initialData?: ReadonlyArray<Task>) {
-  logger.debug('Hook called with initialData', { taskCount: initialData?.length ?? 0 });
   return useMemo(() => {
     if (!tasksCollection) {
-      logger.debug('Creating collection with initialData', { taskCount: initialData?.length ?? 0 });
-      tasksCollection = createCollection(
-        convexAutomergeCollectionOptions<Task>({
+      // Step 1: Create raw collection with ALL config (params only passed once!)
+      const rawCollection = createCollection(
+        convexCollectionOptions<Task>({
           convexClient,
-          api: api.tasks,
+          api: {
+            stream: api.tasks.stream,
+            insertDocument: api.tasks.insertDocument,
+            updateDocument: api.tasks.updateDocument,
+            deleteDocument: api.tasks.deleteDocument,
+          },
           collectionName: 'tasks',
           getKey: (task) => task.id,
           initialData,
         })
       );
+
+      // Step 2: Wrap - params automatically extracted from rawCollection!
+      tasksCollection = createConvexCollection(rawCollection);
     }
     return tasksCollection;
   }, [initialData]);

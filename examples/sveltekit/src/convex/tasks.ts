@@ -75,3 +75,12 @@ export const stream = query({
     return await ctx.db.query('tasks').collect();
   },
 });
+
+/**
+ * SSR query endpoint - returns all tasks for server-side rendering
+ */
+export const getTasks = query({
+  handler: async (ctx) => {
+    return await ctx.db.query('tasks').collect();
+  },
+});

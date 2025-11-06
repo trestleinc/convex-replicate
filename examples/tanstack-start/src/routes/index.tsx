@@ -4,23 +4,14 @@ import { useState } from 'react';
 import type { Task } from '../useTasks';
 import { useTasks } from '../useTasks';
 import { ConvexHttpClient } from 'convex/browser';
-import { loadCollection } from '@convex-replicate/core/ssr';
-import { getConvexReplicateLogger } from '@convex-replicate/core';
 import { useLiveQuery } from '@tanstack/react-db';
 import { api } from '../../convex/_generated/api';
 
 const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
-const logger = getConvexReplicateLogger(['loader']);
 
 export const Route = createFileRoute('/')({
   loader: async () => {
-    logger.debug('Starting SSR data fetch');
-    const tasks = await loadCollection<Task>(httpClient, {
-      api: api.tasks,
-      collection: 'tasks',
-      limit: 100,
-    });
-    logger.debug('Fetched tasks from SSR', { taskCount: tasks.length });
+    const tasks = await httpClient.query(api.tasks.stream);
     return { tasks };
   },
   component: HomeComponent,
@@ -89,13 +80,7 @@ function LiveTasksView({ initialTasks }: { initialTasks: ReadonlyArray<Task> }) 
   const [editText, setEditText] = useState('');
 
   const collection = useTasks(initialTasks);
-  const { data: tasks, isLoading, isError } = useLiveQuery(collection);
-
-  logger.debug('useLiveQuery state', {
-    taskCount: tasks.length,
-    isLoading,
-    isError,
-  });
+  const { data: tasks, isLoading, isError } = useLiveQuery(collection as any);
 
   const handleCreateTask = (e: React.FormEvent) => {
     e.preventDefault();
@@ -107,7 +92,7 @@ function LiveTasksView({ initialTasks }: { initialTasks: ReadonlyArray<Task> }) 
   };
 
   const handleToggleComplete = (id: string, isCompleted: boolean) => {
-    collection.update(id, (draft) => {
+    collection.update(id, (draft: Task) => {
       draft.isCompleted = !isCompleted;
     });
   };
@@ -119,7 +104,7 @@ function LiveTasksView({ initialTasks }: { initialTasks: ReadonlyArray<Task> }) 
 
   const handleEditSave = (id: string) => {
     if (editText.trim()) {
-      collection.update(id, (draft) => {
+      collection.update(id, (draft: Task) => {
         draft.text = editText.trim();
       });
       setEditingId(null);
@@ -132,6 +117,7 @@ function LiveTasksView({ initialTasks }: { initialTasks: ReadonlyArray<Task> }) 
   };
 
   const handleDelete = (id: string) => {
+    // Hard delete - physically removes from main table
     collection.delete(id);
   };
 
@@ -255,7 +241,6 @@ function LiveTasksView({ initialTasks }: { initialTasks: ReadonlyArray<Task> }) 
 
 function HomeComponent() {
   const { tasks: initialTasks } = Route.useLoaderData();
-  logger.debug('Component rendering with initialTasks', { taskCount: initialTasks.length });
 
   return (
     <ClientOnly fallback={<StaticTasksView tasks={initialTasks} />}>
