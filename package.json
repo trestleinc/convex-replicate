@@ -18,6 +18,7 @@
   ],
   "type": "module",
   "private": false,
+  "packageManager": "bun@1.1.42",
 
   "resolutions": {
     "convex": "1.28.2"

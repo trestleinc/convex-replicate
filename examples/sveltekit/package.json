@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
+  "packageManager": "pnpm@10.20.0",
   "scripts": {
     "dev": "concurrently \"bun:dev:app\" \"bun:dev:convex\"",
     "dev:app": "vite dev --port 3000",
@@ -30,8 +31,9 @@
   },
   "dependencies": {
     "@lucide/svelte": "^0.552.0",
+    "@tanstack/db": "0.4.19",
     "@tanstack/svelte-db": "0.1.39",
-    "@trestleinc/replicate": "link:../..",
+    "@trestleinc/replicate": "file:../..",
     "convex": "1.28.2",
     "convex-svelte": "^0.0.11"
   }

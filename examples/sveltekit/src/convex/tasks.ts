@@ -4,9 +4,8 @@ import { v } from 'convex/values';
 import {
   insertDocumentHelper,
   updateDocumentHelper,
-  pullChangesHelper,
-  changeStreamHelper,
-} from '@trestleinc/replicate/replication';
+  deleteDocumentHelper,
+} from '@trestleinc/replicate/server';
 
 /**
  * TanStack DB endpoints - called by convexCollectionOptions
@@ -42,7 +41,6 @@ export const updateDocument = mutation({
     version: v.number(),
   },
   handler: async (ctx, args) => {
-    // Also used for soft deletes (materializedDoc includes deleted: true)
     return await updateDocumentHelper(ctx, components, 'tasks', {
       id: args.documentId,
       crdtBytes: args.crdtBytes,
@@ -52,10 +50,25 @@ export const updateDocument = mutation({
   },
 });
 
+export const deleteDocument = mutation({
+  args: {
+    collectionName: v.string(),
+    documentId: v.string(),
+    crdtBytes: v.bytes(),
+    version: v.number(),
+  },
+  handler: async (ctx, args) => {
+    return await deleteDocumentHelper(ctx, components, 'tasks', {
+      id: args.documentId,
+      crdtBytes: args.crdtBytes,
+      version: args.version,
+    });
+  },
+});
+
 /**
  * Stream endpoint for real-time subscriptions
- * Returns ALL items including soft-deleted ones for proper Yjs CRDT synchronization
- * UI layer filters out deleted items for display
+ * Returns all items (hard deletes are physically removed from table)
  */
 export const stream = query({
   handler: async (ctx) => {
@@ -63,35 +76,9 @@ export const stream = query({
   },
 });
 
-export const pullChanges = query({
-  args: {
-    collectionName: v.string(),
-    checkpoint: v.object({ lastModified: v.number() }),
-    limit: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    return await pullChangesHelper(ctx, components, 'tasks', {
-      checkpoint: args.checkpoint,
-      limit: args.limit,
-    });
-  },
-});
-
-export const changeStream = query({
-  args: {
-    collectionName: v.string(),
-  },
-  handler: async (ctx) => {
-    return await changeStreamHelper(ctx, components, 'tasks');
-  },
-});
-
 /**
- * Regular query endpoints for SSR/server-side operations
- * Returns ALL items including deleted for proper CRDT state
- * SSR loader will filter out deleted items
+ * SSR query endpoint - returns all tasks for server-side rendering
  */
-
 export const getTasks = query({
   handler: async (ctx) => {
     return await ctx.db.query('tasks').collect();

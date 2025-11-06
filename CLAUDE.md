@@ -19,39 +19,48 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **ConvexReplicate** - Offline-first data replication using Yjs CRDTs and Convex for automatic conflict resolution and real-time synchronization.
 
-This is a monorepo providing:
+This package provides:
 - A Convex component for CRDT storage
 - Core replication utilities for building offline-first apps
 - Integration with TanStack DB and offline-transactions for reactive state management and reliable sync
 
-**Monorepo Structure:**
-- `packages/component/` - Convex component for CRDT storage (@trestleinc/convex-replicate-component)
-- `packages/core/` - Framework-agnostic replication helpers and SSR utilities (@trestleinc/convex-replicate-core)
-- `packages/sharded-counter/` - Sharded counter example/component (experimental)
+**Package Structure (Flattened):**
+- `src/` - Package source code (at root level)
+  - `client/` - Client-side utilities (ReplicateStorage, collection options)
+  - `server/` - Server-side replication helpers (insertDocumentHelper, updateDocumentHelper, etc.)
+  - `component/` - Convex component implementation
 - `examples/tanstack-start/` - Example app using TanStack Start
+- `examples/sveltekit/` - Example app using SvelteKit
 
 ## Available Scripts
 
 ### Build Commands
-- `bun run build` - Build all packages (component → core in sequence)
-- `bun run build:component` - Build only @trestleinc/convex-replicate-component package
-- `bun run build:core` - Build only @trestleinc/convex-replicate-core package
-- `bun run clean` - Remove all dist/ directories from packages
+- `bun run build` - Build the entire package using Rslib (outputs to `dist/`)
+- `bun run clean` - Remove dist/ directory
 
 ### Type Checking
-- `bun run typecheck` - Type check all packages
-- `bun run typecheck:component` - Type check only @trestleinc/convex-replicate-component
-- `bun run typecheck:core` - Type check only @trestleinc/convex-replicate-core (uses tsc --noEmit)
+- `bun run typecheck` - Type check the entire package
 
-**Note:** Component package uses TypeScript compiler (tsc) with dual ESM and CommonJS builds. Core package uses Rslib (Rspack-based) for faster builds with module externalization.
+**Note:** Package uses Rslib (Rspack-based) for fast builds with module externalization. Outputs 4 entry points: client, server, ssr, and component.
 
 ### Example App Development
-- `bun run dev:example` - Start TanStack Start dev server + Convex dev environment (runs both concurrently)
-- `bun run build:example` - Build example app for production
 
-**Important:** Within `examples/tanstack-start/`, you can also run:
-- `bun run dev:app` - Run only Vite dev server
-- `bun run dev:convex` - Run only Convex dev environment
+**IMPORTANT: Examples use pnpm for local development!**
+
+Examples link to the root package using `"@trestleinc/replicate": "file:../.."`. This requires **pnpm** (not Bun) for proper symlink handling.
+
+**Setup:**
+```bash
+# Install dependencies in an example
+cd examples/tanstack-start  # or examples/sveltekit
+pnpm install
+```
+
+**Running examples:**
+- Within each example directory, run `pnpm run dev` (starts both app dev server + Convex)
+- Or use individual commands:
+  - `pnpm run dev:app` - Run only app dev server
+  - `pnpm run dev:convex` - Run only Convex dev environment
 
 ### Code Quality (Biome v2)
 - `bun run check` - Run lint + format checks (dry run, no changes)
@@ -73,13 +82,13 @@ This is a monorepo providing:
 - **Do NOT run dev servers manually** - The development server is managed by another process
 - If you need to start the example app, use `bun run dev:example` which handles both Vite and Convex
 
-### Monorepo Conventions
-- **Workspace dependencies** use `workspace:*` protocol in package.json
-- **All packages share** the same Biome and TypeScript configuration from root
-- **Type checking** runs against all packages
+### Package Conventions
+- **Flattened structure** - Root directory IS the package (@trestleinc/replicate)
+- **Local development dependencies** use `file:../..` protocol in example package.json files
+- **pnpm required for examples** - Proper symlink handling for `file:` protocol (Bun has issues)
 - **Example apps** each have their own Convex backend in their respective directories
-- **Build order matters**: Component must build before Core (handled by build script)
-- **Component package** has dual build (ESM + CommonJS) for broad compatibility
+- **All examples share** the same Biome and TypeScript configuration from root
+- **Rslib builds** output to `dist/` with 4 entry points (client, server, ssr, component)
 
 ### Biome Configuration Notes
 - `noExplicitAny` is OFF in the linter config (line 23 of biome.json)
@@ -112,23 +121,48 @@ ConvexReplicate implements a dual-storage architecture for offline-first applica
 
 ## Package Architecture
 
-### @trestleinc/convex-replicate-component (`packages/component/`)
+### @trestleinc/replicate (Root Package)
 
-Convex component providing CRDT storage layer.
+Single flattened package providing CRDT storage, replication utilities, and SSR support.
 
-**Key Files:**
-- `src/component/` - Component implementation (deployed to Convex)
+**Source Structure:**
+- `src/client/` - Client-side utilities
+  - `index.ts` - `ReplicateStorage` class, `convexCollectionOptions`, `createConvexCollection`
+  - `collection.ts` - TanStack DB collection wrapper with Yjs + offline support
+  - `convexCollectionOptions.ts` - TanStack DB collection options
+  - `logger.ts` - LogTape logger configuration
+- `src/server/` - Server-side replication helpers
+  - `index.ts` - `insertDocumentHelper`, `updateDocumentHelper`, `deleteDocumentHelper`
+  - `replication.ts` - Dual-storage write/read helpers for Convex functions
+- `src/component/` - Convex component (deployed to Convex)
   - `schema.ts` - Internal `documents` table schema
-  - `public.ts` - Public API functions (insertDocument, updateDocument, pullChanges, changeStream)
+  - `public.ts` - Component API functions
   - `convex.config.ts` - Component configuration
-- `src/client/` - Type-safe client API
-  - `index.ts` - `ReplicateStorage` class for interacting with component
 
-**Build Output:**
-- Dual package (ESM + CommonJS) in `dist/esm/` and `dist/commonjs/`
-- Uses TypeScript compilation with separate tsconfig files (`esm.json`, `commonjs.json`)
+**Build Output (Rslib):**
+- Built to `dist/` directory with 4 entry points:
+  - `dist/index.js` - Client utilities (ReplicateStorage, collection options)
+  - `dist/server.js` - Server-side helpers (insertDocumentHelper, etc.)
+  - `dist/ssr.js` - SSR utilities (loadCollection)
+  - `dist/component/` - Convex component files (5 files, 5.7 kB)
 
-**Storage Schema:**
+**Package Exports:**
+- `@trestleinc/replicate/client` - Client-side utilities
+- `@trestleinc/replicate/server` - Server-side helpers (safe for Convex functions)
+- `@trestleinc/replicate/ssr` - SSR utilities
+- `@trestleinc/replicate/convex.config` - Component configuration
+
+**Build Configuration:**
+- `rslib.config.ts` - Rslib configuration with 4 entry points
+- Package size: ~20 kB total (Yjs is ~6KB vs Automerge ~150KB - 96% smaller!)
+
+**IMPORTANT**: Server-side Convex code must import from `@trestleinc/replicate/server` for server-safe imports!
+
+**Dependencies:**
+- Requires `@tanstack/db` for collection options
+- **Peer dependencies** (v0.3.0+): `yjs ^13.6.11`, `@tanstack/offline-transactions ^0.1.0`, `convex ^1.28.0`
+
+**Component Storage Schema:**
 ```typescript
 {
   collectionName: string;    // Collection identifier
@@ -139,57 +173,22 @@ Convex component providing CRDT storage layer.
 }
 ```
 
-**Indexes:**
+**Component Indexes:**
 - `by_collection_document` - Lookup specific documents
 - `by_collection` - Query all documents in a collection
 - `by_timestamp` - Incremental sync support
 
-### @trestleinc/convex-replicate-core (`packages/core/`)
-
-Framework-agnostic utilities for replication and SSR.
-
-**Key Files:**
-- `src/index.ts` - Main exports (replication helpers, storage, logger, collection options)
-- `src/replication.ts` - Dual-storage write/read helpers:
-  - `insertDocumentHelper()` - Insert new document to both component and main table
-  - `updateDocumentHelper()` - Update document in both component and main table (also used for soft deletes)
-  - `pullChangesHelper()` - Read CRDT bytes from component for incremental sync
-  - `changeStreamHelper()` - Detect changes for reactive queries
-- `src/ssr.ts` - `loadCollection()` for server-side data loading
-- `src/collection.ts` - `createConvexCollection()` for wrapping TanStack DB collections with Yjs + offline support
-- `src/adapter.ts` - `SyncAdapter` for abstracting storage backends (client-side only)
-- `src/convexCollectionOptions.ts` - TanStack DB collection options (client-side only)
-- `src/logger.ts` - LogTape logger configuration
-
-**Build Output:**
-- Built with **Rslib** (Rspack-based bundler) to `dist/` directory
-- Configured with ESM shims for `__dirname` and `__filename` support
-- Externals: `@automerge/automerge`, `@automerge/automerge-repo-storage-indexeddb` (not bundled)
-- Exports: `.` (main - all features), `./replication` (server-safe helpers only), `./ssr` (SSR utilities)
-
-**Build Configuration:**
-- `packages/core/rslib.config.ts` - Rslib configuration with 3 entry points
-- Package size: ~65KB (Yjs is ~6KB vs Automerge ~150KB - 96% smaller!)
-
-**IMPORTANT**: Server-side Convex code must import from `@trestleinc/convex-replicate-core/replication` for server-safe imports!
-
-**Dependencies:**
-- Requires `@tanstack/db` for collection options
-- **Peer dependencies** (v0.3.0+): `yjs ^13.6.11`, `@tanstack/offline-transactions ^0.1.0`, `convex ^1.28.0`
-
 ## Technology Stack
 
 - **Language:** TypeScript (strict mode)
-- **Runtime:** Bun
-- **Build Tools:**
-  - **Component package**: TypeScript compiler (tsc) with dual ESM + CommonJS builds
-  - **Core package**: Rslib (Rspack-based, fast builds with externalization support)
+- **Runtime:** Bun (for root package), pnpm (for examples with local dependencies)
+- **Build Tools:** Rslib (Rspack-based, fast builds with externalization support)
 - **Linting:** Biome v2
 - **CRDTs:** Yjs with IndexedDB storage (via TanStack DB)
 - **Backend:** Convex (cloud database and functions)
 - **State Management:** TanStack DB for reactive collections
 - **Logging:** LogTape
-- **Testing:** Vitest (component package), TypeScript type checking
+- **Testing:** TypeScript type checking
 
 ## Using ConvexReplicate in Your App
 
@@ -198,7 +197,7 @@ Framework-agnostic utilities for replication and SSR.
 ```typescript
 // convex/convex.config.ts
 import { defineApp } from 'convex/server';
-import replicate from '@trestleinc/convex-replicate-component/convex.config';
+import replicate from '@trestleinc/replicate/convex.config';
 
 const app = defineApp();
 app.use(replicate, { name: 'replicate' });
@@ -211,7 +210,7 @@ export default app;
 ```typescript
 // convex/tasks.ts
 import { components } from './_generated/api';
-import { ReplicateStorage } from '@trestleinc/convex-replicate-component';
+import { ReplicateStorage } from '@trestleinc/replicate/client';
 
 const tasksStorage = new ReplicateStorage(components.replicate, 'tasks');
 ```
@@ -223,9 +222,8 @@ const tasksStorage = new ReplicateStorage(components.replicate, 'tasks');
 import {
   insertDocumentHelper,
   updateDocumentHelper,
-  pullChangesHelper,
-  changeStreamHelper,
-} from '@trestleinc/convex-replicate-core/replication';  // IMPORTANT: Use /replication for server-safe imports!
+  deleteDocumentHelper,
+} from '@trestleinc/replicate/server';  // IMPORTANT: Use /server for server-safe imports!
 import { mutation, query } from './_generated/server';
 import { v } from 'convex/values';
 
