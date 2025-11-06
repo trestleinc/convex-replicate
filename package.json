@@ -1,12 +1,24 @@
 {
-  "name": "@convex-replicate",
-  "version": "0.1.0",
+  "name": "@trestleinc/replicate",
+  "version": "0.3.0",
+  "description": "Offline-first data replication with Yjs CRDTs and Convex",
+  "repository": "github:trestleinc/convex-replicate",
+  "homepage": "https://github.com/trestleinc/convex-replicate#readme",
+  "bugs": {
+    "url": "https://github.com/trestleinc/convex-replicate/issues"
+  },
   "license": "Apache-2.0",
-  "private": true,
-  "workspaces": [
-    "packages/*",
-    "examples/*"
+  "keywords": [
+    "convex",
+    "replicate",
+    "crdt",
+    "yjs",
+    "offline-first",
+    "tanstack"
   ],
+  "type": "module",
+  "private": false,
+
   "resolutions": {
     "convex": "1.28.2"
   },
@@ -14,15 +26,10 @@
     "convex": "1.28.2"
   },
   "scripts": {
-    "build": "bun run build:replicate",
-    "build:replicate": "cd packages/replicate && bun run build",
-    "build:component": "cd packages/component && bun run build",
-    "build:core": "cd packages/core && bun run build",
-    "clean": "rm -rf packages/*/dist",
-    "typecheck": "bun run typecheck:replicate",
-    "typecheck:replicate": "cd packages/replicate && bun run typecheck",
-    "typecheck:component": "cd packages/component && bun run typecheck",
-    "typecheck:core": "cd packages/core && tsc --noEmit",
+    "build": "rslib build",
+    "dev": "rslib build --watch",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
     "dev:example": "cd examples/tanstack-start && bun run dev",
     "build:example": "cd examples/tanstack-start && bun run build",
     "lint": "biome lint .",
@@ -32,28 +39,71 @@
     "check": "biome check .",
     "check:fix": "biome check --write .",
     "version-packages": "node scripts/version-packages.js",
-    "publish:replicate": "cd packages/replicate && bun publish",
-    "publish:component": "cd packages/component && bun publish",
-    "publish:core": "cd packages/core && bun publish",
-    "publish:all": "bun run build && bun run check:fix && bun run publish:replicate",
+    "publish:npm": "bun run build && bun run check:fix && bun publish",
     "prepublish": "bun run build && bun run check:fix"
   },
+  "exports": {
+    "./package.json": "./package.json",
+    "./client": {
+      "import": {
+        "@convex-dev/component-source": "./src/client/index.ts",
+        "types": "./dist/client/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./server": {
+      "import": {
+        "types": "./dist/server/index.d.ts",
+        "default": "./dist/server.js"
+      }
+    },
+    "./ssr": {
+      "import": {
+        "types": "./dist/server/ssr.d.ts",
+        "default": "./dist/ssr.js"
+      }
+    },
+    "./convex.config": {
+      "import": {
+        "@convex-dev/component-source": "./src/component/convex.config.ts",
+        "types": "./dist/component/convex.config.d.ts",
+        "default": "./dist/component/convex.config.js"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
   "dependencies": {
-    "@logtape/logtape": "1.1.2",
-    "@tanstack/db": "0.4.19",
-    "@tanstack/offline-transactions": "0.1.2",
     "yjs": "13.6.27",
-    "zod": "4.1.12"
+    "@tanstack/offline-transactions": "0.1.2",
+    "@logtape/logtape": "1.1.2"
+  },
+  "peerDependencies": {
+    "convex": "1.28.2",
+    "@tanstack/db": "0.4.19"
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.4",
+    "@rslib/core": "0.17.1",
     "@semantic-release/changelog": "6.0.3",
     "@semantic-release/exec": "7.1.0",
     "@semantic-release/git": "10.0.1",
     "@semantic-release/github": "12.0.1",
+    "@tanstack/db": "0.4.19",
     "@types/node": "24.10.0",
     "convex": "1.28.2",
     "semantic-release": "25.0.1",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "zod": "4.1.12"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/client/index.d.ts",
+  "module": "./dist/index.js",
+  "publishConfig": {
+    "access": "public"
   }
 }
