@@ -22,14 +22,14 @@ importers:
         specifier: 4.1.16
         version: 4.1.16(vite@7.2.1(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6))
       '@tanstack/db':
-        specifier: 0.4.19
-        version: 0.4.19(typescript@5.9.3)
+        specifier: 0.4.20
+        version: 0.4.20(typescript@5.9.3)
       '@tanstack/offline-transactions':
-        specifier: 0.1.2
-        version: 0.1.2(@tanstack/db@0.4.19(typescript@5.9.3))
+        specifier: 0.1.3
+        version: 0.1.3(@tanstack/db@0.4.20(typescript@5.9.3))
       '@tanstack/react-db':
-        specifier: 0.1.42
-        version: 0.1.42(react@19.2.0)(typescript@5.9.3)
+        specifier: 0.1.43
+        version: 0.1.43(react@19.2.0)(typescript@5.9.3)
       '@tanstack/react-devtools':
         specifier: 0.8.0
         version: 0.8.0(@types/react-dom@19.2.2(@types/react@19.2.2))(@types/react@19.2.2)(csstype@3.1.3)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(solid-js@1.9.10)
@@ -56,7 +56,7 @@ importers:
         version: 1.134.12(@tanstack/react-router@1.134.12(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(vite@7.2.1(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.20.6))
       '@trestleinc/replicate':
         specifier: file:../..
-        version: file:../..(@tanstack/db@0.4.19(typescript@5.9.3))(convex@1.28.2(react@19.2.0))
+        version: file:../..(@tanstack/db@0.4.20(typescript@5.9.3))(convex@1.28.2(react@19.2.0))
       class-variance-authority:
         specifier: 0.7.1
         version: 0.7.1
@@ -658,10 +658,6 @@ packages:
     resolution: {integrity: sha512-T8TbSnGsxo6TDBJx/Sgv/BlVJL3tshxZP7Aq5R1mSnM5OcHY2dQaxLMu2+E8u3gN0MLOzdjurqN4ZRVuzQycOQ==}
     engines: {node: '>=8.0'}
 
-  '@opentelemetry/api@1.9.0':
-    resolution: {integrity: sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==}
-    engines: {node: '>=8.0.0'}
-
   '@radix-ui/primitive@1.1.3':
     resolution: {integrity: sha512-JTF99U/6XIjCBo0wqkU5sK10glYe27MRRsfwoiq5zzOEZLHU3A3KCMa5X/azekYRCJ0HlwI0crAXS/5dEHTzDg==}
 
@@ -1020,8 +1016,8 @@ packages:
     peerDependencies:
       typescript: '>=4.7'
 
-  '@tanstack/db@0.4.19':
-    resolution: {integrity: sha512-S2y+Wuqy96xbYh+apV0/AwanqFEIHQIuUUooQ/0Iua6nYcebvr8wzhlkHMGK0e62FNhtmHTzUCfubIgxLMtORA==}
+  '@tanstack/db@0.4.20':
+    resolution: {integrity: sha512-D5cCW9O+bjaIiLEY00djhEUnsdw7ARdezXr917jt95VNkQ8RX816oBoAsWAgphMcIoNvpB2nI1ccyLSCrztW6A==}
     peerDependencies:
       typescript: '>=4.7'
 
@@ -1059,8 +1055,8 @@ packages:
     resolution: {integrity: sha512-B7+x7eP2FFvi3fgd3rNH9o/Eixt+pp0zCIdGhnQbAJjFrlwIKGjGnwyJjhWJ5fMQlGks/E2LdDTqEV4W9Plx7g==}
     engines: {node: '>=12'}
 
-  '@tanstack/offline-transactions@0.1.2':
-    resolution: {integrity: sha512-aCbdJYO+gCGH/REV9gmFOif8C88H3i1aqZEGXlY+mxDVePzDDDX1Rh84gA5meuspKaTcm0B6msCDrGez7MuUQg==}
+  '@tanstack/offline-transactions@0.1.3':
+    resolution: {integrity: sha512-X2wQN71LHblwZi/m+L5jp2vs5eHDfYEtGqXCnawjDj1nZKn4ryrMQ1sM0L1UtkbosmS0j1cPOc7MXO4ZAfBwXw==}
     peerDependencies:
       '@tanstack/db': '*'
 
@@ -1071,8 +1067,8 @@ packages:
   '@tanstack/query-core@5.90.7':
     resolution: {integrity: sha512-6PN65csiuTNfBMXqQUxQhCNdtm1rV+9kC9YwWAIKcaxAauq3Wu7p18j3gQY3YIBJU70jT/wzCCZ2uqto/vQgiQ==}
 
-  '@tanstack/react-db@0.1.42':
-    resolution: {integrity: sha512-lWipZbfWORyv1JaAwCqoqP/L9vMZtZNkENxBe9GHIeCY0WOM9+hfLDty+FzaYe8hbWW6gPkV5D3moCKjBPIUzw==}
+  '@tanstack/react-db@0.1.43':
+    resolution: {integrity: sha512-r05HfvEKLqKXwPcqAG2TwB4KOmrLVpPzSMhdfVRrvSZebirucsnJjZ4+7nP6dnavFETzhXDES+sABLw6HEz8NA==}
     peerDependencies:
       react: '>=16.8.0'
 
@@ -1256,7 +1252,7 @@ packages:
   '@trestleinc/replicate@file:../..':
     resolution: {directory: ../.., type: directory}
     peerDependencies:
-      '@tanstack/db': 0.4.19
+      '@tanstack/db': 0.4.20
       convex: ^1.28.2
 
   '@types/aria-query@5.0.4':
@@ -2716,8 +2712,6 @@ snapshots:
 
   '@oozcitak/util@8.3.8': {}
 
-  '@opentelemetry/api@1.9.0': {}
-
   '@radix-ui/primitive@1.1.3': {}
 
   '@radix-ui/react-compose-refs@1.1.2(@types/react@19.2.2)(react@19.2.0)':
@@ -2988,7 +2982,7 @@ snapshots:
       sorted-btree: 1.8.1
       typescript: 5.9.3
 
-  '@tanstack/db@0.4.19(typescript@5.9.3)':
+  '@tanstack/db@0.4.20(typescript@5.9.3)':
     dependencies:
       '@standard-schema/spec': 1.0.0
       '@tanstack/db-ivm': 0.1.12(typescript@5.9.3)
@@ -3048,18 +3042,17 @@ snapshots:
 
   '@tanstack/history@1.133.28': {}
 
-  '@tanstack/offline-transactions@0.1.2(@tanstack/db@0.4.19(typescript@5.9.3))':
+  '@tanstack/offline-transactions@0.1.3(@tanstack/db@0.4.20(typescript@5.9.3))':
     dependencies:
-      '@opentelemetry/api': 1.9.0
-      '@tanstack/db': 0.4.19(typescript@5.9.3)
+      '@tanstack/db': 0.4.20(typescript@5.9.3)
 
   '@tanstack/pacer@0.1.0': {}
 
   '@tanstack/query-core@5.90.7': {}
 
-  '@tanstack/react-db@0.1.42(react@19.2.0)(typescript@5.9.3)':
+  '@tanstack/react-db@0.1.43(react@19.2.0)(typescript@5.9.3)':
     dependencies:
-      '@tanstack/db': 0.4.19(typescript@5.9.3)
+      '@tanstack/db': 0.4.20(typescript@5.9.3)
       react: 19.2.0
       use-sync-external-store: 1.6.0(react@19.2.0)
     transitivePeerDependencies:
@@ -3369,11 +3362,11 @@ snapshots:
       '@types/react': 19.2.2
       '@types/react-dom': 19.2.2(@types/react@19.2.2)
 
-  '@trestleinc/replicate@file:../..(@tanstack/db@0.4.19(typescript@5.9.3))(convex@1.28.2(react@19.2.0))':
+  '@trestleinc/replicate@file:../..(@tanstack/db@0.4.20(typescript@5.9.3))(convex@1.28.2(react@19.2.0))':
     dependencies:
       '@logtape/logtape': 1.1.2
-      '@tanstack/db': 0.4.19(typescript@5.9.3)
-      '@tanstack/offline-transactions': 0.1.2(@tanstack/db@0.4.19(typescript@5.9.3))
+      '@tanstack/db': 0.4.20(typescript@5.9.3)
+      '@tanstack/offline-transactions': 0.1.3(@tanstack/db@0.4.20(typescript@5.9.3))
       convex: 1.28.2(react@19.2.0)
       yjs: 13.6.27
 

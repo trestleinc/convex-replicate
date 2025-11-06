@@ -19,9 +19,8 @@ const collection = getTasksCollection(data.tasks);
 const query = useLiveQuery(collection as any);
 
 // Reactive data from the query
-const allTasks = $derived((query.data || []) as Task[]);
-// Filter out soft-deleted items (deleted is just a field like isCompleted)
-const tasks = $derived(allTasks.filter((task) => !(task as any).deleted));
+// Hard deletes are physically removed - no filtering needed
+const tasks = $derived((query.data || []) as Task[]);
 const isLoading = $derived(query.isLoading ?? false);
 const isError = $derived(query.isError ?? false);
 
@@ -63,11 +62,8 @@ function handleEditCancel() {
 
 function handleDelete(id: string) {
   if (browser) {
-    // Soft delete - just set a field, like isCompleted!
-    collection.update(id, (draft: Task) => {
-      (draft as any).deleted = true;
-      (draft as any).deletedAt = Date.now();
-    });
+    // Hard delete - physically removes from main table
+    collection.delete(id);
   }
 }
 
