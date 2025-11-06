@@ -12,6 +12,7 @@ Convex Replicate provides a dual-storage architecture for building offline-capab
 - **Real-time sync** - Convex WebSocket-based synchronization
 - **TanStack DB integration** - Reactive state management for React and Svelte
 - **Dual-storage pattern** - CRDT layer for conflict resolution + main tables for queries
+- **Event sourcing** - Append-only event log preserves complete history
 - **Type-safe** - Full TypeScript support
 - **Multi-tab sync** - Changes sync instantly across browser tabs via TanStack coordination
 - **SSR support** - Server-side rendering with data preloading
@@ -20,26 +21,6 @@ Convex Replicate provides a dual-storage architecture for building offline-capab
 - **React Native compatible** - No WASM dependency, works on mobile
 
 ## Architecture
-
-### High-Level Overview
-
-```mermaid
-graph TB
-    App[React/Svelte Application<br/>TanStack Start/Router/SvelteKit]
-    Hook[Custom Hook<br/>useTasks, etc.]
-    TanStack[TanStack DB<br/>Reactive Collections]
-    Yjs[Yjs CRDT<br/>Conflict-Free Merging]
-    Offline[TanStack Offline Executor<br/>Outbox Pattern & Retry]
-    Component[Convex Component<br/>@trestleinc/convex-replicate-component]
-    MainTable[Main App Tables<br/>tasks, etc.]
-
-    App --> Hook
-    Hook --> TanStack
-    TanStack --> Yjs
-    Yjs --> Offline
-    Offline <-->|WebSocket| Component
-    Component --> MainTable
-```
 
 ### Data Flow: Real-Time Sync
 
@@ -60,17 +41,14 @@ sequenceDiagram
     TDB-->>UI: Re-render (optimistic)
 
     Note over Offline: Automatic retry with backoff
-    Offline->>Yjs: Get CRDT bytes
+    Offline->>Yjs: Get CRDT delta
     Offline->>Convex: insertDocument/updateDocument mutation
+    Convex->>Component: Append delta to event log
     Convex->>Table: Insert/Update materialized doc
 
     Note over Convex,Table: Change detected
-    Convex-->>Offline: changeStream notification
-    Offline->>Convex: Refetch tasks
-    Convex->>Table: Query updated docs
-    Convex-->>Offline: Return changes
-    Offline->>TDB: Update collection
-    TDB-->>UI: Re-render with synced data
+    Table-->>UI: Subscription update
+    UI-->>User: Re-render with synced data
 ```
 
 ### Dual-Storage Architecture
@@ -78,74 +56,31 @@ sequenceDiagram
 ```mermaid
 graph LR
     Client[Client<br/>Yjs CRDT]
-    Component[Component Storage<br/>CRDT Layer<br/>Conflict Resolution]
+    Component[Component Storage<br/>Event Log<br/>CRDT Deltas]
     MainTable[Main Application Table<br/>Materialized Docs<br/>Efficient Queries]
 
     Client -->|insertDocument/updateDocument| Component
     Component -->|also writes to| MainTable
-    MainTable -->|changeStream subscription| Client
+    MainTable -->|subscription| Client
 ```
 
 **Why both?**
-- **Component Storage**: Handles conflict resolution with Yjs CRDTs, source of truth for offline changes
-- **Main Tables**: Enables efficient server-side queries, joins, and reactive subscriptions
-- Similar to event sourcing: component = event log, main table = read model
-
-## Packages
-
-### `@trestleinc/convex-replicate-core`
-
-**Framework-agnostic utilities** - Replication helpers and SSR utilities for Convex Replicate.
-
-**What it provides:**
-- `convexCollectionOptions` - TanStack DB collection options for Yjs CRDT integration
-- `createConvexCollection` - Wraps collections with Yjs + TanStack offline-transactions support
-- `loadCollection()` - SSR data preloading for instant page loads
-- Server-side replication helpers (`insertDocumentHelper`, `updateDocumentHelper`, etc.)
-- Logging utilities via LogTape
-
-**Use when:**
-- Building React or Svelte applications with TanStack DB
-- Need SSR/SSG support (Next.js, Remix, TanStack Start, SvelteKit)
-- Building custom framework integrations
-
-### `@trestleinc/convex-replicate-component`
-
-**Convex component for CRDT storage** - Plug-and-play Convex component providing the backend storage layer.
-
-**What it provides:**
-- `ReplicateStorage` - Type-safe API for interacting with the component
-- Internal CRDT storage table with indexes
-- `insertDocument()` - Insert new documents with CRDT bytes
-    - `updateDocument()` - Update existing documents with CRDT bytes
-- `pullChanges()` - Incremental sync with checkpoints
-- `changeStream()` - Real-time change detection
-
-**Use when:**
-- Setting up the backend Convex storage layer
-- Need CRDT-based conflict resolution
-- Want plug-and-play replication infrastructure
+- **Component Storage (Event Log)**: Append-only CRDT deltas, complete history, conflict resolution
+- **Main Tables (Read Model)**: Current state, efficient server-side queries, indexes, and reactive subscriptions
+- Similar to CQRS/Event Sourcing: component = event log, main table = materialized view
 
 ## Installation
 
 ```bash
-# Using bun (automatically installs peer dependencies)
-bun add @trestleinc/convex-replicate-core @trestleinc/convex-replicate-component convex @tanstack/react-db
+# Using pnpm (recommended)
+pnpm add @trestleinc/replicate
 
-# Using npm (peer dependencies must be installed explicitly)
-npm install @trestleinc/convex-replicate-core @trestleinc/convex-replicate-component convex @tanstack/react-db
-npm install yjs @tanstack/offline-transactions
+# Using npm (v7+)
+npm install @trestleinc/replicate
 
-# Using yarn
-yarn add @trestleinc/convex-replicate-core @trestleinc/convex-replicate-component convex @tanstack/react-db
-yarn add yjs @tanstack/offline-transactions
-
-# Using pnpm
-pnpm add @trestleinc/convex-replicate-core @trestleinc/convex-replicate-component convex @tanstack/react-db
-pnpm add yjs @tanstack/offline-transactions
+# Using Bun
+bun add @trestleinc/replicate
 ```
-
-**Note:** Starting from v0.3.0, Yjs and TanStack offline-transactions are peer dependencies. Bun automatically installs peer dependencies, but npm/yarn/pnpm require explicit installation. This approach gives you control over CRDT library versions and reduces bundle size by 96% compared to Automerge. See [MIGRATION-0.3.0.md](./MIGRATION-0.3.0.md) for migration from v0.2.x.
 
 ## Quick Start
 
@@ -156,7 +91,7 @@ Add the replicate component to your Convex app configuration:
 ```typescript
 // convex/convex.config.ts
 import { defineApp } from 'convex/server';
-import replicate from '@trestleinc/convex-replicate-component/convex.config';
+import replicate from '@trestleinc/replicate/convex.config';
 
 const app = defineApp();
 app.use(replicate);
@@ -166,33 +101,34 @@ export default app;
 
 ### Step 2: Define Your Schema
 
-Create your main application table with required fields:
+Use the `replicatedTable` helper to automatically inject required fields:
 
 ```typescript
 // convex/schema.ts
-import { defineSchema, defineTable } from 'convex/server';
+import { defineSchema } from 'convex/server';
 import { v } from 'convex/values';
+import { replicatedTable } from '@trestleinc/replicate/server';
 
 export default defineSchema({
-  tasks: defineTable({
-    // Required fields for Convex Replicate:
-    id: v.string(),              // Client-generated UUID (document identifier)
-    version: v.number(),         // CRDT version (for conflict detection)
-    timestamp: v.number(),       // Last modification time (for incremental sync)
-    
-    // Your application fields:
-    text: v.string(),
-    isCompleted: v.boolean(),
-  })
-    .index('by_user_id', ['id'])      // Required for document lookups/updates
-    .index('by_timestamp', ['timestamp']), // Required for incremental sync
+  tasks: replicatedTable(
+    {
+      // Your application fields only!
+      // version and timestamp are automatically injected by replicatedTable
+      id: v.string(),
+      text: v.string(),
+      isCompleted: v.boolean(),
+    },
+    (table) => table
+      .index('by_user_id', ['id'])      // Required for document lookups
+      .index('by_timestamp', ['timestamp']) // Required for incremental sync
+  ),
 });
 ```
 
-**Required fields:**
-- `id` - Client-generated UUID (document identifier)
-- `version` - CRDT version number (for optimistic concurrency control)
-- `timestamp` - Last modification timestamp (enables incremental sync)
+**What `replicatedTable` does:**
+- Automatically injects `version: v.number()` (for CRDT versioning)
+- Automatically injects `timestamp: v.number()` (for incremental sync)
+- You only define your business logic fields
 
 **Required indexes:**
 - `by_user_id` on `['id']` - Enables fast document lookups during updates
@@ -210,14 +146,13 @@ import { v } from 'convex/values';
 import {
   insertDocumentHelper,
   updateDocumentHelper,
-  pullChangesHelper,
-  changeStreamHelper,
-} from '@trestleinc/convex-replicate-core/replication'; // IMPORTANT: Use /replication for server-safe imports!
+  deleteDocumentHelper,
+} from '@trestleinc/replicate/server'; // IMPORTANT: Use /server for Convex functions!
 
 /**
- * TanStack DB endpoints - called by createConvexCollection
- * These receive Yjs CRDT bytes from client and write to both:
- * 1. Component storage (Yjs CRDT bytes for conflict resolution)
+ * TanStack DB endpoints - called by convexCollectionOptions
+ * These receive Yjs CRDT deltas from client and write to both:
+ * 1. Component storage (Yjs CRDT deltas in event log)
  * 2. Main table (materialized docs for efficient queries)
  */
 
@@ -257,6 +192,22 @@ export const updateDocument = mutation({
   },
 });
 
+export const deleteDocument = mutation({
+  args: {
+    collectionName: v.string(),
+    documentId: v.string(),
+    crdtBytes: v.bytes(),
+    version: v.number(),
+  },
+  handler: async (ctx, args) => {
+    return await deleteDocumentHelper(ctx, components, 'tasks', {
+      id: args.documentId,
+      crdtBytes: args.crdtBytes,
+      version: args.version,
+    });
+  },
+});
+
 /**
  * Stream endpoint for real-time subscriptions
  * Returns all active items (hard deletes are physically removed from table)
@@ -266,32 +217,11 @@ export const stream = query({
     return await ctx.db.query('tasks').collect();
   },
 });
-
-export const pullChanges = query({
-  args: {
-    collectionName: v.string(),
-    checkpoint: v.object({ lastModified: v.number() }),
-    limit: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    return await pullChangesHelper(ctx, components, 'tasks', {
-      checkpoint: args.checkpoint,
-      limit: args.limit,
-    });
-  },
-});
-
-export const changeStream = query({
-  args: { collectionName: v.string() },
-  handler: async (ctx) => {
-    return await changeStreamHelper(ctx, components, 'tasks');
-  },
-});
 ```
 
 ### Step 4: Create a Custom Hook
 
-Create a hook that wraps TanStack DB with Yjs collection options:
+Create a hook that wraps TanStack DB with Convex collection options:
 
 ```typescript
 // src/useTasks.ts
@@ -300,7 +230,7 @@ import {
   convexCollectionOptions,
   createConvexCollection,
   type ConvexCollection,
-} from '@trestleinc/convex-replicate-core';
+} from '@trestleinc/replicate/client';
 import { api } from '../convex/_generated/api';
 import { convexClient } from './router';
 import { useMemo } from 'react';
@@ -322,7 +252,12 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
       const rawCollection = createCollection(
         convexCollectionOptions<Task>({
           convexClient,
-          api: api.tasks,  // Points to tasks.ts functions
+          api: {
+            stream: api.tasks.stream,
+            insertDocument: api.tasks.insertDocument,
+            updateDocument: api.tasks.updateDocument,
+            deleteDocument: api.tasks.deleteDocument,
+          },
           collectionName: 'tasks',
           getKey: (task) => task.id,
           initialData,
@@ -396,14 +331,14 @@ export function TaskList() {
 }
 ```
 
-### Delete Pattern: Hard Delete with CRDT History (v0.3.0+)
+## Delete Pattern: Hard Delete with Event History (v0.3.0+)
 
-Convex Replicate uses **hard deletes** where items are physically removed from the main table, while the CRDT component preserves complete event history for future recovery features.
+Convex Replicate uses **hard deletes** where items are physically removed from the main table, while the internal component preserves complete event history.
 
 **Why hard delete?**
 - Clean main table (no filtering required)
 - Standard TanStack DB operations
-- Complete audit trail preserved in component storage
+- Complete audit trail preserved in component event log
 - Proper CRDT conflict resolution maintained
 - Foundation for future recovery features
 
@@ -453,7 +388,7 @@ export const stream = query({
 
 ### Server-Side Rendering (SSR)
 
-Preload data on the server for instant page loads. You'll need to create a separate query that reads from your main table:
+Preload data on the server for instant page loads:
 
 **Step 1: Create an SSR-friendly query**
 
@@ -461,9 +396,7 @@ Preload data on the server for instant page loads. You'll need to create a separ
 // convex/tasks.ts
 export const getTasks = query({
   handler: async (ctx) => {
-    return await ctx.db
-      .query('tasks')
-      .collect();
+    return await ctx.db.query('tasks').collect();
   },
 });
 ```
@@ -498,8 +431,6 @@ function TasksPage() {
 }
 ```
 
-> **Note:** The `loadCollection` utility from `@trestleinc/convex-replicate-core/ssr` is available but requires you to decode CRDT bytes. For most use cases, a simple query like `getTasks` above is easier and more efficient.
-
 ### Direct Component Usage (Advanced)
 
 > **WARNING:** Using `ReplicateStorage` directly only writes to the component CRDT storage layer. It does NOT implement the dual-storage pattern (no writes to main table), which means:
@@ -509,11 +440,11 @@ function TasksPage() {
 > 
 > **Recommended:** Use the replication helpers (`insertDocumentHelper`, etc.) shown in Step 3 for the full dual-storage pattern.
 
-For advanced use cases where you need direct component access, you can use `ReplicateStorage`:
+For advanced use cases where you need direct component access:
 
 ```typescript
 // convex/tasks.ts
-import { ReplicateStorage } from '@trestleinc/convex-replicate-component';
+import { ReplicateStorage } from '@trestleinc/replicate/client';
 import { mutation, query } from './_generated/server';
 import { components } from './_generated/api';
 import { v } from 'convex/values';
@@ -558,19 +489,13 @@ export const updateTask = mutation({
   },
 });
 
-export const getTasks = query({
+export const streamChanges = query({
   args: {
     checkpoint: v.object({ lastModified: v.number() }),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    return await tasksStorage.pullChanges(ctx, args.checkpoint, args.limit);
-  },
-});
-
-export const watchTasks = query({
-  handler: async (ctx) => {
-    return await tasksStorage.changeStream(ctx);
+    return await tasksStorage.stream(ctx, args.checkpoint, args.limit);
   },
 });
 ```
@@ -598,7 +523,7 @@ await configure({
 Get a logger instance for custom logging:
 
 ```typescript
-import { getLogger } from '@trestleinc/convex-replicate-core';
+import { getLogger } from '@trestleinc/replicate/client';
 
 const logger = getLogger(['my-module']); // Accepts string or string array
 
@@ -609,7 +534,7 @@ logger.error('Operation failed', { error });
 
 ## API Reference
 
-### `@trestleinc/convex-replicate-core`
+### Client-Side (`@trestleinc/replicate/client`)
 
 #### `convexCollectionOptions<T>(config)`
 
@@ -620,12 +545,13 @@ Creates collection options for TanStack DB with Yjs CRDT integration.
 interface ConvexCollectionOptionsConfig<T> {
   convexClient: ConvexClient;
   api: {
-    insertDocument: FunctionReference;
-    updateDocument: FunctionReference;
-    stream: FunctionReference;  // Real-time subscription endpoint
+    stream: FunctionReference;          // Real-time subscription endpoint
+    insertDocument: FunctionReference;  // Insert mutation
+    updateDocument: FunctionReference;  // Update mutation
+    deleteDocument: FunctionReference;  // Delete mutation
   };
   collectionName: string;
-  getKey: (item: T) => string;
+  getKey: (item: T) => string | number;
   initialData?: ReadonlyArray<T>;
 }
 ```
@@ -634,69 +560,46 @@ interface ConvexCollectionOptionsConfig<T> {
 
 **Example:**
 ```typescript
-// Step 1: Create raw collection
 const rawCollection = createCollection(
   convexCollectionOptions<Task>({
     convexClient,
-    api: api.tasks,
+    api: {
+      stream: api.tasks.stream,
+      insertDocument: api.tasks.insertDocument,
+      updateDocument: api.tasks.updateDocument,
+      deleteDocument: api.tasks.deleteDocument,
+    },
     collectionName: 'tasks',
     getKey: (task) => task.id,
     initialData,
   })
 );
 
-// Step 2: Wrap with offline support
 const collection = createConvexCollection(rawCollection);
 ```
 
-#### `loadCollection<T>(httpClient, config)`
+#### `createConvexCollection<T>(rawCollection)`
 
-Loads collection data during SSR for instant page loads.
+Wraps a TanStack DB collection with offline support (Yjs + TanStack offline-transactions).
 
 **Parameters:**
-- `httpClient` - ConvexHttpClient instance for server-side queries
-- `config` - Configuration object:
-  - `api` - The API module for replication functions
-  - `collection` - Collection name
-  - `limit?` - Maximum items to load (default: 100)
+- `rawCollection` - Collection created with `createCollection(convexCollectionOptions(...))`
 
-**Returns:** `Promise<ReadonlyArray<T>>`
+**Returns:** `ConvexCollection<T>` (just a type alias for `Collection<T>`)
 
 **Example:**
 ```typescript
-const tasks = await loadCollection<Task>(httpClient, {
-  api: api.tasks,
-  collection: 'tasks',
-  limit: 50,
-});
+const collection = createConvexCollection(rawCollection);
+
+// Use standard TanStack DB operations
+collection.insert({ id: '1', text: 'Task 1', isCompleted: false });
+collection.update('1', (draft) => { draft.isCompleted = true });
+collection.delete('1');
 ```
-
-#### `getLogger(category)`
-
-Get a logger instance for custom logging.
-
-**Parameters:**
-- `category: string | string[]` - Logger category (string or array of strings)
-
-**Returns:** Logger with `debug()`, `info()`, `warn()`, `error()` methods
-
-**Examples:**
-```typescript
-// Single string
-const logger = getLogger('my-module');
-
-// String array for hierarchical categories
-const logger = getLogger(['hooks', 'useTasks']);
-
-logger.debug('Task created', { id: taskId });
-logger.info('Operation completed', { count: 5 });
-```
-
-### `@trestleinc/convex-replicate-component`
 
 #### `ReplicateStorage<TDocument>`
 
-Type-safe API for interacting with the replicate component.
+Type-safe API for direct component access (advanced).
 
 **Constructor:**
 ```typescript
@@ -711,7 +614,7 @@ Insert a new document with Yjs CRDT bytes.
 **Parameters:**
 - `ctx` - Convex mutation context
 - `documentId` - Unique document identifier
-- `crdtBytes` - ArrayBuffer containing Yjs CRDT bytes (Y.encodeStateAsUpdate)
+- `crdtBytes` - ArrayBuffer containing Yjs CRDT bytes
 - `version` - CRDT version number
 
 **Returns:** `Promise<{ success: boolean }>`
@@ -722,14 +625,23 @@ Update an existing document with Yjs CRDT bytes.
 **Parameters:**
 - `ctx` - Convex mutation context
 - `documentId` - Unique document identifier
-- `crdtBytes` - ArrayBuffer containing Yjs CRDT bytes (Y.encodeStateAsUpdate)
+- `crdtBytes` - ArrayBuffer containing Yjs CRDT bytes
 - `version` - CRDT version number
 
 **Returns:** `Promise<{ success: boolean }>`
 
-**Note on deletes:** Hard deletes are handled via `onDelete` handler which captures Yjs deletion delta and removes the document from the main table. CRDT history is preserved in the component storage.
+##### `deleteDocument(ctx, documentId, crdtBytes, version)`
+Delete a document (appends deletion delta to event log).
 
-##### `pullChanges(ctx, checkpoint, limit?)`
+**Parameters:**
+- `ctx` - Convex mutation context
+- `documentId` - Unique document identifier
+- `crdtBytes` - ArrayBuffer containing Yjs deletion delta
+- `version` - CRDT version number
+
+**Returns:** `Promise<{ success: boolean }>`
+
+##### `stream(ctx, checkpoint, limit?)`
 Pull document changes for incremental sync.
 
 **Parameters:**
@@ -742,7 +654,7 @@ Pull document changes for incremental sync.
 Promise<{
   changes: Array<{
     documentId: string;
-    crdtBytes: ArrayBuffer;  // Yjs CRDT bytes
+    crdtBytes: ArrayBuffer;
     version: number;
     timestamp: number;
   }>;
@@ -751,13 +663,109 @@ Promise<{
 }>
 ```
 
-##### `changeStream(ctx)`
-Subscribe to collection changes.
+#### `getLogger(category)`
+
+Get a logger instance for custom logging.
+
+**Parameters:**
+- `category: string | string[]` - Logger category
+
+**Returns:** Logger with `debug()`, `info()`, `warn()`, `error()` methods
+
+**Examples:**
+```typescript
+const logger = getLogger('my-module');
+const logger = getLogger(['hooks', 'useTasks']);
+
+logger.debug('Task created', { id: taskId });
+```
+
+### Server-Side (`@trestleinc/replicate/server`)
+
+#### `insertDocumentHelper(ctx, components, tableName, args)`
+
+Insert a document into both the CRDT component and the main application table.
+
+**Parameters:**
+- `ctx` - Convex mutation context
+- `components` - Generated components from Convex
+- `tableName` - Name of the main application table
+- `args` - `{ id: string; crdtBytes: ArrayBuffer; materializedDoc: any; version: number }`
+
+**Returns:** `Promise<{ success: boolean; metadata: {...} }>`
+
+#### `updateDocumentHelper(ctx, components, tableName, args)`
+
+Update a document in both the CRDT component and the main application table.
+
+**Parameters:**
+- `ctx` - Convex mutation context
+- `components` - Generated components from Convex
+- `tableName` - Name of the main application table
+- `args` - `{ id: string; crdtBytes: ArrayBuffer; materializedDoc: any; version: number }`
+
+**Returns:** `Promise<{ success: boolean; metadata: {...} }>`
+
+#### `deleteDocumentHelper(ctx, components, tableName, args)`
+
+Hard delete from main table, append deletion delta to component event log.
+
+**Parameters:**
+- `ctx` - Convex mutation context
+- `components` - Generated components from Convex
+- `tableName` - Name of the main application table
+- `args` - `{ id: string; crdtBytes: ArrayBuffer; version: number }`
+
+**Returns:** `Promise<{ success: boolean; metadata: {...} }>`
+
+#### `streamHelper(ctx, components, tableName, args)`
+
+Stream CRDT deltas from component storage for incremental sync.
 
 **Parameters:**
 - `ctx` - Convex query context
+- `components` - Generated components from Convex
+- `tableName` - Name of the collection
+- `args` - `{ checkpoint: { lastModified: number }; limit?: number }`
 
-**Returns:** `Promise<{ timestamp: number; count: number }>`
+**Returns:** `Promise<{ changes: Array<...>; checkpoint: {...}; hasMore: boolean }>`
+
+#### `replicatedTable(userFields, applyIndexes?)`
+
+Automatically inject replication metadata fields (`version`, `timestamp`).
+
+**Parameters:**
+- `userFields` - User's business logic fields
+- `applyIndexes` - Optional callback to add indexes
+
+**Returns:** TableDefinition with replication fields injected
+
+**Example:**
+```typescript
+tasks: replicatedTable(
+  {
+    id: v.string(),
+    text: v.string(),
+  },
+  (table) => table
+    .index('by_user_id', ['id'])
+    .index('by_timestamp', ['timestamp'])
+)
+```
+
+### SSR (`@trestleinc/replicate/ssr`)
+
+#### `loadCollection<T>(httpClient, config)`
+
+Load collection data during SSR for instant page loads.
+
+**Note:** This function is deprecated. For most SSR use cases, create a dedicated query that reads from your main table.
+
+**Parameters:**
+- `httpClient` - ConvexHttpClient instance
+- `config` - `{ api: CollectionAPI; collection: string; limit?: number }`
+
+**Returns:** `Promise<ReadonlyArray<T>>`
 
 ## Performance
 
@@ -770,8 +778,9 @@ Subscribe to collection changes.
 
 ### Sync Performance
 
-- **Change streams** - WebSocket-based real-time updates
-- **Incremental sync** - Only pull changed documents since last checkpoint
+- **Real-time updates** - WebSocket-based change notifications
+- **Delta encoding** - Only send what changed (< 1KB per change vs 100KB+ full state)
+- **Event sourcing** - Append-only writes, no update conflicts
 - **Optimistic UI** - Instant updates without waiting for server
 
 ### Multi-Tab Sync
@@ -805,40 +814,40 @@ Complete working example: `examples/tanstack-start/`
 - `src/routes/index.tsx` - Component usage with SSR
 - `src/routes/__root.tsx` - Logging configuration
 - `convex/tasks.ts` - Replication functions using dual-storage helpers
-- `convex/schema.ts` - Schema with required indexes
+- `convex/schema.ts` - Schema with `replicatedTable` helper
+
+**Run the example:**
+```bash
+cd examples/tanstack-start
+pnpm install
+pnpm run dev
+```
 
 ## Development
 
-### Building Packages
+### Building
 
 ```bash
-bun run build         # Build all packages (component → core)
-bun run build:component # Build component only
-bun run build:core    # Build core only
-bun run clean         # Remove build artifacts
-```
-
-### Type Checking
-
-```bash
-bun run typecheck     # Check all packages
+pnpm run build         # Build package using Rslib
+pnpm run clean         # Remove build artifacts
+pnpm run typecheck     # Type check
 ```
 
 ### Code Quality
 
 ```bash
-bun run check         # Lint + format check (dry run)
-bun run check:fix     # Auto-fix all issues (run before committing)
-bun run lint          # Lint only
-bun run lint:fix      # Auto-fix lint issues
-bun run format        # Format only
-bun run format:check  # Check formatting
+pnpm run check         # Lint + format check (dry run)
+pnpm run check:fix     # Auto-fix all issues (run before committing)
+pnpm run lint          # Lint only
+pnpm run lint:fix      # Auto-fix lint issues
+pnpm run format        # Format only
+pnpm run format:check  # Check formatting
 ```
 
 ### Running Example
 
 ```bash
-bun run dev:example   # Start example app + Convex dev environment
+pnpm run dev:example   # Start example app + Convex dev environment
 ```
 
 ## Roadmap
@@ -847,9 +856,9 @@ bun run dev:example   # Start example app + Convex dev environment
 - [ ] Delta sync (only sync changed fields)
 - [ ] Encryption at rest
 - [ ] Attachment support (files, images)
-- [ ] Vue wrapper (Svelte already supported!)
 - [x] React Native support (works with Yjs v0.3.0+)
 - [ ] Advanced Yjs features (rich text editing, shared cursors)
+- [ ] Recovery features (restore deleted items from event log)
 
 ## Contributing
 
