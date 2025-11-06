@@ -77,7 +77,7 @@ function handleKeyDown(e: KeyboardEvent, id: string) {
 </script>
 
 <svelte:head>
-	<title>Convex TanStack DB - Svelte Demo</title>
+	<title>Replicate - Svelte</title>
 </svelte:head>
 
 <div class="p-6 max-w-2xl mx-auto">

@@ -5,7 +5,7 @@
   "type": "module",
   "packageManager": "pnpm@10.20.0",
   "scripts": {
-    "dev": "concurrently \"bun:dev:app\" \"bun:dev:convex\"",
+    "dev": "concurrently \"pnpm:dev:app\" \"pnpm:dev:convex\"",
     "dev:app": "vite dev --port 3000",
     "dev:convex": "convex dev",
     "build": "vite build",
