@@ -117,7 +117,7 @@ graph LR
 - `ReplicateStorage` - Type-safe API for interacting with the component
 - Internal CRDT storage table with indexes
 - `insertDocument()` - Insert new documents with CRDT bytes
-- `updateDocument()` - Update existing documents with CRDT bytes (also used for soft deletes)
+    - `updateDocument()` - Update existing documents with CRDT bytes
 - `pullChanges()` - Incremental sync with checkpoints
 - `changeStream()` - Real-time change detection
 
@@ -259,8 +259,7 @@ export const updateDocument = mutation({
 
 /**
  * Stream endpoint for real-time subscriptions
- * Returns ALL items including soft-deleted ones for proper Yjs CRDT synchronization
- * UI layer filters out deleted items for display
+ * Returns all active items (hard deletes are physically removed from table)
  */
 export const stream = query({
   handler: async (ctx) => {
@@ -348,10 +347,7 @@ import { useTasks } from '../useTasks';
 
 export function TaskList() {
   const collection = useTasks();
-  const { data: allTasks, isLoading, isError } = useLiveQuery(collection);
-
-  // Filter out soft-deleted items (deleted is just a boolean field like isCompleted)
-  const tasks = allTasks?.filter((task: Task) => !(task as any).deleted) || [];
+  const { data: tasks, isLoading, isError } = useLiveQuery(collection);
 
   const handleCreate = () => {
     collection.insert({
@@ -368,11 +364,8 @@ export function TaskList() {
   };
 
   const handleDelete = (id: string) => {
-    // Soft delete - just set a field, like isCompleted!
-    collection.update(id, (draft: Task) => {
-      (draft as any).deleted = true;
-      (draft as any).deletedAt = Date.now();
-    });
+    // Hard delete - physically removes from main table
+    collection.delete(id);
   };
 
   if (isError) {
@@ -403,59 +396,58 @@ export function TaskList() {
 }
 ```
 
-### Delete Pattern: Soft Delete
+### Delete Pattern: Hard Delete with CRDT History (v0.3.0+)
 
-**Treat `deleted` like `isCompleted` - just a boolean field!**
+Convex Replicate uses **hard deletes** where items are physically removed from the main table, while the CRDT component preserves complete event history for future recovery features.
 
-Convex Replicate uses **soft deletes** where items are marked with a `deleted: true` field rather than being removed from the collection. This approach:
-
-- ✅ Works exactly like updating `isCompleted` (simple field update)
-- ✅ Maintains CRDT consistency across clients
-- ✅ No special `onDelete` handler or complex logic needed
-- ✅ UI filters out deleted items for display
+**Why hard delete?**
+- Clean main table (no filtering required)
+- Standard TanStack DB operations
+- Complete audit trail preserved in component storage
+- Proper CRDT conflict resolution maintained
+- Foundation for future recovery features
 
 **Implementation:**
 
 ```typescript
-// Delete handler (uses collection.update, not collection.delete)
+// Delete handler (uses collection.delete)
 const handleDelete = (id: string) => {
-  collection.update(id, (draft: Task) => {
-    draft.deleted = true;
-    draft.deletedAt = Date.now();
-  });
+  collection.delete(id);  // Hard delete - physically removes from main table
 };
 
-// Filter deleted items in UI
-const { data: allTasks } = useLiveQuery(collection);
-const tasks = allTasks?.filter((task: Task) => !task.deleted) || [];
+// UI usage - no filtering needed!
+const { data: tasks } = useLiveQuery(collection);
 
-// SSR loader should also filter
+// SSR loader - no filtering needed!
 export const Route = createFileRoute('/')({
   loader: async () => {
-    const allTasks = await httpClient.query(api.tasks.stream);
-    const tasks = allTasks.filter((task: any) => !task.deleted);
+    const tasks = await httpClient.query(api.tasks.stream);
     return { tasks };
   },
 });
 ```
 
-**Why soft delete?**
-- Hard deletes (`collection.delete()`) physically remove items, breaking CRDT sync
-- Soft deletes keep items in Yjs for proper conflict resolution
-- Server returns all items (including deleted) for CRDT completeness
-- UI simply filters out `deleted: true` items
+**How it works:**
+1. Client calls `collection.delete(id)`
+2. `onDelete` handler captures Yjs deletion delta
+3. Delta appended to component event log (history preserved)
+4. Main table: document physically removed
+5. Other clients notified and item removed locally
 
-**Server-side:** Return ALL items including deleted ones. The subscription needs complete CRDT state for proper synchronization:
+**Server-side:** Returns only active items (deleted items are physically removed):
 
 ```typescript
 // convex/tasks.ts
 export const stream = query({
   handler: async (ctx) => {
-    // Return ALL items (Yjs CRDT needs complete state)
     return await ctx.db.query('tasks').collect();
   },
 });
 ```
+
+**Dual Storage Architecture:**
+- **Component Storage**: Append-only event log with complete history (including deletions)
+- **Main Table**: Current state only (deleted items removed)
 
 ## Advanced Usage
 
@@ -510,7 +502,7 @@ function TasksPage() {
 
 ### Direct Component Usage (Advanced)
 
-> **⚠️ WARNING:** Using `ReplicateStorage` directly only writes to the component CRDT storage layer. It does NOT implement the dual-storage pattern (no writes to main table), which means:
+> **WARNING:** Using `ReplicateStorage` directly only writes to the component CRDT storage layer. It does NOT implement the dual-storage pattern (no writes to main table), which means:
 > - You cannot query this data efficiently in Convex
 > - You lose the benefits of reactive subscriptions on materialized docs
 > - You'll need to manually handle materialization
@@ -735,7 +727,7 @@ Update an existing document with Yjs CRDT bytes.
 
 **Returns:** `Promise<{ success: boolean }>`
 
-**Note on deletes:** For soft deletes, use `updateDocument()` with a `deleted: true` field. Treat deletion as a field update, just like `isCompleted`.
+**Note on deletes:** Hard deletes are handled via `onDelete` handler which captures Yjs deletion delta and removes the document from the main table. CRDT history is preserved in the component storage.
 
 ##### `pullChanges(ctx, checkpoint, limit?)`
 Pull document changes for incremental sync.

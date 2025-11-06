@@ -25,12 +25,12 @@ gh pr create --base prod --head main --title "Release Sprint 42"
 # 3. Review & merge PR in GitHub UI
 
 # 4. Done! Semantic-release automatically:
-#    ✅ Determines version from commits
-#    ✅ Updates package.json files
-#    ✅ Generates CHANGELOG
-#    ✅ Publishes to NPM
-#    ✅ Creates GitHub release
-#    ✅ Opens sync PR back to main
+#    - Determines version from commits
+#    - Updates package.json files
+#    - Generates CHANGELOG
+#    - Publishes to NPM
+#    - Creates GitHub release
+#    - Opens sync PR back to main
 ```
 
 ## Commit Message Format

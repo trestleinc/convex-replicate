@@ -103,7 +103,7 @@ export function convexCollectionOptions<T extends object>({
     _convexClient: convexClient,
     _collectionName: collectionName,
 
-    // ✅ REAL onInsert handler (called automatically by TanStack DB)
+    // REAL onInsert handler (called automatically by TanStack DB)
     onInsert: async ({ transaction }: any) => {
       logger.debug('onInsert handler called', {
         collectionName,
@@ -165,7 +165,7 @@ export function convexCollectionOptions<T extends object>({
       }
     },
 
-    // ✅ REAL onUpdate handler (called automatically by TanStack DB)
+    // REAL onUpdate handler (called automatically by TanStack DB)
     onUpdate: async ({ transaction }: any) => {
       logger.debug('onUpdate handler called', {
         collectionName,
@@ -234,7 +234,7 @@ export function convexCollectionOptions<T extends object>({
       }
     },
 
-    // ✅ onDelete handler (called when user does collection.delete())
+    // onDelete handler (called when user does collection.delete())
     onDelete: async ({ transaction }: any) => {
       logger.debug('onDelete handler called', {
         collectionName,
@@ -459,7 +459,7 @@ export function convexCollectionOptions<T extends object>({
  *
  * // Use like a normal TanStack DB collection
  * const tx = collection.insert({ id: '1', text: 'Buy milk', isCompleted: false })
- * await tx.isPersisted.promise  // ✅ Built-in promise (not custom awaitReplication)
+ * await tx.isPersisted.promise  // Built-in promise (not custom awaitReplication)
  * ```
  */
 export function createConvexCollection<T extends object>(

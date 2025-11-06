@@ -471,48 +471,43 @@ logger.error('Operation failed', { error });
 
 **Note:** Biome warns on `console.*` usage - use LogTape instead for consistency.
 
-## Delete Pattern: Soft Delete
+## Delete Pattern: Hard Delete with CRDT History (v0.3.0+)
 
-**CRITICAL**: Treat `deleted` like `isCompleted` - just a boolean field!
+**CRITICAL**: ConvexReplicate now uses hard deletes with full CRDT history preservation.
 
-ConvexReplicate uses **soft deletes** where items are marked with `deleted: true` rather than being physically removed. This is the ONLY supported delete pattern.
+ConvexReplicate uses **hard deletes** where items are physically removed from the main table, while the CRDT component preserves complete event history for future recovery features.
 
-### Why Soft Delete?
+### Why Hard Delete?
 
-- ✅ Works exactly like updating `isCompleted` (simple field update, no special logic)
-- ✅ Maintains CRDT consistency across all clients
-- ✅ No `onDelete` handler needed (uses `onUpdate`)
-- ✅ No `deleteDocument` mutation needed (uses `updateDocument`)
-- ✅ No complex tracking or reconciliation logic
-- ✅ UI simply filters out `deleted: true` items
+- Works with standard TanStack DB delete operations
+- Clean main table (no filtering required)
+- Complete audit trail preserved in component storage
+- Proper CRDT conflict resolution maintained
+- Multi-client sync works seamlessly
+- Foundation for future recovery features
 
 ### Implementation
 
 **Client-side delete handler:**
 ```typescript
 const handleDelete = (id: string) => {
-  // Soft delete - just set a field!
-  collection.update(id, (draft: Task) => {
-    draft.deleted = true;
-    draft.deletedAt = Date.now();
-  });
+  // Hard delete - physically removes from main table
+  collection.delete(id);
 };
 ```
 
-**UI filtering:**
+**UI usage:**
 ```typescript
-// Filter deleted items in UI
-const { data: allTasks } = useLiveQuery(collection);
-const tasks = allTasks?.filter((task: Task) => !task.deleted) || [];
+// No filtering needed - deleted items are gone!
+const { data: tasks } = useLiveQuery(collection);
 ```
 
-**SSR filtering:**
+**SSR loading:**
 ```typescript
 export const Route = createFileRoute('/')({
   loader: async () => {
-    const allTasks = await httpClient.query(api.tasks.stream);
-    // Filter out deleted items for SSR
-    const tasks = allTasks.filter((task: any) => !task.deleted);
+    // No filtering needed
+    const tasks = await httpClient.query(api.tasks.stream);
     return { tasks };
   },
 });
@@ -520,7 +515,7 @@ export const Route = createFileRoute('/')({
 
 **Server-side stream endpoint:**
 ```typescript
-// Return ALL items including deleted (Yjs needs complete CRDT state)
+// Returns only active items (deleted items physically removed)
 export const stream = query({
   handler: async (ctx) => {
     return await ctx.db.query('tasks').collect();
@@ -528,24 +523,34 @@ export const stream = query({
 });
 ```
 
-### What NOT to Do
-
-❌ **Don't use `collection.delete(id)`** - This physically removes items, breaking CRDT sync
-❌ **Don't create separate `deleteDocument` mutation** - Use `updateDocument` with `deleted: true`
-❌ **Don't filter deleted items on server** - Return all items, filter in UI only
-❌ **Don't create `onDelete` handler** - Not needed, uses `onUpdate`
-
 ### Architecture
 
-The subscription handler in `collection.ts`:
-1. Syncs ALL items (including `deleted: true`) to Yjs for complete CRDT state
-2. Syncs ALL items to TanStack DB collection (treat `deleted` as a regular field)
-3. UI filters out `deleted: true` items for display
+The deletion flow:
+1. Client calls `collection.delete(id)` (TanStack DB operation)
+2. `onDelete` handler captures Yjs deletion delta
+3. Delta sent to Convex component (appended to event log)
+4. Main table: document physically deleted
+5. Subscription detects removal and propagates to other clients
+6. CRDT history preserved in component storage for future recovery
+
+### Dual Storage
+
+**Component Storage (CRDT Layer):**
+- Append-only event log with all deltas
+- Preserves complete history including deletions
+- Enables future recovery features
+- Source of truth for conflict resolution
+
+**Main Application Table:**
+- Current state only (hard deletes)
+- Efficient queries and indexes
+- No deleted items (clean data)
 
 This ensures:
-- Client A marks `deleted: true` → Yjs syncs → Server receives → Broadcasts to all clients
-- Client B receives update → Yjs syncs → TanStack DB updates → UI filters it out
-- Multi-client CRDT sync works perfectly because all clients have complete state
+- Client A deletes item → Convex removes → Broadcasts to all clients
+- Client B receives deletion → Item removed from local state
+- Multi-client CRDT sync works perfectly
+- Complete audit trail available via component storage
 
 ## Example App
 
