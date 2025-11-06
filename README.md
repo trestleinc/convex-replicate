@@ -69,6 +69,246 @@ graph LR
 - **Main Tables (Read Model)**: Current state, efficient server-side queries, indexes, and reactive subscriptions
 - Similar to CQRS/Event Sourcing: component = event log, main table = materialized view
 
+## Understanding Consistency Guarantees
+
+Convex Replicate combines two different consistency models to give you the best of both worlds: **strict ordering on the server** and **optimistic updates on the client**.
+
+### Two-Tier Consistency Model
+
+```mermaid
+graph TB
+    subgraph Server["Server: Strictly Serializable (Convex)"]
+        S1[Mutations execute in order]
+        S2[OCC prevents conflicts]
+        S3[Automatic retry on version mismatch]
+        S4[Deterministic outcomes]
+    end
+
+    subgraph Client["Client: Eventual Consistency (Yjs CRDTs)"]
+        C1[Optimistic updates - instant UI]
+        C2[Automatic field-level merge]
+        C3[Last-write-wins per field]
+        C4[Eventually converges]
+    end
+
+    Server <-->|Sync Protocol| Client
+
+    style Server fill:#e1f5e1
+    style Client fill:#e1e8f5
+```
+
+### Server-Side: Strictly Serializable (Convex)
+
+On the server, **Convex guarantees strictly serializable transactions**. This means:
+
+- **Single-threaded illusion**: All mutations appear to execute one-at-a-time, in order
+- **Optimistic Concurrency Control (OCC)**: Like Git - if two transactions touch the same data:
+  - Both read at their snapshot time
+  - First to commit wins
+  - Second fails and automatically retries with fresh data
+- **Deterministic**: Same operations always produce the same result
+- **"It just works"**: Most developers never need to think about concurrency
+
+**Example: OCC in action**
+```typescript
+// Two users try to update the same task simultaneously
+
+// User A's mutation (starts first)
+READ task (version: 1, text: "Buy milk")
+WRITE task (version: 2, text: "Buy milk and eggs")
+IF task.version === 1 → ✅ Success!
+
+// User B's mutation (concurrent)
+READ task (version: 1, text: "Buy milk")
+WRITE task (version: 2, text: "Buy bread")
+IF task.version === 1 → ❌ Conflict! (Task is now version 2)
+// Convex automatically retries with fresh data:
+READ task (version: 2, text: "Buy milk and eggs")
+WRITE task (version: 3, text: "Buy bread")
+IF task.version === 2 → ✅ Success!
+```
+
+### Client-Side: Eventual Consistency (Yjs CRDTs)
+
+On the client, **Yjs CRDTs provide eventual consistency with automatic conflict resolution**. This means:
+
+- **Optimistic updates**: Changes show immediately in the UI (no waiting for server)
+- **Automatic merging**: CRDTs resolve conflicts at the field level
+- **Last-write-wins**: By default, the most recent edit to each field wins
+- **Convergent**: All clients eventually reach the same state
+
+**Example: CRDT merge**
+```typescript
+// Two users edit different fields of the same task offline
+
+// User A (offline):
+task.update({ isCompleted: true })  // Toggle checkbox
+
+// User B (offline):
+task.update({ text: "Buy organic milk" })  // Edit text
+
+// When both come online:
+// ✅ Both changes merge automatically!
+// Final state: { text: "Buy organic milk", isCompleted: true }
+```
+
+### How Server and Client Work Together
+
+```mermaid
+sequenceDiagram
+    participant User as User A
+    participant ClientA as Client A (Yjs)
+    participant Server as Convex Server<br/>(Strictly Serializable)
+    participant ClientB as Client B (Yjs)
+    participant UserB as User B
+
+    User->>ClientA: Edit task text
+    Note over ClientA: Optimistic update (instant!)
+    ClientA-->>User: UI updates immediately
+
+    UserB->>ClientB: Toggle task completion
+    Note over ClientB: Optimistic update (instant!)
+    ClientB-->>UserB: UI updates immediately
+
+    par Client A Sync
+        ClientA->>Server: Mutation with CRDT delta
+        Note over Server: OCC validation<br/>(version check)
+        Server->>Server: Commit to event log + main table
+        Server-->>ClientA: Success
+    and Client B Sync
+        ClientB->>Server: Mutation with CRDT delta
+        Note over Server: OCC validation<br/>(version check)
+        Server->>Server: Commit to event log + main table
+        Server-->>ClientB: Success
+    end
+
+    Server-->>ClientA: Broadcast Client B's change
+    Note over ClientA: CRDT merge<br/>(both fields updated)
+    ClientA-->>User: UI reflects merged state
+
+    Server-->>ClientB: Broadcast Client A's change
+    Note over ClientB: CRDT merge<br/>(both fields updated)
+    ClientB-->>UserB: UI reflects merged state
+
+    Note over ClientA,ClientB: Both clients converged to same state!
+```
+
+### When to Use Optimistic Updates
+
+Not all operations are suitable for client-side optimistic updates. Use this guide:
+
+| Use Case | Recommendation | Reason |
+|----------|---------------|--------|
+| **Text editing** | ✅ Perfect | CRDTs excel at merging text changes |
+| **Task completion toggles** | ✅ Perfect | Commutative operations (order doesn't matter) |
+| **Collaborative notes** | ✅ Perfect | Multiple users editing different parts |
+| **UI preferences** | ✅ Perfect | Low stakes, user-specific |
+| **Comment threads** | ✅ Good | Append-only, rare conflicts |
+| **Like/favorite buttons** | ✅ Good | Idempotent operations |
+| **Inventory counts** | ⚠️ Careful | May need server validation to prevent overselling |
+| **Rate limiting** | ⚠️ Careful | Client can't enforce limits reliably |
+| **Counter increments** | ⚠️ Careful | Use server-side aggregation for accuracy |
+| **Financial transactions** | ❌ Never | Must be server-only with strict validation |
+| **Authorization checks** | ❌ Never | Security decisions belong on server |
+| **Billing operations** | ❌ Never | Legal/compliance requirements |
+
+**Rule of thumb**: Ask yourself: *"Can this data be temporarily inconsistent for a few seconds?"*
+- If **yes** → Safe for optimistic updates
+- If **no** → Keep it server-only
+
+### Understanding Conflicts
+
+Convex Replicate handles two types of conflicts with different mechanisms:
+
+#### Server Conflicts (OCC)
+**Cause**: Two mutations modify the same document simultaneously
+- **Detection**: Version number mismatch at commit time
+- **Resolution**: Automatic retry with fresh snapshot
+- **Result**: Deterministic ordering (one mutation wins, other retries)
+
+```typescript
+// Server detects: "This mutation read version 5, but it's now version 6"
+// Convex automatically: Retry the mutation with version 6 data
+```
+
+#### Client Conflicts (CRDT)
+**Cause**: Two users edit the same field offline
+- **Detection**: CRDT vector clocks detect concurrent edits
+- **Resolution**: Automatic field-level merge (last-write-wins by default)
+- **Result**: Eventual consistency (both edits visible, most recent wins per field)
+
+```typescript
+// Client A: task.text = "Buy milk" (timestamp: 100)
+// Client B: task.text = "Buy bread" (timestamp: 101)
+// CRDT merge: task.text = "Buy bread" (last write wins)
+```
+
+**Key difference**: Server conflicts retry with new data. Client conflicts merge automatically.
+
+### Best Practices
+
+1. **Trust the server**: Use server mutations for business logic that must be correct
+2. **Trust CRDTs for UX**: Use optimistic updates for immediate feedback on safe operations
+3. **Validate on server**: Even with optimistic updates, always validate on the server
+4. **Test offline scenarios**: Simulate offline mode to see how conflicts resolve
+5. **Monitor conflict rates**: High conflict rates may indicate operations that shouldn't be optimistic
+
+### Example: Good vs Bad Patterns
+
+**✅ Good: Collaborative Task List**
+```typescript
+// Safe for optimistic updates
+collection.update(taskId, (draft) => {
+  draft.text = newText;        // Text editing - CRDTs handle this
+  draft.isCompleted = !draft.isCompleted;  // Toggle - commutative
+});
+```
+
+**❌ Bad: Inventory Decrement**
+```typescript
+// ❌ DON'T: Optimistic inventory decrement
+collection.update(productId, (draft) => {
+  draft.stock -= 1;  // Could lead to overselling!
+});
+
+// ✅ DO: Server-side with validation
+await convexClient.mutation(api.products.decrementStock, {
+  productId
+});
+// Server checks: if (product.stock > 0) then decrement
+```
+
+**✅ Good: Server-Only Financial Operation**
+```typescript
+// Keep money operations server-only
+export const transferFunds = mutation({
+  handler: async (ctx, { fromAccount, toAccount, amount }) => {
+    // Strict validation, no optimistic updates
+    const from = await ctx.db.get(fromAccount);
+    if (from.balance < amount) {
+      throw new Error("Insufficient funds");
+    }
+
+    // Atomic transaction
+    await ctx.db.patch(fromAccount, {
+      balance: from.balance - amount
+    });
+    await ctx.db.patch(toAccount, {
+      balance: to.balance + amount
+    });
+  },
+});
+```
+
+### Summary
+
+- **Server = Strict ordering**: Convex ensures mutations execute in a deterministic order with OCC
+- **Client = Optimistic merging**: Yjs CRDTs provide instant UI updates with automatic conflict resolution
+- **Together**: You get both fast UX and correct business logic
+- **Your job**: Choose the right tool for each operation (optimistic for UX, server-only for correctness)
+
+This two-tier model gives you the best of both worlds: the **reliability of traditional databases** with the **responsiveness of real-time collaborative apps**.
+
 ## Installation
 
 ```bash
