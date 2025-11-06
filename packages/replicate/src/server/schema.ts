@@ -36,20 +36,20 @@ export type ReplicationFields = {
   version: number;
   /** Last modification timestamp (Unix ms) */
   timestamp: number;
-  /** Soft delete flag (true = deleted but recoverable) */
-  deleted?: boolean;
-  /** When the item was soft deleted (Unix ms) */
-  deletedAt?: number;
 };
 
 /**
  * Wraps a table definition to automatically add replication metadata fields.
  *
  * Users define their business logic fields, and we inject:
- * - `version` - For conflict resolution
- * - `timestamp` - For incremental sync
- * - `deleted` - For soft deletes (30-day retention)
- * - `deletedAt` - Timestamp when deleted
+ * - `version` - For conflict resolution and CRDT versioning
+ * - `timestamp` - For incremental sync and change tracking
+ *
+ * Enables:
+ * - Dual-storage architecture (CRDT component + main table)
+ * - Conflict-free replication across clients
+ * - Hard delete support with CRDT history preservation
+ * - Event sourcing via component storage
  *
  * @param userFields - User's business logic fields (id, text, etc.)
  * @param applyIndexes - Optional callback to add indexes to the table
@@ -57,7 +57,7 @@ export type ReplicationFields = {
  *
  * @example
  * ```typescript
- * // Simple table
+ * // Simple table with hard delete support
  * tasks: replicatedTable({
  *   id: v.string(),
  *   text: v.string(),
@@ -86,8 +86,6 @@ export function replicatedTable(
     // Injected replication fields (hidden from user's mental model)
     version: v.number(),
     timestamp: v.number(),
-    deleted: v.optional(v.boolean()),
-    deletedAt: v.optional(v.number()),
   });
 
   // Apply user-defined indexes if provided

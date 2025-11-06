@@ -69,7 +69,6 @@ export async function insertDocumentHelper<_DataModel extends GenericDataModel>(
     ...cleanDoc,
     version: args.version,
     timestamp,
-    deleted: false, // Explicitly mark as not deleted for soft delete filtering
   });
 
   // Return metadata for replication matching
@@ -150,31 +149,24 @@ export async function updateDocumentHelper<_DataModel extends GenericDataModel>(
 }
 
 /**
- * Soft delete a document from both the CRDT component and the main application table.
+ * HARD delete a document from main table, APPEND deletion delta to component.
  *
- * IMPORTANT: Delete is treated as an UPDATE operation with deleted: true flag.
- * This ensures CRDT consistency, version tracking, and proper replication matching.
- *
- * Marks the document as deleted but keeps it in the database for 30-day retention.
- * This enables:
- * - CRDT consistency (Yjs doc stays in sync)
- * - Replication matching (awaitReplication works with timestamp metadata)
- * - Version tracking (proper conflict resolution)
- * - Undo/restore functionality
- * - Audit trails
- * - Data safety (no accidental permanent loss)
+ * NEW BEHAVIOR (v0.3.0):
+ * - Appends deletion delta to component event log (preserves history)
+ * - Physically removes document from main table (hard delete)
+ * - CRDT history preserved for future recovery features
  *
  * @param ctx - Convex mutation context
  * @param components - Generated components from Convex
  * @param tableName - Name of the main application table
- * @param args - Document data with id, crdtBytes, materializedDoc (with deleted: true), and version
- * @returns Success indicator with metadata including version
+ * @param args - Document data with id, crdtBytes (deletion delta), and version
+ * @returns Success indicator with metadata
  */
 export async function deleteDocumentHelper<_DataModel extends GenericDataModel>(
   ctx: unknown,
   components: unknown,
   tableName: string,
-  args: { id: string; crdtBytes: ArrayBuffer; materializedDoc: unknown; version: number }
+  args: { id: string; crdtBytes: ArrayBuffer; version: number }
 ): Promise<{
   success: boolean;
   metadata: {
@@ -184,39 +176,27 @@ export async function deleteDocumentHelper<_DataModel extends GenericDataModel>(
     collectionName: string;
   };
 }> {
-  // Use consistent timestamp for both writes to enable sync matching
   const timestamp = Date.now();
 
-  // Treat as update - write CRDT bytes to component for consistency
-  await (ctx as any).runMutation((components as any).replicate.public.updateDocument, {
+  // 1. Append deletion delta to component (event log)
+  await (ctx as any).runMutation((components as any).replicate.public.deleteDocument, {
     collectionName: tableName,
     documentId: args.id,
     crdtBytes: args.crdtBytes,
     version: args.version,
   });
 
-  // Update materialized doc in main table with deleted flag
+  // 2. HARD DELETE from main table (physical removal)
   const db = (ctx as any).db;
   const existing = await db
     .query(tableName)
     .withIndex('by_user_id', (q: unknown) => (q as any).eq('id', args.id))
     .first();
 
-  if (!existing) {
-    throw new Error(`Document ${args.id} not found in table ${tableName}`);
+  if (existing) {
+    await db.delete(existing._id);
   }
 
-  const cleanDoc = cleanDocument(args.materializedDoc) as Record<string, unknown>;
-
-  await db.patch(existing._id, {
-    ...cleanDoc,
-    deleted: true,
-    deletedAt: timestamp,
-    version: args.version,
-    timestamp,
-  });
-
-  // Return metadata for replication matching (same as insert/update)
   return {
     success: true,
     metadata: {

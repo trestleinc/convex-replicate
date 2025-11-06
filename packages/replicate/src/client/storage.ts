@@ -114,15 +114,25 @@ export class ReplicateStorage<_TDocument extends { id: string } = { id: string }
 
   /**
    * Delete a document from the replicate component storage.
+   * Appends deletion delta to event log.
    *
    * @param ctx - Convex mutation context
    * @param documentId - Unique identifier for the document
+   * @param crdtBytes - Yjs deletion delta
+   * @param version - CRDT version number
    * @returns Success indicator
    */
-  async deleteDocument(ctx: RunMutationCtx, documentId: string): Promise<{ success: boolean }> {
+  async deleteDocument(
+    ctx: RunMutationCtx,
+    documentId: string,
+    crdtBytes: ArrayBuffer,
+    version: number
+  ): Promise<{ success: boolean }> {
     return ctx.runMutation(this.component.public.deleteDocument, {
       collectionName: this.collectionName,
       documentId,
+      crdtBytes,
+      version,
     });
   }
 

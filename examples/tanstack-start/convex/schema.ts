@@ -6,7 +6,7 @@ export default defineSchema({
   tasks: replicatedTable(
     {
       // User-defined business logic fields only
-      // version, timestamp, deleted, deletedAt are auto-injected by replicatedTable
+      // version and timestamp are auto-injected by replicatedTable
       id: v.string(),
       text: v.string(),
       isCompleted: v.boolean(),

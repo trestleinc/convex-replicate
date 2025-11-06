@@ -55,14 +55,12 @@ export const deleteDocument = mutation({
     collectionName: v.string(),
     documentId: v.string(),
     crdtBytes: v.bytes(),
-    materializedDoc: v.any(),
     version: v.number(),
   },
   handler: async (ctx, args) => {
     return await deleteDocumentHelper(ctx, components, 'tasks', {
       id: args.documentId,
       crdtBytes: args.crdtBytes,
-      materializedDoc: args.materializedDoc,
       version: args.version,
     });
   },
@@ -70,12 +68,10 @@ export const deleteDocument = mutation({
 
 /**
  * Stream endpoint for real-time subscriptions
- * Returns ALL items including deleted ones for proper Yjs CRDT synchronization
- * UI layer filters out deleted items for display
+ * Returns all items (hard deletes are physically removed from table)
  */
 export const stream = query({
   handler: async (ctx) => {
-    // Return ALL items including deleted (Yjs CRDT needs complete state)
     return await ctx.db.query('tasks').collect();
   },
 });

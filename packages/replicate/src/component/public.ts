@@ -3,10 +3,11 @@ import { mutation, query } from './_generated/server';
 
 /**
  * Insert a new document with CRDT bytes (Yjs format).
+ * Appends delta to event log (event sourcing pattern).
  *
  * @param collectionName - Collection identifier
  * @param documentId - Unique document identifier
- * @param crdtBytes - ArrayBuffer containing Yjs CRDT bytes (Y.encodeStateAsUpdate)
+ * @param crdtBytes - ArrayBuffer containing Yjs CRDT bytes (delta)
  * @param version - CRDT version number
  */
 export const insertDocument = mutation({
@@ -20,25 +21,14 @@ export const insertDocument = mutation({
     success: v.boolean(),
   }),
   handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query('documents')
-      .withIndex('by_collection_document', (q) =>
-        q.eq('collectionName', args.collectionName).eq('documentId', args.documentId)
-      )
-      .first();
-
-    if (existing) {
-      throw new Error(
-        `Document ${args.documentId} already exists in collection ${args.collectionName}. Use updateDocument instead.`
-      );
-    }
-
+    // Append delta to event log (no duplicate check - event sourcing!)
     await ctx.db.insert('documents', {
       collectionName: args.collectionName,
       documentId: args.documentId,
       crdtBytes: args.crdtBytes,
       version: args.version,
       timestamp: Date.now(),
+      operationType: 'insert',
     });
 
     return { success: true };
@@ -47,10 +37,11 @@ export const insertDocument = mutation({
 
 /**
  * Update an existing document with new CRDT bytes (Yjs format).
+ * Appends delta to event log (event sourcing pattern).
  *
  * @param collectionName - Collection identifier
  * @param documentId - Unique document identifier
- * @param crdtBytes - ArrayBuffer containing Yjs CRDT bytes (Y.encodeStateAsUpdate)
+ * @param crdtBytes - ArrayBuffer containing Yjs CRDT bytes (delta)
  * @param version - CRDT version number
  */
 export const updateDocument = mutation({
@@ -64,23 +55,14 @@ export const updateDocument = mutation({
     success: v.boolean(),
   }),
   handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query('documents')
-      .withIndex('by_collection_document', (q) =>
-        q.eq('collectionName', args.collectionName).eq('documentId', args.documentId)
-      )
-      .first();
-
-    if (!existing) {
-      throw new Error(
-        `Document ${args.documentId} not found in collection ${args.collectionName}. Use insertDocument instead.`
-      );
-    }
-
-    await ctx.db.patch(existing._id, {
+    // Append delta to event log (no check - event sourcing!)
+    await ctx.db.insert('documents', {
+      collectionName: args.collectionName,
+      documentId: args.documentId,
       crdtBytes: args.crdtBytes,
       version: args.version,
       timestamp: Date.now(),
+      operationType: 'update',
     });
 
     return { success: true };
@@ -89,31 +71,79 @@ export const updateDocument = mutation({
 
 /**
  * Delete a document from CRDT storage.
+ * Appends deletion delta to event log (preserves history).
  *
  * @param collectionName - Collection identifier
  * @param documentId - Unique document identifier
+ * @param crdtBytes - ArrayBuffer containing Yjs deletion delta
+ * @param version - CRDT version number
  */
 export const deleteDocument = mutation({
   args: {
     collectionName: v.string(),
     documentId: v.string(),
+    crdtBytes: v.bytes(),
+    version: v.number(),
   },
   returns: v.object({
     success: v.boolean(),
   }),
   handler: async (ctx, args) => {
-    const doc = await ctx.db
-      .query('documents')
-      .withIndex('by_collection_document', (q) =>
-        q.eq('collectionName', args.collectionName).eq('documentId', args.documentId)
-      )
-      .first();
-
-    if (doc) {
-      await ctx.db.delete(doc._id);
-    }
+    // Append deletion delta to event log (preserve history!)
+    await ctx.db.insert('documents', {
+      collectionName: args.collectionName,
+      documentId: args.documentId,
+      crdtBytes: args.crdtBytes,
+      version: args.version,
+      timestamp: Date.now(),
+      operationType: 'delete',
+    });
 
     return { success: true };
+  },
+});
+
+/**
+ * Get complete event history for a document.
+ * Returns all CRDT deltas in chronological order.
+ *
+ * Used for:
+ * - Future recovery features (client-side)
+ * - Audit trails
+ * - Debugging
+ *
+ * @param collectionName - Collection identifier
+ * @param documentId - Unique document identifier
+ */
+export const getDocumentHistory = query({
+  args: {
+    collectionName: v.string(),
+    documentId: v.string(),
+  },
+  returns: v.array(
+    v.object({
+      crdtBytes: v.bytes(),
+      version: v.number(),
+      timestamp: v.number(),
+      operationType: v.string(),
+    })
+  ),
+  handler: async (ctx, args) => {
+    // Fetch ALL deltas for this document in chronological order
+    const deltas = await ctx.db
+      .query('documents')
+      .withIndex('by_collection_document_version', (q) =>
+        q.eq('collectionName', args.collectionName).eq('documentId', args.documentId)
+      )
+      .order('asc')
+      .collect();
+
+    return deltas.map((d) => ({
+      crdtBytes: d.crdtBytes,
+      version: d.version,
+      timestamp: d.timestamp,
+      operationType: d.operationType,
+    }));
   },
 });
 

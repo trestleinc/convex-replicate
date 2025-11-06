@@ -234,6 +234,60 @@ export function convexCollectionOptions<T extends object>({
       }
     },
 
+    // ✅ onDelete handler (called when user does collection.delete())
+    onDelete: async ({ transaction }: any) => {
+      logger.debug('onDelete handler called', {
+        collectionName,
+        mutationCount: transaction.mutations.length,
+      });
+
+      try {
+        // Remove from Yjs Y.Map - creates deletion tombstone
+        ydoc.transact(() => {
+          transaction.mutations.forEach((mut: any) => {
+            ymap.delete(String(mut.key));
+          });
+        }, 'delete');
+
+        // Send deletion DELTA to Convex
+        if (pendingUpdate) {
+          logger.debug('Sending delete delta to Convex', {
+            collectionName,
+            documentId: String(transaction.mutations[0].key),
+            deltaSize: pendingUpdate.length,
+          });
+
+          await convexClient.mutation(api.deleteDocument, {
+            collectionName,
+            documentId: String(transaction.mutations[0].key),
+            crdtBytes: pendingUpdate.buffer,
+            version: Date.now(),
+          });
+
+          pendingUpdate = null;
+          logger.info('Delete persisted to Convex', {
+            collectionName,
+            documentId: String(transaction.mutations[0].key),
+          });
+        }
+      } catch (error: any) {
+        logger.error('Delete failed', {
+          collectionName,
+          error: error?.message,
+          status: error?.status,
+        });
+
+        if (error?.status === 401 || error?.status === 403) {
+          throw new NonRetriableError('Authentication failed');
+        }
+        if (error?.status === 422) {
+          throw new NonRetriableError('Validation error');
+        }
+
+        throw error;
+      }
+    },
+
     // Sync function for pulling data from server
     sync: {
       sync: (params: any) => {
@@ -268,6 +322,10 @@ export function convexCollectionOptions<T extends object>({
         // Step 2: Subscribe to Convex real-time updates via main table
         logger.debug('Setting up Convex subscription', { collectionName });
 
+        // Track previous items (full objects) to detect hard deletes
+        // We need full items because TanStack DB write() expects { type: 'delete', value: T }
+        let previousItems = new Map<string | number, T>();
+
         const subscription = convexClient.onUpdate(api.stream, {}, async (items) => {
           try {
             logger.debug('Subscription update received', {
@@ -275,7 +333,45 @@ export function convexCollectionOptions<T extends object>({
               itemCount: items.length,
             });
 
-            // STEP 1: Sync ALL items to Yjs (complete CRDT state, including deleted)
+            // Build map of current items
+            const currentItems = new Map<string | number, T>();
+            for (const item of items) {
+              const key = getKey(item as T);
+              currentItems.set(key, item as T);
+            }
+
+            // Detect hard deletes by finding items in previous but not in current
+            const deletedItems: T[] = [];
+            for (const [prevId, prevItem] of previousItems) {
+              if (!currentItems.has(prevId)) {
+                deletedItems.push(prevItem);
+              }
+            }
+
+            if (deletedItems.length > 0) {
+              logger.info('Detected remote hard deletes', {
+                collectionName,
+                deletedCount: deletedItems.length,
+                deletedIds: deletedItems.map((item) => getKey(item)),
+              });
+            }
+
+            begin();
+
+            // STEP 1: Handle deletions FIRST
+            for (const deletedItem of deletedItems) {
+              const deletedId = getKey(deletedItem);
+
+              // Remove from Yjs (requires string key)
+              ydoc.transact(() => {
+                ymap.delete(String(deletedId));
+              }, 'remote-delete');
+
+              // Remove from TanStack DB (requires full item as value)
+              write({ type: 'delete', value: deletedItem });
+            }
+
+            // STEP 2: Sync items to Yjs
             ydoc.transact(() => {
               for (const item of items) {
                 const key = getKey(item as T);
@@ -287,18 +383,10 @@ export function convexCollectionOptions<T extends object>({
               }
             }, 'subscription-sync');
 
-            logger.debug('Synced items to Yjs', {
-              collectionName,
-              count: items.length,
-            });
-
-            // STEP 2: Sync to TanStack DB (deleted is just a field like isCompleted)
-            begin();
-
+            // STEP 3: Sync items to TanStack DB
             for (const item of items) {
               const key = getKey(item as T);
 
-              // Simple update/insert logic - deleted is just another field!
               if ((params as any).collection.has(key)) {
                 write({ type: 'update', value: item as T });
               } else {
@@ -308,14 +396,22 @@ export function convexCollectionOptions<T extends object>({
 
             commit();
 
+            // Update tracking for next iteration
+            previousItems = currentItems;
+
             logger.debug('Successfully synced items to collection', {
               count: items.length,
+              deletedCount: deletedItems.length,
             });
           } catch (error: any) {
             logger.error('Failed to sync items from subscription', {
               error: error.message,
-              stack: error?.stack?.split('\n')[0],
+              errorName: error.name,
+              stack: error?.stack,
+              collectionName,
+              itemCount: items.length,
             });
+            throw error; // Re-throw to prevent silent failures
           }
         });
 

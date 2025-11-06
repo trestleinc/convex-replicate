@@ -8,8 +8,9 @@ export default defineSchema({
     crdtBytes: v.bytes(),
     version: v.number(),
     timestamp: v.number(),
+    operationType: v.string(), // 'insert' | 'update' | 'delete'
   })
     .index('by_collection', ['collectionName'])
-    .index('by_collection_document', ['collectionName', 'documentId'])
+    .index('by_collection_document_version', ['collectionName', 'documentId', 'version'])
     .index('by_timestamp', ['collectionName', 'timestamp']),
 });
