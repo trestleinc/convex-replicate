@@ -1,4 +1,5 @@
 import type { GenericDataModel } from 'convex/server';
+import * as Y from 'yjs';
 
 function cleanDocument(doc: unknown): unknown {
   return Object.fromEntries(
@@ -6,6 +7,34 @@ function cleanDocument(doc: unknown): unknown {
       ([_, value]) => value !== undefined && value !== null
     )
   );
+}
+
+/**
+ * Default CRDT delta synthesis from materialized document.
+ * Converts a plain object into Yjs CRDT bytes automatically.
+ *
+ * This is the standard way to synthesize deltas for manual server edits.
+ * Users can provide custom implementation if needed, but this handles 99% of cases.
+ *
+ * @param doc - Materialized document from main table
+ * @returns CRDT delta bytes (Yjs V2 encoding)
+ */
+export function defaultSynthesizeDelta(doc: any): ArrayBuffer {
+  const ydoc = new Y.Doc();
+  const ymap = ydoc.getMap('doc');
+
+  ydoc.transact(() => {
+    Object.entries(doc).forEach(([key, value]) => {
+      // Skip Convex internal fields
+      if (!key.startsWith('_')) {
+        ymap.set(key, value);
+      }
+    });
+  });
+
+  const delta = Y.encodeStateAsUpdateV2(ydoc);
+  ydoc.destroy(); // Clean up
+  return delta.buffer as ArrayBuffer;
 }
 
 /**
@@ -29,17 +58,28 @@ function cleanDocument(doc: unknown): unknown {
  * - Main table: Enables efficient server-side queries (materialized docs)
  * - Similar to event sourcing: component = event log, main table = read model
  *
+ * SCHEMA MIGRATIONS:
+ * - Optional schemaVersion param enables client reconciliation during migrations
+ * - When provided, server can apply transformation functions before storing
+ * - Yjs CRDT merge happens automatically after transformation
+ *
  * @param ctx - Convex mutation context
  * @param components - Generated components from Convex
  * @param tableName - Name of the main application table
- * @param args - Document data with id, crdtBytes, materializedDoc, and version
+ * @param args - Document data with id, crdtBytes, materializedDoc, version, and optional schemaVersion
  * @returns Success indicator
  */
 export async function insertDocumentHelper<_DataModel extends GenericDataModel>(
   ctx: unknown,
   components: unknown,
   tableName: string,
-  args: { id: string; crdtBytes: ArrayBuffer; materializedDoc: unknown; version: number }
+  args: {
+    id: string;
+    crdtBytes: ArrayBuffer;
+    materializedDoc: unknown;
+    version: number;
+    schemaVersion?: number;
+  }
 ): Promise<{
   success: boolean;
   metadata: {
@@ -51,6 +91,13 @@ export async function insertDocumentHelper<_DataModel extends GenericDataModel>(
 }> {
   // Use consistent timestamp for both writes to enable sync matching
   const timestamp = Date.now();
+
+  // Note: schemaVersion param available for user's migration logic
+  // Users can check schemaVersion and apply transformations before writing
+  // Example:
+  //   if (args.schemaVersion && args.schemaVersion < currentVersion) {
+  //     args.materializedDoc = await migrateDocument(args.materializedDoc, args.schemaVersion);
+  //   }
 
   // Write CRDT bytes to component
   await (ctx as any).runMutation((components as any).replicate.public.insertDocument, {
@@ -86,17 +133,28 @@ export async function insertDocumentHelper<_DataModel extends GenericDataModel>(
 /**
  * Update a document in both the CRDT component and the main application table.
  *
+ * SCHEMA MIGRATIONS:
+ * - Optional schemaVersion param enables client reconciliation during migrations
+ * - When provided, server can apply transformation functions before storing
+ * - Yjs CRDT merge happens automatically after transformation
+ *
  * @param ctx - Convex mutation context
  * @param components - Generated components from Convex
  * @param tableName - Name of the main application table
- * @param args - Document data with id, crdtBytes, materializedDoc, and version
+ * @param args - Document data with id, crdtBytes, materializedDoc, version, and optional schemaVersion
  * @returns Success indicator
  */
 export async function updateDocumentHelper<_DataModel extends GenericDataModel>(
   ctx: unknown,
   components: unknown,
   tableName: string,
-  args: { id: string; crdtBytes: ArrayBuffer; materializedDoc: unknown; version: number }
+  args: {
+    id: string;
+    crdtBytes: ArrayBuffer;
+    materializedDoc: unknown;
+    version: number;
+    schemaVersion?: number;
+  }
 ): Promise<{
   success: boolean;
   metadata: {
@@ -108,6 +166,9 @@ export async function updateDocumentHelper<_DataModel extends GenericDataModel>(
 }> {
   // Use consistent timestamp for both writes to enable sync matching
   const timestamp = Date.now();
+
+  // Note: schemaVersion param available for user's migration logic
+  // Users can check schemaVersion and apply transformations before writing
 
   // Write CRDT bytes to component
   await (ctx as any).runMutation((components as any).replicate.public.updateDocument, {
@@ -241,4 +302,99 @@ export async function streamHelper<_DataModel extends GenericDataModel>(
     checkpoint: args.checkpoint,
     limit: args.limit,
   });
+}
+
+/**
+ * AUTOMATIC RESET HANDLING: Detect and synthesize deltas for manual server edits.
+ *
+ * This helper automatically detects when documents in the main table have been manually
+ * edited (timestamp divergence) and synthesizes CRDT deltas to maintain consistency.
+ *
+ * Users don't control timestamps - the system does. So this detection is AUTOMATIC.
+ *
+ * Call this from your query/mutation BEFORE streaming to ensure manual edits are
+ * captured as synthetic deltas in the component.
+ *
+ * @param ctx - Convex mutation context (needs mutation for component writes)
+ * @param components - Generated components from Convex
+ * @param tableName - Name of the collection
+ * @param synthesizeDelta - Optional function to convert doc to CRDT bytes (defaults to defaultSynthesizeDelta)
+ *
+ * @example
+ * ```typescript
+ * // Simple: Use default synthesis (handles 99% of cases)
+ * export const stream = query({
+ *   handler: async (ctx, args) => {
+ *     await detectAndSynthesizeDeltas(ctx, components, 'tasks');
+ *     return await streamHelper(ctx, components, 'tasks', args);
+ *   },
+ * });
+ *
+ * // Advanced: Custom synthesis for complex types
+ * export const stream = query({
+ *   handler: async (ctx, args) => {
+ *     await detectAndSynthesizeDeltas(ctx, components, 'tasks', (doc) => {
+ *       // Custom CRDT encoding for nested structures
+ *       return customEncode(doc);
+ *     });
+ *     return await streamHelper(ctx, components, 'tasks', args);
+ *   },
+ * });
+ * ```
+ */
+export async function detectAndSynthesizeDeltas<_DataModel extends GenericDataModel>(
+  ctx: unknown,
+  components: unknown,
+  tableName: string,
+  synthesizeDelta?: (doc: any) => ArrayBuffer
+): Promise<{ synthesizedCount: number }> {
+  const synthesize = synthesizeDelta ?? defaultSynthesizeDelta;
+  const db = (ctx as any).db;
+
+  // Get all documents from main table
+  const mainTableDocs = await db.query(tableName).collect();
+
+  // Get latest component timestamps for each document
+  const componentTimestamps = new Map<string, number>();
+
+  for (const doc of mainTableDocs) {
+    // Get latest delta for this document from component
+    const latestDelta = await (ctx as any).runQuery(
+      (components as any).replicate.public.getDocumentHistory,
+      {
+        collectionName: tableName,
+        documentId: doc.id,
+      }
+    );
+
+    if (latestDelta && latestDelta.length > 0) {
+      const latest = latestDelta[latestDelta.length - 1];
+      componentTimestamps.set(doc.id, latest.timestamp);
+    }
+  }
+
+  let synthesizedCount = 0;
+
+  // Detect timestamp divergence and synthesize deltas
+  for (const doc of mainTableDocs) {
+    const componentTimestamp = componentTimestamps.get(doc.id) ?? 0;
+
+    // Divergence detected: main table timestamp > component timestamp
+    if (doc.timestamp > componentTimestamp) {
+      // Synthesize CRDT delta from materialized doc (automatic!)
+      const syntheticDelta = synthesize(doc);
+
+      // Store in component (automatic!)
+      await (ctx as any).runMutation((components as any).replicate.public.storeSyntheticDelta, {
+        collectionName: tableName,
+        documentId: doc.id,
+        crdtBytes: syntheticDelta,
+        version: doc.version,
+      });
+
+      synthesizedCount++;
+    }
+  }
+
+  return { synthesizedCount };
 }

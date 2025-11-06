@@ -24,6 +24,14 @@ export {
   type ConvexCollectionOptionsConfig,
 } from './collection.js';
 
+// Protocol Evolution (initialization & version management)
+export { initializeConvexReplicate, CLIENT_PROTOCOL_VERSION } from './init.js';
+export {
+  getStoredProtocolVersion,
+  storeProtocolVersion,
+  migrateLocalStorage,
+} from './protocol-migration.js';
+
 // Re-export Yjs for convenience
 export * as Y from 'yjs';
 

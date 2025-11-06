@@ -20,6 +20,8 @@ export {
   updateDocumentHelper,
   deleteDocumentHelper,
   streamHelper,
+  detectAndSynthesizeDeltas,
+  defaultSynthesizeDelta,
 } from './replication.js';
 
 // Schema utilities
