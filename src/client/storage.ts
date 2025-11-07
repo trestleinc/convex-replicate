@@ -13,7 +13,7 @@ import { api } from '../component/_generated/api';
  *
  * This class provides a type-safe, scoped interface for storing and retrieving
  * CRDT document data from the replicate component. Each instance is scoped to
- * a specific collection name, eliminating the need to pass collectionName to
+ * a specific collection name, eliminating the need to pass collection to
  * every method call.
  *
  * @example
@@ -49,7 +49,7 @@ export class ReplicateStorage<_TDocument extends { id: string } = { id: string }
    * Create a new ReplicateStorage instance scoped to a specific collection.
    *
    * @param component - The replicate component from your generated API
-   * @param collectionName - The name of the collection to interact with
+   * @param collection - The name of the collection to interact with
    *
    * @example
    * ```typescript
@@ -61,7 +61,7 @@ export class ReplicateStorage<_TDocument extends { id: string } = { id: string }
    */
   constructor(
     private component: UseApi<typeof api>,
-    private collectionName: string
+    private collection: string
   ) {}
 
   /**
@@ -82,7 +82,7 @@ export class ReplicateStorage<_TDocument extends { id: string } = { id: string }
     version: number
   ): Promise<{ success: boolean }> {
     return ctx.runMutation(this.component.public.insertDocument, {
-      collectionName: this.collectionName,
+      collection: this.collection,
       documentId,
       crdtBytes,
       version,
@@ -105,7 +105,7 @@ export class ReplicateStorage<_TDocument extends { id: string } = { id: string }
     version: number
   ): Promise<{ success: boolean }> {
     return ctx.runMutation(this.component.public.updateDocument, {
-      collectionName: this.collectionName,
+      collection: this.collection,
       documentId,
       crdtBytes,
       version,
@@ -129,7 +129,7 @@ export class ReplicateStorage<_TDocument extends { id: string } = { id: string }
     version: number
   ): Promise<{ success: boolean }> {
     return ctx.runMutation(this.component.public.deleteDocument, {
-      collectionName: this.collectionName,
+      collection: this.collection,
       documentId,
       crdtBytes,
       version,
@@ -163,7 +163,7 @@ export class ReplicateStorage<_TDocument extends { id: string } = { id: string }
     hasMore: boolean;
   }> {
     return ctx.runQuery(this.component.public.stream, {
-      collectionName: this.collectionName,
+      collection: this.collection,
       checkpoint,
       limit,
     }) as any;

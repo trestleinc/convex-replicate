@@ -109,7 +109,7 @@ export default defineSchema({
 // State vector-based incremental sync with gap handling
 export const stream = query({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     stateVector: v.optional(v.bytes()), // Client's known state
     checkpoint: v.object({ lastModified: v.number() }),
   },
@@ -117,13 +117,13 @@ export const stream = query({
     // Get compaction state to detect gaps
     const compactionState = await ctx.db
       .query('compactionState')
-      .withIndex('by_collection', q => q.eq('collectionName', args.collectionName))
+      .withIndex('by_collection', q => q.eq('collection', args.collection))
       .unique();
 
     // Check if client's checkpoint is too old (deltas compacted)
     if (compactionState && args.checkpoint.lastModified < compactionState.oldestDeltaTimestamp) {
       // Gap detected - deltas were compacted
-      const snapshot = await getLatestSnapshot(ctx, args.collectionName);
+      const snapshot = await getLatestSnapshot(ctx, args.collection);
 
       if (args.stateVector) {
         // Compute diff from snapshot using state vector (NO DATA LOSS!)
@@ -146,7 +146,7 @@ export const stream = query({
     // Normal incremental delta sync
     return ctx.db.query('documents')
       .withIndex('by_timestamp', q =>
-        q.eq('collectionName', args.collectionName)
+        q.eq('collection', args.collection)
          .gt('timestamp', args.checkpoint.lastModified)
       );
   }
@@ -187,23 +187,23 @@ export default defineSchema({
 
   // Track compaction state for gap detection
   compactionState: defineTable({
-    collectionName: v.string(),
+    collection: v.string(),
     oldestDeltaTimestamp: v.number(),   // Oldest delta still available
     latestSnapshotTimestamp: v.number(), // Latest snapshot created
     lastCompactionRun: v.number(),
   })
-    .index('by_collection', ['collectionName']),
+    .index('by_collection', ['collection']),
 
   // Snapshots table with V2 encoding
   snapshots: defineTable({
-    collectionName: v.string(),
+    collection: v.string(),
     documentId: v.string(),
     snapshotBytes: v.bytes(),     // V2 encoded snapshot
     snapshotVersion: v.number(),
     createdTimestamp: v.number(),
     expiresAt: v.number(),
   })
-    .index('by_collection_document', ['collectionName', 'documentId'])
+    .index('by_collection_document', ['collection', 'documentId'])
     .index('by_expires', ['expiresAt']),
 });
 
@@ -212,7 +212,7 @@ export default defineSchema({
 import * as Y from 'yjs';
 
 export const runCompaction = internalMutation({
-  args: { collectionName: v.string() },
+  args: { collection: v.string() },
   handler: async (ctx, args) => {
     const cutoffTime = Date.now() - (90 * 24 * 60 * 60 * 1000); // 90 days
 
@@ -220,7 +220,7 @@ export const runCompaction = internalMutation({
     const oldDeltas = await ctx.db
       .query('documents')
       .withIndex('by_timestamp', q =>
-        q.eq('collectionName', args.collectionName).lt('timestamp', cutoffTime)
+        q.eq('collection', args.collection).lt('timestamp', cutoffTime)
       )
       .take(1000);
 
@@ -265,7 +265,7 @@ export const runCompaction = internalMutation({
 
       // Store snapshot
       await ctx.db.insert('snapshots', {
-        collectionName: args.collectionName,
+        collection: args.collection,
         documentId,
         snapshotBytes: snapshotBytes.buffer,
         snapshotVersion: sortedDeltas[sortedDeltas.length - 1].version,
@@ -285,12 +285,12 @@ export const runCompaction = internalMutation({
     // Update compaction state
     const oldestRemaining = await ctx.db
       .query('documents')
-      .withIndex('by_collection', q => q.eq('collectionName', args.collectionName))
+      .withIndex('by_collection', q => q.eq('collection', args.collection))
       .order('asc')
       .first();
 
     await ctx.db.insert('compactionState', {
-      collectionName: args.collectionName,
+      collection: args.collection,
       oldestDeltaTimestamp: oldestRemaining?.timestamp ?? Date.now(),
       latestSnapshotTimestamp: Date.now(),
       lastCompactionRun: Date.now(),
@@ -304,7 +304,7 @@ export const runCompaction = internalMutation({
 // src/component/public.ts
 export const stream = query({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     stateVector: v.optional(v.bytes()), // Client's state
     checkpoint: v.object({ lastModified: v.number() }),
     limit: v.optional(v.number()),
@@ -313,7 +313,7 @@ export const stream = query({
     // Check for gap (deltas compacted)
     const compactionState = await ctx.db
       .query('compactionState')
-      .withIndex('by_collection', q => q.eq('collectionName', args.collectionName))
+      .withIndex('by_collection', q => q.eq('collection', args.collection))
       .unique();
 
     if (compactionState && args.checkpoint.lastModified < compactionState.oldestDeltaTimestamp) {
@@ -321,7 +321,7 @@ export const stream = query({
       const snapshot = await ctx.db
         .query('snapshots')
         .withIndex('by_collection_document', q =>
-          q.eq('collectionName', args.collectionName)
+          q.eq('collection', args.collection)
         )
         .order('desc')
         .first();
@@ -370,7 +370,7 @@ export const stream = query({
     const documents = await ctx.db
       .query('documents')
       .withIndex('by_timestamp', q =>
-        q.eq('collectionName', args.collectionName)
+        q.eq('collection', args.collection)
          .gt('timestamp', args.checkpoint.lastModified)
       )
       .order('asc')
@@ -397,7 +397,7 @@ export const stream = query({
 // src/client/collection.ts
 sync: {
   sync: (params: any) => {
-    const ydoc = getYDocForCollection(collectionName);
+    const ydoc = getYDocForCollection(collection);
 
     // Encode client's state vector
     const stateVector = Y.encodeStateVector(ydoc);
@@ -405,7 +405,7 @@ sync: {
     const subscription = convexClient.onUpdate(
       api.stream,
       {
-        collectionName,
+        collection,
         stateVector: stateVector.buffer,
         checkpoint: getCheckpoint(),
       },
@@ -438,7 +438,7 @@ sync: {
 import { Triggers } from "convex-helpers/server/customFunctions";
 
 triggers.register("documents", async (ctx, change) => {
-  const stats = await getCollectionStats(ctx, change.collectionName);
+  const stats = await getCollectionStats(ctx, change.collection);
 
   // Check if approaching size limit (80%)
   if (stats.totalSize > 50 * 1024 * 1024 * 0.8) { // 40MB of 50MB limit
@@ -449,13 +449,13 @@ triggers.register("documents", async (ctx, change) => {
       .query("_scheduled_functions")
       .filter(q =>
         q.eq(q.field("name"), "internal.compaction.runCompaction") &&
-        q.eq(q.field("args").collectionName, change.collectionName)
+        q.eq(q.field("args").collection, change.collection)
       )
       .first();
 
     if (!alreadyScheduled) {
       await ctx.scheduler.runAfter(0, internal.compaction.runCompaction, {
-        collectionName: change.collectionName,
+        collection: change.collection,
       });
     }
   }
@@ -592,30 +592,30 @@ export default defineSchema({
   // Migration definitions
   migrations: defineTable({
     version: v.number(),                    // Target version (e.g., 2 for v1→v2 migration)
-    collectionName: v.string(),             // Which collection this applies to
+    collection: v.string(),             // Which collection this applies to
     function: v.string(),                   // Function name extracted via getFunctionName()
                                             // Developer passes: api.migrations.tasksV1toV2 (FunctionReference)
                                             // Stored as: 'migrations:tasksV1toV2' (string)
     createdAt: v.number(),
   })
-    .index('by_collection_version', ['collectionName', 'version']),
+    .index('by_collection_version', ['collection', 'version']),
 
   // Temporary stale state storage (client uploads old data here)
   staleClientState: defineTable({
     clientId: v.string(),                   // Unique client identifier
-    collectionName: v.string(),
+    collection: v.string(),
     schemaVersion: v.number(),              // Client's current version
     materializedDocs: v.array(v.any()),     // JSON documents from client
     uploadedAt: v.number(),
     expiresAt: v.number(),                  // Auto-cleanup after 24h
   })
-    .index('by_client', ['clientId', 'collectionName'])
+    .index('by_client', ['clientId', 'collection'])
     .index('by_expires', ['expiresAt']),
 
   // Migration job tracking
   migrationJobs: defineTable({
     clientId: v.string(),
-    collectionName: v.string(),
+    collection: v.string(),
     fromVersion: v.number(),
     toVersion: v.number(),
     status: v.string(),                     // 'pending' | 'running' | 'completed' | 'failed'
@@ -631,7 +631,7 @@ export default defineSchema({
 
 // 2. Client Detects Version Mismatch
 // src/client/initialization.ts
-export async function initializeCollection(collectionName: string) {
+export async function initializeCollection(collection: string) {
   // **COORDINATION MECHANISM**: This version check provides natural Phase 1/2 coordination
   // - If Phase 1 (main table migration) isn't done, server still advertises old version
   // - Clients see no mismatch, don't start Phase 2 yet
@@ -639,9 +639,9 @@ export async function initializeCollection(collectionName: string) {
   // - No explicit lock needed - version check IS the coordination
   const serverSchemaVersion = await convexClient.query(
     api.system.getSchemaVersion,
-    { collectionName }
+    { collection }
   );
-  const localSchemaVersion = await getLocalSchemaVersion(collectionName);
+  const localSchemaVersion = await getLocalSchemaVersion(collection);
 
   if (localSchemaVersion !== serverSchemaVersion) {
     logger.info('Schema version mismatch, starting server-side migration', {
@@ -649,7 +649,7 @@ export async function initializeCollection(collectionName: string) {
       server: serverSchemaVersion,
     });
 
-    await migrateViaServer(collectionName, localSchemaVersion, serverSchemaVersion);
+    await migrateViaServer(collection, localSchemaVersion, serverSchemaVersion);
   }
 }
 
@@ -657,22 +657,22 @@ export async function initializeCollection(collectionName: string) {
 // src/client/migrations.ts
 export async function migrateViaTransactionQueue(
   collection: ConvexCollection<T>,
-  collectionName: string,
+  collection: string,
   fromVersion: number,
   toVersion: number
 ) {
   logger.info('Starting transaction-based migration', {
-    collectionName,
+    collection,
     fromVersion,
     toVersion,
   });
 
   // Pause normal sync to avoid conflicts
-  pauseSync(collectionName);
+  pauseSync(collection);
 
   // Extract current local state
-  const ydoc = getYDocForCollection(collectionName);
-  const ymap = ydoc.getMap(collectionName);
+  const ydoc = getYDocForCollection(collection);
+  const ymap = ydoc.getMap(collection);
 
   const documents: T[] = [];
   ymap.forEach((itemYMap, id) => {
@@ -720,16 +720,16 @@ export async function migrateViaTransactionQueue(
   logger.info('All migration mutations persisted to server');
 
   // Clear local storage now that server has migrated data
-  await clearLocalStorage(collectionName);
+  await clearLocalStorage(collection);
 
   // Update local schema version
-  await storeSchemaVersion(collectionName, toVersion);
+  await storeSchemaVersion(collection, toVersion);
 
   // Resume normal sync - client will pull migrated data from server
-  resumeSync(collectionName);
+  resumeSync(collection);
 
   logger.info('Migration complete, re-syncing from server', {
-    collectionName,
+    collection,
     version: toVersion,
   });
 }
@@ -738,7 +738,7 @@ export async function migrateViaTransactionQueue(
 // convex/tasks.ts (enhanced existing mutations)
 export const updateDocument = mutation({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     documentId: v.string(),
     crdtBytes: v.bytes(),
     materializedDoc: v.any(),
@@ -750,7 +750,7 @@ export const updateDocument = mutation({
 
     // If schemaVersion provided and different from server, migrate document
     if (args.schemaVersion !== undefined) {
-      const serverVersion = await getServerSchemaVersion(ctx, args.collectionName);
+      const serverVersion = await getServerSchemaVersion(ctx, args.collection);
 
       if (args.schemaVersion < serverVersion) {
         logger.info('Migrating document from old schema', {
@@ -764,14 +764,14 @@ export const updateDocument = mutation({
           args.materializedDoc,
           args.schemaVersion,
           serverVersion,
-          args.collectionName
+          args.collection
         );
       }
     }
 
     // Write via normal dual-storage helper (component + main table)
     // CRDT merge happens automatically if document exists
-    return await updateDocumentHelper(ctx, components, args.collectionName, {
+    return await updateDocumentHelper(ctx, components, args.collection, {
       id: args.documentId,
       crdtBytes: args.crdtBytes,
       materializedDoc: finalDoc,
@@ -782,7 +782,7 @@ export const updateDocument = mutation({
 
 export const insertDocument = mutation({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     documentId: v.string(),
     crdtBytes: v.bytes(),
     materializedDoc: v.any(),
@@ -794,19 +794,19 @@ export const insertDocument = mutation({
 
     // Migrate if needed
     if (args.schemaVersion !== undefined) {
-      const serverVersion = await getServerSchemaVersion(ctx, args.collectionName);
+      const serverVersion = await getServerSchemaVersion(ctx, args.collection);
 
       if (args.schemaVersion < serverVersion) {
         finalDoc = await migrateDocument(
           args.materializedDoc,
           args.schemaVersion,
           serverVersion,
-          args.collectionName
+          args.collection
         );
       }
     }
 
-    return await insertDocumentHelper(ctx, components, args.collectionName, {
+    return await insertDocumentHelper(ctx, components, args.collection, {
       id: args.documentId,
       crdtBytes: args.crdtBytes,
       materializedDoc: finalDoc,
@@ -821,7 +821,7 @@ async function migrateDocument(
   doc: any,
   fromVersion: number,
   toVersion: number,
-  collectionName: string
+  collection: string
 ): Promise<any> {
   let currentDoc = doc;
   let currentVersion = fromVersion;
@@ -830,13 +830,13 @@ async function migrateDocument(
   // Example: v1→v4 applies tasksV1toV2, then tasksV2toV3, then tasksV3toV4
   while (currentVersion < toVersion) {
     const migration = await getMigrationDefinition(
-      collectionName,
+      collection,
       currentVersion + 1
     );
 
     if (!migration) {
       throw new Error(
-        `No migration defined for ${collectionName} v${currentVersion} -> v${currentVersion + 1}`
+        `No migration defined for ${collection} v${currentVersion} -> v${currentVersion + 1}`
       );
     }
 
@@ -855,13 +855,13 @@ async function migrateDocument(
 
 // Get migration definition from component
 async function getMigrationDefinition(
-  collectionName: string,
+  collection: string,
   version: number
 ): Promise<Migration | null> {
   // Query component for migration definition
   const migration = await ctx.runQuery(
     components.replicate.public.getMigration,
-    { collectionName, version }
+    { collection, version }
   );
 
   return migration;
@@ -1012,7 +1012,7 @@ export const registerTaskMigrations = internalMutation({
     // TypeScript ensures api.migrations.tasksV1toV2 exists at compile time!
     await ctx.runMutation(components.replicate.public.registerMigration, {
       version: 2,
-      collectionName: 'tasks',
+      collection: 'tasks',
       function: api.migrations.tasksV1toV2, // ✅ FunctionReference (not string!)
       createdAt: Date.now(),
     });
@@ -1020,7 +1020,7 @@ export const registerTaskMigrations = internalMutation({
     // Migration v2 -> v3: Rename 'completed' to 'isCompleted'
     await ctx.runMutation(components.replicate.public.registerMigration, {
       version: 3,
-      collectionName: 'tasks',
+      collection: 'tasks',
       function: api.migrations.tasksV2toV3,
       createdAt: Date.now(),
     });
@@ -1028,7 +1028,7 @@ export const registerTaskMigrations = internalMutation({
     // Migration v3 -> v4: Add assigneeId field
     await ctx.runMutation(components.replicate.public.registerMigration, {
       version: 4,
-      collectionName: 'tasks',
+      collection: 'tasks',
       function: api.migrations.tasksV3toV4,
       createdAt: Date.now(),
     });
@@ -1036,7 +1036,7 @@ export const registerTaskMigrations = internalMutation({
     // Migration v4 -> v5: Remove deprecated 'categories' field
     await ctx.runMutation(components.replicate.public.registerMigration, {
       version: 5,
-      collectionName: 'tasks',
+      collection: 'tasks',
       function: api.migrations.tasksV4toV5,
       createdAt: Date.now(),
     });
@@ -1047,7 +1047,7 @@ export const registerTaskMigrations = internalMutation({
 export const registerMigration = internalMutation({
   args: {
     version: v.number(),
-    collectionName: v.string(),
+    collection: v.string(),
     function: v.any(), // Accepts FunctionReference
     createdAt: v.number(),
   },
@@ -1058,7 +1058,7 @@ export const registerMigration = internalMutation({
     // Store in component database
     await ctx.db.insert('migrations', {
       version: args.version,
-      collectionName: args.collectionName,
+      collection: args.collection,
       function: functionName, // 'migrations:tasksV1toV2'
       createdAt: args.createdAt,
     });
@@ -1083,26 +1083,26 @@ export const registerMigration = internalMutation({
 
 // 9. Multi-Version Tab Support via BroadcastChannel
 // src/client/coordination.ts
-export function setupTabCoordination(collectionName: string) {
-  const channel = new BroadcastChannel(`convex-replicate-migration-${collectionName}`);
+export function setupTabCoordination(collection: string) {
+  const channel = new BroadcastChannel(`convex-replicate-migration-${collection}`);
 
   // Listen for migration events from other tabs
   channel.addEventListener('message', async (event) => {
     if (event.data.type === 'migration-started') {
       logger.info('Migration in progress on another tab, pausing sync...', {
-        collectionName,
+        collection,
         toVersion: event.data.toVersion,
       });
       // Pause sync on this tab while other tab migrates
-      pauseSync(collectionName);
+      pauseSync(collection);
     } else if (event.data.type === 'migration-completed') {
       logger.info('Migration completed on another tab, resuming sync', {
-        collectionName,
+        collection,
         version: event.data.version,
       });
       // Update local schema version and resume sync
-      await storeSchemaVersion(collectionName, event.data.version);
-      resumeSync(collectionName);
+      await storeSchemaVersion(collection, event.data.version);
+      resumeSync(collection);
     }
   });
 
@@ -1110,7 +1110,7 @@ export function setupTabCoordination(collectionName: string) {
     notifyMigrationStart: (toVersion: number) => {
       channel.postMessage({
         type: 'migration-started',
-        collectionName,
+        collection,
         toVersion,
         timestamp: Date.now(),
       });
@@ -1118,7 +1118,7 @@ export function setupTabCoordination(collectionName: string) {
     notifyMigrationComplete: (version: number) => {
       channel.postMessage({
         type: 'migration-completed',
-        collectionName,
+        collection,
         version,
         timestamp: Date.now(),
       });
@@ -1197,7 +1197,7 @@ The **component API signatures** - function shapes and argument types:
 // Protocol = API signatures
 export const insertDocument = mutation({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     documentId: v.string(),
     crdtBytes: v.bytes(),
     version: v.number(),
@@ -1206,7 +1206,7 @@ export const insertDocument = mutation({
 
 export const stream = query({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     checkpoint: v.object({ lastModified: v.number() }),
     stateVector: v.optional(v.bytes()),  // Protocol change: added in v2
   }
@@ -1306,7 +1306,7 @@ async function migrateV1toV2() {
 
   for (const checkpoint of checkpoints) {
     // Add new field to existing checkpoints
-    await updateCheckpoint(checkpoint.collectionName, {
+    await updateCheckpoint(checkpoint.collection, {
       lastModified: checkpoint.lastModified,
       stateVector: null, // v2 field, will compute on next sync
     });
@@ -1331,9 +1331,9 @@ async function getAllCheckpoints() {
   return await idb.getAll('checkpoints');
 }
 
-async function updateCheckpoint(collectionName: string, checkpoint: any) {
+async function updateCheckpoint(collection: string, checkpoint: any) {
   await idb.put('checkpoints', {
-    collectionName,
+    collection,
     ...checkpoint,
   });
 }
@@ -1422,7 +1422,7 @@ Protocol Evolution is **fully planned** with a simple versioning approach:
 // src/component/public.ts - Enhanced stream query
 export const stream = query({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     checkpoint: v.object({ lastModified: v.number() }),
     limit: v.optional(v.number()),
   },
@@ -1446,7 +1446,7 @@ export const stream = query({
 
     // Check main table for manual edits (timestamp > component timestamp)
     const mainTableDocs = await ctx.db
-      .query(args.collectionName)
+      .query(args.collection)
       .filter(q => q.gt(q.field('timestamp'), args.checkpoint.lastModified))
       .collect();
 
@@ -1458,7 +1458,7 @@ export const stream = query({
       if (doc.timestamp > componentTime) {
         // Manual edit detected! Synthesize CRDT delta from current state
         logger.info('Manual edit detected - synthesizing CRDT delta', {
-          collectionName: args.collectionName,
+          collection: args.collection,
           documentId: doc.id,
           mainTableTime: doc.timestamp,
           componentTime,
@@ -1468,7 +1468,7 @@ export const stream = query({
 
         // Store in component for complete event log
         await ctx.runMutation(components.replicate.insertDocument, {
-          collectionName: args.collectionName,
+          collection: args.collection,
           documentId: doc.id,
           crdtBytes: syntheticDelta,
           version: doc.version,
@@ -1491,7 +1491,7 @@ export const stream = query({
       .sort((a, b) => a.timestamp - b.timestamp);
 
     // Check for client corruption (invalid CRDT deltas)
-    const corruptionDetected = await detectClientCorruption(ctx, args.collectionName);
+    const corruptionDetected = await detectClientCorruption(ctx, args.collection);
 
     if (corruptionDetected) {
       return {
@@ -1538,27 +1538,27 @@ async function synthesizeCrdtDelta(doc: any): Promise<ArrayBuffer> {
 // 3. Detect Client Corruption
 async function detectClientCorruption(
   ctx: any,
-  collectionName: string
+  collection: string
 ): Promise<boolean> {
   // Check for invalid version numbers
   const invalidVersions = await ctx.runQuery(
     components.replicate.stream,
-    { collectionName }
+    { collection }
   ).then(deltas =>
     deltas.some(d => d.version < 0 || d.version > 1000000)
   );
 
   if (invalidVersions) {
-    logger.error('Invalid version numbers detected', { collectionName });
+    logger.error('Invalid version numbers detected', { collection });
     return true;
   }
 
   // Check for orphaned deltas (document in component but not in main table)
   // This could indicate corruption or manual deletion
-  const orphanedDeltas = await checkForOrphanedDeltas(ctx, collectionName);
+  const orphanedDeltas = await checkForOrphanedDeltas(ctx, collection);
 
   if (orphanedDeltas) {
-    logger.error('Orphaned deltas detected', { collectionName });
+    logger.error('Orphaned deltas detected', { collection });
     return true;
   }
 
@@ -1571,12 +1571,12 @@ sync: {
   sync: (params: any) => {
     const subscription = convexClient.onUpdate(
       api.stream,
-      { collectionName, checkpoint: getCheckpoint() },
+      { collection, checkpoint: getCheckpoint() },
       async (result) => {
         // Handle server-requested reset (client corruption)
         if (result.resetRequired) {
           logger.warn('Server requested reset - rebuilding local state', {
-            collectionName,
+            collection,
             reason: result.resetReason,
           });
 
@@ -1586,7 +1586,7 @@ sync: {
 
         // Normal sync: apply deltas (including synthetic deltas for manual edits)
         for (const change of result.changes) {
-          const ydoc = getYDocForCollection(collectionName);
+          const ydoc = getYDocForCollection(collection);
 
           if (change.operationType === 'update') {
             // Could be normal update OR synthetic delta from manual edit
@@ -1612,15 +1612,15 @@ async function handleClientReset(result: any, params: any) {
   const { begin, write, commit } = params;
 
   // Step 1: Destroy corrupted Yjs document
-  const ydoc = getYDocForCollection(collectionName);
+  const ydoc = getYDocForCollection(collection);
   ydoc.destroy();
 
   // Step 2: Create fresh Yjs document
-  const freshYdoc = new Y.Doc({ guid: collectionName });
+  const freshYdoc = new Y.Doc({ guid: collection });
 
   // Step 3: Fetch clean state from server
   const serverState = await convexClient.query(api.stream, {
-    collectionName,
+    collection,
     checkpoint: { lastModified: 0 }, // Start from beginning
   });
 
@@ -1633,7 +1633,7 @@ async function handleClientReset(result: any, params: any) {
 
   // Step 5: Update TanStack DB with clean state
   begin();
-  const cleanState = freshYdoc.getMap(collectionName).toJSON();
+  const cleanState = freshYdoc.getMap(collection).toJSON();
   for (const [id, item] of Object.entries(cleanState)) {
     write({ type: 'insert', value: item });
   }
@@ -1643,7 +1643,7 @@ async function handleClientReset(result: any, params: any) {
   // automatically against clean state. CRDTs will merge them.
 
   logger.info('Client reset complete - pending mutations will replay', {
-    collectionName,
+    collection,
     documentsRestored: Object.keys(cleanState).length,
   });
 }
@@ -1728,7 +1728,7 @@ Reference: [Convex Authorization Guide](https://stack.convex.dev/authorization)
 // convex/tasks.ts
 export const insertDocument = mutation({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     documentId: v.string(),
     crdtBytes: v.bytes(),
     materializedDoc: v.any(),
@@ -1758,7 +1758,7 @@ export const insertDocument = mutation({
 
 export const updateDocument = mutation({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     documentId: v.string(),
     crdtBytes: v.bytes(),
     materializedDoc: v.any(),
@@ -1792,7 +1792,7 @@ export const updateDocument = mutation({
 
 export const deleteDocument = mutation({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     documentId: v.string(),
     crdtBytes: v.bytes(),
     version: v.number(),
@@ -1823,7 +1823,7 @@ export const deleteDocument = mutation({
 // 2. Filtering in Stream Queries (Developer Implements)
 export const stream = query({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     checkpoint: v.object({ lastModified: v.number() }),
   },
   handler: async (ctx, args) => {
@@ -1939,7 +1939,7 @@ export async function updateDocumentHelper(
 
   // Continue with normal replication logic
   await ctx.runMutation(components.replicate.updateDocument, {
-    collectionName: tableName,
+    collection: tableName,
     documentId: args.id,
     crdtBytes: args.crdtBytes,
     materializedDoc: args.materializedDoc,

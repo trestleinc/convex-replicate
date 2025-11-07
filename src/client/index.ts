@@ -13,6 +13,23 @@
  * ```
  */
 
+// Protocol initialization and migration
+export {
+  initConvexReplicate,
+  getProtocolInfo,
+  resetProtocolStorage,
+  type InitOptions,
+} from './init.js';
+
+// Protocol migration utilities (advanced usage)
+export {
+  getStoredProtocolVersion,
+  storeProtocolVersion,
+  migrateLocalStorage,
+  clearProtocolStorage,
+  getProtocolMetadata,
+} from './protocol.js';
+
 // Component client (ReplicateStorage class)
 export { ReplicateStorage } from './storage.js';
 

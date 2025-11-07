@@ -8,6 +8,7 @@ import type { ConvexClient } from 'convex/browser';
 import type { FunctionReference } from 'convex/server';
 import type { CollectionConfig, Collection } from '@tanstack/db';
 import { getLogger } from './logger.js';
+import { ensureInitialized } from './init.js';
 
 const logger = getLogger(['convex-replicate', 'collection']);
 
@@ -31,10 +32,11 @@ export interface ConvexCollectionOptionsConfig<T extends object> {
     insertDocument: FunctionReference<'mutation'>; // Insert handler (required)
     updateDocument: FunctionReference<'mutation'>; // Update handler (required)
     deleteDocument: FunctionReference<'mutation'>; // Delete handler (required)
+    getProtocolVersion?: FunctionReference<'query'>; // Protocol version check (optional)
   };
 
   /** Unique collection name */
-  collectionName: string;
+  collection: string;
 }
 
 /**
@@ -61,7 +63,7 @@ export type ConvexCollection<T extends object> = Collection<T>;
  *   convexCollectionOptions<Task>({
  *     convexClient,
  *     api: api.tasks,
- *     collectionName: 'tasks',
+ *     collection: 'tasks',
  *     getKey: (task) => task.id,
  *     initialData,
  *   })
@@ -73,14 +75,21 @@ export function convexCollectionOptions<T extends object>({
   initialData,
   convexClient,
   api,
-  collectionName,
+  collection,
 }: ConvexCollectionOptionsConfig<T>): CollectionConfig<T> & {
   _convexClient: ConvexClient;
-  _collectionName: string;
+  _collection: string;
 } {
+  // Trigger lazy initialization (runs once globally)
+  // This will check protocol version and run migrations if needed
+  const initPromise = ensureInitialized({
+    convexClient,
+    api: api.getProtocolVersion ? { getProtocolVersion: api.getProtocolVersion } : undefined,
+  });
+
   // Initialize Yjs document for CRDT operations
-  const ydoc = new Y.Doc({ guid: collectionName });
-  const ymap = ydoc.getMap(collectionName);
+  const ydoc = new Y.Doc({ guid: collection });
+  const ymap = ydoc.getMap(collection);
 
   // Track delta updates (NOT full state)
   // This is the key to efficient bandwidth usage: < 1KB per change instead of 100KB+
@@ -89,28 +98,31 @@ export function convexCollectionOptions<T extends object>({
     // `update` contains ONLY what changed (delta)
     pendingUpdate = update;
     logger.debug('Yjs update event fired', {
-      collectionName,
+      collection,
       updateSize: update.length,
       origin,
     });
   });
 
   return {
-    id: collectionName,
+    id: collection,
     getKey,
 
     // Store for extraction by createConvexCollection
     _convexClient: convexClient,
-    _collectionName: collectionName,
+    _collection: collection,
 
     // REAL onInsert handler (called automatically by TanStack DB)
     onInsert: async ({ transaction }: any) => {
       logger.debug('onInsert handler called', {
-        collectionName,
+        collection,
         mutationCount: transaction.mutations.length,
       });
 
       try {
+        // Wait for initialization before syncing
+        await initPromise;
+
         // Update Yjs in transaction (batches multiple changes into ONE 'update' event)
         ydoc.transact(() => {
           transaction.mutations.forEach((mut: any) => {
@@ -126,13 +138,13 @@ export function convexCollectionOptions<T extends object>({
         // Send DELTA to Convex (not full state)
         if (pendingUpdate) {
           logger.debug('Sending insert delta to Convex', {
-            collectionName,
+            collection,
             documentId: String(transaction.mutations[0].key),
             deltaSize: pendingUpdate.length,
           });
 
           await convexClient.mutation(api.insertDocument, {
-            collectionName,
+            collection,
             documentId: String(transaction.mutations[0].key),
             crdtBytes: pendingUpdate.buffer,
             materializedDoc: transaction.mutations[0].modified,
@@ -141,13 +153,13 @@ export function convexCollectionOptions<T extends object>({
 
           pendingUpdate = null;
           logger.info('Insert persisted to Convex', {
-            collectionName,
+            collection,
             documentId: String(transaction.mutations[0].key),
           });
         }
       } catch (error: any) {
         logger.error('Insert failed', {
-          collectionName,
+          collection,
           error: error?.message,
           status: error?.status,
         });
@@ -168,11 +180,14 @@ export function convexCollectionOptions<T extends object>({
     // REAL onUpdate handler (called automatically by TanStack DB)
     onUpdate: async ({ transaction }: any) => {
       logger.debug('onUpdate handler called', {
-        collectionName,
+        collection,
         mutationCount: transaction.mutations.length,
       });
 
       try {
+        // Wait for initialization before syncing
+        await initPromise;
+
         // Update Yjs in transaction
         ydoc.transact(() => {
           transaction.mutations.forEach((mut: any) => {
@@ -196,13 +211,13 @@ export function convexCollectionOptions<T extends object>({
         // Send delta to Convex
         if (pendingUpdate) {
           logger.debug('Sending update delta to Convex', {
-            collectionName,
+            collection,
             documentId: String(transaction.mutations[0].key),
             deltaSize: pendingUpdate.length,
           });
 
           await convexClient.mutation(api.updateDocument, {
-            collectionName,
+            collection,
             documentId: String(transaction.mutations[0].key),
             crdtBytes: pendingUpdate.buffer,
             materializedDoc: transaction.mutations[0].modified,
@@ -211,13 +226,13 @@ export function convexCollectionOptions<T extends object>({
 
           pendingUpdate = null;
           logger.info('Update persisted to Convex', {
-            collectionName,
+            collection,
             documentId: String(transaction.mutations[0].key),
           });
         }
       } catch (error: any) {
         logger.error('Update failed', {
-          collectionName,
+          collection,
           error: error?.message,
           status: error?.status,
         });
@@ -237,11 +252,14 @@ export function convexCollectionOptions<T extends object>({
     // onDelete handler (called when user does collection.delete())
     onDelete: async ({ transaction }: any) => {
       logger.debug('onDelete handler called', {
-        collectionName,
+        collection,
         mutationCount: transaction.mutations.length,
       });
 
       try {
+        // Wait for initialization before syncing
+        await initPromise;
+
         // Remove from Yjs Y.Map - creates deletion tombstone
         ydoc.transact(() => {
           transaction.mutations.forEach((mut: any) => {
@@ -252,13 +270,13 @@ export function convexCollectionOptions<T extends object>({
         // Send deletion DELTA to Convex
         if (pendingUpdate) {
           logger.debug('Sending delete delta to Convex', {
-            collectionName,
+            collection,
             documentId: String(transaction.mutations[0].key),
             deltaSize: pendingUpdate.length,
           });
 
           await convexClient.mutation(api.deleteDocument, {
-            collectionName,
+            collection,
             documentId: String(transaction.mutations[0].key),
             crdtBytes: pendingUpdate.buffer,
             version: Date.now(),
@@ -266,13 +284,13 @@ export function convexCollectionOptions<T extends object>({
 
           pendingUpdate = null;
           logger.info('Delete persisted to Convex', {
-            collectionName,
+            collection,
             documentId: String(transaction.mutations[0].key),
           });
         }
       } catch (error: any) {
         logger.error('Delete failed', {
-          collectionName,
+          collection,
           error: error?.message,
           status: error?.status,
         });
@@ -314,113 +332,128 @@ export function convexCollectionOptions<T extends object>({
           }
           commit();
           logger.debug('Initialized with SSR data', {
-            collectionName,
+            collection,
             count: initialData.length,
           });
         }
 
-        // Step 2: Subscribe to Convex real-time updates via main table
-        logger.debug('Setting up Convex subscription', { collectionName });
+        // Step 2: Wait for initialization before subscribing (async)
+        let subscription: (() => void) | null = null;
 
-        // Track previous items (full objects) to detect hard deletes
-        // We need full items because TanStack DB write() expects { type: 'delete', value: T }
-        let previousItems = new Map<string | number, T>();
-
-        const subscription = convexClient.onUpdate(api.stream, {}, async (items) => {
+        // Start async initialization + subscription
+        (async () => {
           try {
-            logger.debug('Subscription update received', {
-              collectionName,
-              itemCount: items.length,
-            });
+            // Wait for initialization before setting up subscriptions
+            await initPromise;
+            logger.debug('Setting up Convex subscription', { collection });
 
-            // Build map of current items
-            const currentItems = new Map<string | number, T>();
-            for (const item of items) {
-              const key = getKey(item as T);
-              currentItems.set(key, item as T);
-            }
+            // Track previous items (full objects) to detect hard deletes
+            // We need full items because TanStack DB write() expects { type: 'delete', value: T }
+            let previousItems = new Map<string | number, T>();
 
-            // Detect hard deletes by finding items in previous but not in current
-            const deletedItems: T[] = [];
-            for (const [prevId, prevItem] of previousItems) {
-              if (!currentItems.has(prevId)) {
-                deletedItems.push(prevItem);
-              }
-            }
-
-            if (deletedItems.length > 0) {
-              logger.info('Detected remote hard deletes', {
-                collectionName,
-                deletedCount: deletedItems.length,
-                deletedIds: deletedItems.map((item) => getKey(item)),
-              });
-            }
-
-            begin();
-
-            // STEP 1: Handle deletions FIRST
-            for (const deletedItem of deletedItems) {
-              const deletedId = getKey(deletedItem);
-
-              // Remove from Yjs (requires string key)
-              ydoc.transact(() => {
-                ymap.delete(String(deletedId));
-              }, 'remote-delete');
-
-              // Remove from TanStack DB (requires full item as value)
-              write({ type: 'delete', value: deletedItem });
-            }
-
-            // STEP 2: Sync items to Yjs
-            ydoc.transact(() => {
-              for (const item of items) {
-                const key = getKey(item as T);
-                const itemYMap = new Y.Map();
-                Object.entries(item as Record<string, unknown>).forEach(([k, v]) => {
-                  itemYMap.set(k, v);
+            subscription = convexClient.onUpdate(api.stream, {}, async (items) => {
+              try {
+                logger.debug('Subscription update received', {
+                  collection,
+                  itemCount: items.length,
                 });
-                ymap.set(String(key), itemYMap);
+
+                // Build map of current items
+                const currentItems = new Map<string | number, T>();
+                for (const item of items) {
+                  const key = getKey(item as T);
+                  currentItems.set(key, item as T);
+                }
+
+                // Detect hard deletes by finding items in previous but not in current
+                const deletedItems: T[] = [];
+                for (const [prevId, prevItem] of previousItems) {
+                  if (!currentItems.has(prevId)) {
+                    deletedItems.push(prevItem);
+                  }
+                }
+
+                if (deletedItems.length > 0) {
+                  logger.info('Detected remote hard deletes', {
+                    collection,
+                    deletedCount: deletedItems.length,
+                    deletedIds: deletedItems.map((item) => getKey(item)),
+                  });
+                }
+
+                begin();
+
+                // STEP 1: Handle deletions FIRST
+                for (const deletedItem of deletedItems) {
+                  const deletedId = getKey(deletedItem);
+
+                  // Remove from Yjs (requires string key)
+                  ydoc.transact(() => {
+                    ymap.delete(String(deletedId));
+                  }, 'remote-delete');
+
+                  // Remove from TanStack DB (requires full item as value)
+                  write({ type: 'delete', value: deletedItem });
+                }
+
+                // STEP 2: Sync items to Yjs
+                ydoc.transact(() => {
+                  for (const item of items) {
+                    const key = getKey(item as T);
+                    const itemYMap = new Y.Map();
+                    Object.entries(item as Record<string, unknown>).forEach(([k, v]) => {
+                      itemYMap.set(k, v);
+                    });
+                    ymap.set(String(key), itemYMap);
+                  }
+                }, 'subscription-sync');
+
+                // STEP 3: Sync items to TanStack DB
+                for (const item of items) {
+                  const key = getKey(item as T);
+
+                  if ((params as any).collection.has(key)) {
+                    write({ type: 'update', value: item as T });
+                  } else {
+                    write({ type: 'insert', value: item as T });
+                  }
+                }
+
+                commit();
+
+                // Update tracking for next iteration
+                previousItems = currentItems;
+
+                logger.debug('Successfully synced items to collection', {
+                  count: items.length,
+                  deletedCount: deletedItems.length,
+                });
+              } catch (error: any) {
+                logger.error('Failed to sync items from subscription', {
+                  error: error.message,
+                  errorName: error.name,
+                  stack: error?.stack,
+                  collection,
+                  itemCount: items.length,
+                });
+                throw error; // Re-throw to prevent silent failures
               }
-            }, 'subscription-sync');
-
-            // STEP 3: Sync items to TanStack DB
-            for (const item of items) {
-              const key = getKey(item as T);
-
-              if ((params as any).collection.has(key)) {
-                write({ type: 'update', value: item as T });
-              } else {
-                write({ type: 'insert', value: item as T });
-              }
-            }
-
-            commit();
-
-            // Update tracking for next iteration
-            previousItems = currentItems;
-
-            logger.debug('Successfully synced items to collection', {
-              count: items.length,
-              deletedCount: deletedItems.length,
             });
-          } catch (error: any) {
-            logger.error('Failed to sync items from subscription', {
-              error: error.message,
-              errorName: error.name,
-              stack: error?.stack,
-              collectionName,
-              itemCount: items.length,
-            });
-            throw error; // Re-throw to prevent silent failures
+
+            markReady();
+          } catch (error) {
+            logger.error('Failed to initialize or setup subscription', { error, collection });
+            // Mark ready anyway to avoid blocking the collection
+            markReady();
           }
-        });
+        })();
 
-        markReady();
-
-        // Return cleanup function
+        // Return cleanup function (subscription might not be ready yet)
         return () => {
-          logger.debug('Cleaning up Convex subscription', { collectionName });
-          subscription();
+          logger.debug('Cleaning up Convex subscription', { collection });
+          if (subscription) {
+            subscription();
+          }
         };
       },
     },
@@ -448,7 +481,7 @@ export function convexCollectionOptions<T extends object>({
  *   convexCollectionOptions<Task>({
  *     convexClient,
  *     api: api.tasks,
- *     collectionName: 'tasks',
+ *     collection: 'tasks',
  *     getKey: (task) => task.id,
  *     initialData,
  *   })
@@ -468,20 +501,20 @@ export function createConvexCollection<T extends object>(
   // Extract config from rawCollection
   const config = (rawCollection as any).config;
   const convexClient = config._convexClient;
-  const collectionName = config._collectionName;
+  const collection = config._collection;
 
-  if (!convexClient || !collectionName) {
+  if (!convexClient || !collection) {
     throw new Error(
       'createConvexCollection requires a collection created with convexCollectionOptions. ' +
-        'Make sure you pass convexClient and collectionName to convexCollectionOptions.'
+        'Make sure you pass convexClient and collection to convexCollectionOptions.'
     );
   }
 
-  logger.info('Creating Convex collection with offline support', { collectionName });
+  logger.info('Creating Convex collection with offline support', { collection });
 
   // Create offline executor (wraps collection ONCE)
   const offline: OfflineExecutor = startOfflineExecutor({
-    collections: { [collectionName]: rawCollection as any },
+    collections: { [collection]: rawCollection as any },
 
     // Empty mutationFns - handlers in collection config will be used
     mutationFns: {},
@@ -497,7 +530,7 @@ export function createConvexCollection<T extends object>(
 
       if (filtered.length < transactions.length) {
         logger.warn('Filtered stale transactions', {
-          collectionName,
+          collection,
           before: transactions.length,
           after: filtered.length,
         });
@@ -508,13 +541,13 @@ export function createConvexCollection<T extends object>(
 
     onLeadershipChange: (isLeader) => {
       logger.info(isLeader ? 'Offline mode active' : 'Online-only mode', {
-        collectionName,
+        collection,
       });
     },
 
     onStorageFailure: (diagnostic) => {
       logger.warn('Storage failed - online-only mode', {
-        collectionName,
+        collection,
         code: diagnostic.code,
         message: diagnostic.message,
       });
@@ -525,7 +558,7 @@ export function createConvexCollection<T extends object>(
   if (convexClient.connectionState) {
     const connectionState = convexClient.connectionState();
     logger.debug('Initial connection state', {
-      collectionName,
+      collection,
       isConnected: connectionState.isWebSocketConnected,
     });
   }
@@ -533,13 +566,13 @@ export function createConvexCollection<T extends object>(
   // Trigger retry when connection is restored
   if (typeof window !== 'undefined') {
     window.addEventListener('online', () => {
-      logger.info('Network online - notifying offline executor', { collectionName });
+      logger.info('Network online - notifying offline executor', { collection });
       offline.notifyOnline();
     });
   }
 
   logger.info('Offline support initialized', {
-    collectionName,
+    collection,
     mode: offline.mode,
   });
 

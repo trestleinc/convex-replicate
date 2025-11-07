@@ -38,6 +38,9 @@
     "check": "biome check .",
     "check:fix": "biome check --write .",
     "version-packages": "node scripts/version-packages.js",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "publish:npm": "pnpm run build && pnpm run check:fix && pnpm publish --access public",
     "prepublish": "pnpm run build && pnpm run check:fix"
   },
@@ -77,26 +80,27 @@
     "LICENSE"
   ],
   "dependencies": {
-    "yjs": "13.6.27",
+    "@logtape/logtape": "1.1.2",
     "@tanstack/offline-transactions": "0.1.3",
-    "@logtape/logtape": "1.1.2"
+    "idb-keyval": "^6.2.2",
+    "yjs": "13.6.27"
   },
   "peerDependencies": {
-    "convex": "1.28.2",
-    "@tanstack/db": "0.4.20"
+    "@tanstack/db": "0.4.20",
+    "convex": "1.28.2"
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.4",
     "@rslib/core": "0.17.1",
-    "@semantic-release/changelog": "6.0.3",
-    "@semantic-release/exec": "7.1.0",
-    "@semantic-release/git": "10.0.1",
-    "@semantic-release/github": "12.0.1",
     "@tanstack/db": "0.4.20",
     "@types/node": "24.10.0",
+    "@vitest/coverage-v8": "^4.0.8",
     "convex": "1.28.2",
+    "fake-indexeddb": "^6.2.5",
+    "jsdom": "^27.1.0",
     "semantic-release": "25.0.1",
     "typescript": "5.9.3",
+    "vitest": "^4.0.8",
     "zod": "4.1.12"
   },
   "main": "./dist/index.js",

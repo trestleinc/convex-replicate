@@ -27,8 +27,9 @@ export function getTasksCollection(initialData?: ReadonlyArray<Task>): ConvexCol
           insertDocument: api.tasks.insertDocument,
           updateDocument: api.tasks.updateDocument,
           deleteDocument: api.tasks.deleteDocument,
+          getProtocolVersion: api.replicate.getProtocolVersion,
         },
-        collectionName: 'tasks',
+        collection: 'tasks',
         getKey: (task) => task.id,
         initialData,
       })

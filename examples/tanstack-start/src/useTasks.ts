@@ -20,7 +20,7 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
   return useMemo(() => {
     if (!tasksCollection) {
       // Step 1: Create raw collection with ALL config (params only passed once!)
-      const rawCollection = createCollection(
+      tasksCollection = createConvexCollection(createCollection(
         convexCollectionOptions<Task>({
           convexClient,
           api: {
@@ -28,15 +28,13 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
             insertDocument: api.tasks.insertDocument,
             updateDocument: api.tasks.updateDocument,
             deleteDocument: api.tasks.deleteDocument,
+            getProtocolVersion: api.replicate.getProtocolVersion,
           },
-          collectionName: 'tasks',
+          collection: 'tasks',
           getKey: (task) => task.id,
           initialData,
         })
-      );
-
-      // Step 2: Wrap - params automatically extracted from rawCollection!
-      tasksCollection = createConvexCollection(rawCollection);
+      ));
     }
     return tasksCollection;
   }, [initialData]);

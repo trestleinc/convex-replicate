@@ -16,7 +16,7 @@ import {
 
 export const insertDocument = mutation({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     documentId: v.string(),
     crdtBytes: v.bytes(),
     materializedDoc: v.any(),
@@ -34,7 +34,7 @@ export const insertDocument = mutation({
 
 export const updateDocument = mutation({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     documentId: v.string(),
     crdtBytes: v.bytes(),
     materializedDoc: v.any(),
@@ -52,7 +52,7 @@ export const updateDocument = mutation({
 
 export const deleteDocument = mutation({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     documentId: v.string(),
     crdtBytes: v.bytes(),
     version: v.number(),

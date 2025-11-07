@@ -32,14 +32,14 @@ export type Mounts = {
     deleteDocument: FunctionReference<
       "mutation",
       "public",
-      { collectionName: string; documentId: string },
+      { collection: string; documentId: string },
       { success: boolean }
     >;
     insertDocument: FunctionReference<
       "mutation",
       "public",
       {
-        collectionName: string;
+        collection: string;
         crdtBytes: ArrayBuffer;
         documentId: string;
         version: number;
@@ -51,7 +51,7 @@ export type Mounts = {
       "public",
       {
         checkpoint: { lastModified: number };
-        collectionName: string;
+        collection: string;
         limit?: number;
       },
       {
@@ -69,7 +69,7 @@ export type Mounts = {
       "mutation",
       "public",
       {
-        collectionName: string;
+        collection: string;
         crdtBytes: ArrayBuffer;
         documentId: string;
         version: number;

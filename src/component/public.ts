@@ -1,18 +1,22 @@
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
 
+// Current protocol version of this ConvexReplicate package
+// Increment when breaking changes are introduced
+export const PROTOCOL_VERSION = 1;
+
 /**
  * Insert a new document with CRDT bytes (Yjs format).
  * Appends delta to event log (event sourcing pattern).
  *
- * @param collectionName - Collection identifier
+ * @param collection - Collection identifier
  * @param documentId - Unique document identifier
  * @param crdtBytes - ArrayBuffer containing Yjs CRDT bytes (delta)
  * @param version - CRDT version number
  */
 export const insertDocument = mutation({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     documentId: v.string(),
     crdtBytes: v.bytes(),
     version: v.number(),
@@ -23,7 +27,7 @@ export const insertDocument = mutation({
   handler: async (ctx, args) => {
     // Append delta to event log (no duplicate check - event sourcing!)
     await ctx.db.insert('documents', {
-      collectionName: args.collectionName,
+      collection: args.collection,
       documentId: args.documentId,
       crdtBytes: args.crdtBytes,
       version: args.version,
@@ -39,14 +43,14 @@ export const insertDocument = mutation({
  * Update an existing document with new CRDT bytes (Yjs format).
  * Appends delta to event log (event sourcing pattern).
  *
- * @param collectionName - Collection identifier
+ * @param collection - Collection identifier
  * @param documentId - Unique document identifier
  * @param crdtBytes - ArrayBuffer containing Yjs CRDT bytes (delta)
  * @param version - CRDT version number
  */
 export const updateDocument = mutation({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     documentId: v.string(),
     crdtBytes: v.bytes(),
     version: v.number(),
@@ -57,7 +61,7 @@ export const updateDocument = mutation({
   handler: async (ctx, args) => {
     // Append delta to event log (no check - event sourcing!)
     await ctx.db.insert('documents', {
-      collectionName: args.collectionName,
+      collection: args.collection,
       documentId: args.documentId,
       crdtBytes: args.crdtBytes,
       version: args.version,
@@ -73,14 +77,14 @@ export const updateDocument = mutation({
  * Delete a document from CRDT storage.
  * Appends deletion delta to event log (preserves history).
  *
- * @param collectionName - Collection identifier
+ * @param collection - Collection identifier
  * @param documentId - Unique document identifier
  * @param crdtBytes - ArrayBuffer containing Yjs deletion delta
  * @param version - CRDT version number
  */
 export const deleteDocument = mutation({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     documentId: v.string(),
     crdtBytes: v.bytes(),
     version: v.number(),
@@ -91,7 +95,7 @@ export const deleteDocument = mutation({
   handler: async (ctx, args) => {
     // Append deletion delta to event log (preserve history!)
     await ctx.db.insert('documents', {
-      collectionName: args.collectionName,
+      collection: args.collection,
       documentId: args.documentId,
       crdtBytes: args.crdtBytes,
       version: args.version,
@@ -112,12 +116,12 @@ export const deleteDocument = mutation({
  * - Audit trails
  * - Debugging
  *
- * @param collectionName - Collection identifier
+ * @param collection - Collection identifier
  * @param documentId - Unique document identifier
  */
 export const getDocumentHistory = query({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     documentId: v.string(),
   },
   returns: v.array(
@@ -133,7 +137,7 @@ export const getDocumentHistory = query({
     const deltas = await ctx.db
       .query('documents')
       .withIndex('by_collection_document_version', (q) =>
-        q.eq('collectionName', args.collectionName).eq('documentId', args.documentId)
+        q.eq('collection', args.collection).eq('documentId', args.documentId)
       )
       .order('asc')
       .collect();
@@ -152,13 +156,13 @@ export const getDocumentHistory = query({
  * Returns Yjs CRDT bytes for documents modified since the checkpoint.
  * Can be used for both polling (awaitReplication) and subscriptions (live updates).
  *
- * @param collectionName - Collection identifier
+ * @param collection - Collection identifier
  * @param checkpoint - Last replication checkpoint
  * @param limit - Maximum number of changes to return (default: 100)
  */
 export const stream = query({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     checkpoint: v.object({
       lastModified: v.number(),
     }),
@@ -184,7 +188,7 @@ export const stream = query({
     const documents = await ctx.db
       .query('documents')
       .withIndex('by_timestamp', (q) =>
-        q.eq('collectionName', args.collectionName).gt('timestamp', args.checkpoint.lastModified)
+        q.eq('collection', args.collection).gt('timestamp', args.checkpoint.lastModified)
       )
       .order('asc')
       .take(limit);
@@ -207,6 +211,22 @@ export const stream = query({
       changes,
       checkpoint: newCheckpoint,
       hasMore: documents.length === limit,
+    };
+  },
+});
+
+/**
+ * Get the current protocol version from the server.
+ * Used by clients to check if they need to migrate local storage.
+ */
+export const getProtocolVersion = query({
+  args: {},
+  returns: v.object({
+    protocolVersion: v.number(),
+  }),
+  handler: async (_ctx) => {
+    return {
+      protocolVersion: PROTOCOL_VERSION,
     };
   },
 });

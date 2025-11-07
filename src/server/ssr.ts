@@ -89,7 +89,7 @@ export async function loadCollection<TItem extends { id: string }>(
   // For production use, create a dedicated query that reads from your main table.
 
   const result = await httpClient.query(config.api.stream as any, {
-    collectionName: config.collection,
+    collection: config.collection,
     checkpoint: { lastModified: 0 },
     limit: config.limit ?? 100,
   });

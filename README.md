@@ -398,7 +398,7 @@ import {
 
 export const insertDocument = mutation({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     documentId: v.string(),
     crdtBytes: v.bytes(),
     materializedDoc: v.any(),
@@ -416,7 +416,7 @@ export const insertDocument = mutation({
 
 export const updateDocument = mutation({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     documentId: v.string(),
     crdtBytes: v.bytes(),
     materializedDoc: v.any(),
@@ -434,7 +434,7 @@ export const updateDocument = mutation({
 
 export const deleteDocument = mutation({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     documentId: v.string(),
     crdtBytes: v.bytes(),
     version: v.number(),
@@ -459,7 +459,62 @@ export const stream = query({
 });
 ```
 
-### Step 4: Create a Custom Hook
+### Step 4: Initialize ConvexReplicate
+
+Initialize ConvexReplicate once when your application starts. This checks protocol versions and runs migrations if needed:
+
+```typescript
+// src/main.tsx (or app entry point)
+import { ConvexHttpClient } from 'convex/browser';
+import { initConvexReplicate } from '@trestleinc/replicate/client';
+import { convexClient } from './router'; // Your ConvexClient instance
+
+// Initialize ConvexReplicate before creating collections
+await initConvexReplicate({ convexClient });
+
+// Now you can safely create collections and use them in your app
+```
+
+**For React apps, you might want to wrap this in a provider:**
+
+```typescript
+// src/ConvexReplicateProvider.tsx
+import { createContext, useContext, useEffect, useState } from 'react';
+import { ConvexClient } from 'convex/browser';
+import { initConvexReplicate } from '@trestleinc/replicate/client';
+
+const ConvexReplicateContext = createContext<{ initialized: boolean }>({ initialized: false });
+
+export function ConvexReplicateProvider({ 
+  children, 
+  convexClient 
+}: { 
+  children: React.ReactNode;
+  convexClient: ConvexClient;
+}) {
+  const [initialized, setInitialized] = useState(false);
+
+  useEffect(() => {
+    initConvexReplicate({ convexClient })
+      .then(() => setInitialized(true))
+      .catch(error => {
+        console.error('Failed to initialize ConvexReplicate:', error);
+      });
+  }, [convexClient]);
+
+  return (
+    <ConvexReplicateContext.Provider value={{ initialized }}>
+      {initialized ? children : <div>Loading...</div>}
+    </ConvexReplicateContext.Provider>
+  );
+}
+
+export function useConvexReplicate() {
+  return useContext(ConvexReplicateContext);
+}
+```
+
+### Step 5: Create a Custom Hook
 
 Create a hook that wraps TanStack DB with Convex collection options:
 
@@ -498,7 +553,7 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
             updateDocument: api.tasks.updateDocument,
             deleteDocument: api.tasks.deleteDocument,
           },
-          collectionName: 'tasks',
+          collection: 'tasks',
           getKey: (task) => task.id,
           initialData,
         })
@@ -513,7 +568,7 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
 }
 ```
 
-### Step 5: Use in Components
+### Step 6: Use in Components
 
 ```typescript
 // src/routes/index.tsx
@@ -623,6 +678,77 @@ export const stream = query({
 **Dual Storage Architecture:**
 - **Component Storage**: Append-only event log with complete history (including deletions)
 - **Main Table**: Current state only (deleted items removed)
+
+## Protocol Evolution & Migration
+
+ConvexReplicate includes automatic protocol migration to handle package updates and breaking changes. When you update the NPM package and the protocol version changes, the system automatically migrates local IndexedDB structures.
+
+### How It Works
+
+1. **Initialization Check**: When `initConvexReplicate()` runs, it compares the server's protocol version with the locally stored version
+2. **Automatic Migration**: If versions differ, it runs sequential migrations (v1 → v2 → v3)
+3. **Local Storage Update**: The new version is stored locally for future checks
+
+### Initialization
+
+Always call `initConvexReplicate()` once when your app starts:
+
+```typescript
+import { ConvexClient } from 'convex/browser';
+import { initConvexReplicate } from '@trestleinc/replicate/client';
+
+const convexClient = new ConvexClient(process.env.VITE_CONVEX_URL!);
+
+// Initialize before creating collections
+await initConvexReplicate({ convexClient });
+```
+
+### Custom API Endpoints
+
+If you have custom authentication or API endpoints:
+
+```typescript
+await initConvexReplicate({
+  convexClient,
+  api: {
+    getProtocolVersion: async (client) => {
+      // Custom implementation
+      return { protocolVersion: 2 };
+    },
+  },
+});
+```
+
+### Debugging Protocol Issues
+
+Check protocol information:
+
+```typescript
+import { getProtocolInfo } from '@trestleinc/replicate/client';
+
+const info = await getProtocolInfo(convexClient);
+console.log('Server version:', info.serverVersion);
+console.log('Local version:', info.localVersion);
+console.log('Needs migration:', info.needsMigration);
+```
+
+### Reset Protocol Storage
+
+For testing or troubleshooting:
+
+```typescript
+import { resetProtocolStorage } from '@trestleinc/replicate/client';
+
+// ⚠️ Warning: This clears all protocol metadata
+await resetProtocolStorage();
+```
+
+### Migration Best Practices
+
+- **Always initialize** before creating collections
+- **Handle initialization errors** gracefully in your app
+- **Test migrations** by simulating version upgrades
+- **Monitor protocol versions** in production for debugging
 
 ## Advanced Usage
 
@@ -790,7 +916,7 @@ interface ConvexCollectionOptionsConfig<T> {
     updateDocument: FunctionReference;  // Update mutation
     deleteDocument: FunctionReference;  // Delete mutation
   };
-  collectionName: string;
+  collection: string;
   getKey: (item: T) => string | number;
   initialData?: ReadonlyArray<T>;
 }
@@ -809,7 +935,7 @@ const rawCollection = createCollection(
       updateDocument: api.tasks.updateDocument,
       deleteDocument: api.tasks.deleteDocument,
     },
-    collectionName: 'tasks',
+    collection: 'tasks',
     getKey: (task) => task.id,
     initialData,
   })
@@ -843,7 +969,7 @@ Type-safe API for direct component access (advanced).
 
 **Constructor:**
 ```typescript
-new ReplicateStorage<TDocument>(component, collectionName)
+new ReplicateStorage<TDocument>(component, collection)
 ```
 
 **Methods:**

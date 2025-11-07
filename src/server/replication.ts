@@ -46,7 +46,7 @@ export async function insertDocumentHelper<_DataModel extends GenericDataModel>(
     documentId: string;
     timestamp: number;
     version: number;
-    collectionName: string;
+    collection: string;
   };
 }> {
   // Use consistent timestamp for both writes to enable sync matching
@@ -54,7 +54,7 @@ export async function insertDocumentHelper<_DataModel extends GenericDataModel>(
 
   // Write CRDT bytes to component
   await (ctx as any).runMutation((components as any).replicate.public.insertDocument, {
-    collectionName: tableName,
+    collection: tableName,
     documentId: args.id,
     crdtBytes: args.crdtBytes,
     version: args.version,
@@ -78,7 +78,7 @@ export async function insertDocumentHelper<_DataModel extends GenericDataModel>(
       documentId: args.id,
       timestamp,
       version: args.version,
-      collectionName: tableName,
+      collection: tableName,
     },
   };
 }
@@ -103,7 +103,7 @@ export async function updateDocumentHelper<_DataModel extends GenericDataModel>(
     documentId: string;
     timestamp: number;
     version: number;
-    collectionName: string;
+    collection: string;
   };
 }> {
   // Use consistent timestamp for both writes to enable sync matching
@@ -111,7 +111,7 @@ export async function updateDocumentHelper<_DataModel extends GenericDataModel>(
 
   // Write CRDT bytes to component
   await (ctx as any).runMutation((components as any).replicate.public.updateDocument, {
-    collectionName: tableName,
+    collection: tableName,
     documentId: args.id,
     crdtBytes: args.crdtBytes,
     version: args.version,
@@ -143,7 +143,7 @@ export async function updateDocumentHelper<_DataModel extends GenericDataModel>(
       documentId: args.id,
       timestamp,
       version: args.version,
-      collectionName: tableName,
+      collection: tableName,
     },
   };
 }
@@ -173,14 +173,14 @@ export async function deleteDocumentHelper<_DataModel extends GenericDataModel>(
     documentId: string;
     timestamp: number;
     version: number;
-    collectionName: string;
+    collection: string;
   };
 }> {
   const timestamp = Date.now();
 
   // 1. Append deletion delta to component (event log)
   await (ctx as any).runMutation((components as any).replicate.public.deleteDocument, {
-    collectionName: tableName,
+    collection: tableName,
     documentId: args.id,
     crdtBytes: args.crdtBytes,
     version: args.version,
@@ -203,7 +203,7 @@ export async function deleteDocumentHelper<_DataModel extends GenericDataModel>(
       documentId: args.id,
       timestamp,
       version: args.version,
-      collectionName: tableName,
+      collection: tableName,
     },
   };
 }
@@ -237,7 +237,7 @@ export async function streamHelper<_DataModel extends GenericDataModel>(
   hasMore: boolean;
 }> {
   return (ctx as any).runQuery((components as any).replicate.public.stream, {
-    collectionName: tableName,
+    collection: tableName,
     checkpoint: args.checkpoint,
     limit: args.limit,
   });

@@ -229,7 +229,7 @@ import { v } from 'convex/values';
 
 export const insertDocument = mutation({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     documentId: v.string(),
     crdtBytes: v.bytes(),
     materializedDoc: v.any(),
@@ -248,7 +248,7 @@ export const insertDocument = mutation({
 
 export const updateDocument = mutation({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     documentId: v.string(),
     crdtBytes: v.bytes(),
     materializedDoc: v.any(),
@@ -266,7 +266,7 @@ export const updateDocument = mutation({
 
 export const deleteDocument = mutation({
   args: {
-    collectionName: v.string(),
+    collection: v.string(),
     documentId: v.string(),
     crdtBytes: v.bytes(),
     version: v.number(),
@@ -292,7 +292,30 @@ export const stream = query({
 });
 ```
 
-### 4. Client-Side Integration (TanStack DB)
+### 4. Create Protocol Version Wrapper
+
+Create a wrapper query to expose the component's protocol version to clients:
+
+```typescript
+// convex/replicate.ts
+import { query } from './_generated/server';
+import { components } from './_generated/api';
+
+export const getProtocolVersion = query({
+  handler: async (ctx) => {
+    return await ctx.runQuery(components.replicate.public.getProtocolVersion);
+  },
+});
+```
+
+**What this does:**
+- Wraps the component's `getProtocolVersion` query for client access
+- Required for automatic protocol compatibility checking
+- Follows the same pattern as insertDocument/updateDocument/deleteDocument
+
+### 5. Client-Side Integration (TanStack DB)
+
+**Note:** Protocol initialization happens automatically when you create your first collection - no manual setup required!
 
 ```typescript
 // src/useTasks.ts
@@ -327,8 +350,9 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
             insertDocument: api.tasks.insertDocument,
             updateDocument: api.tasks.updateDocument,
             deleteDocument: api.tasks.deleteDocument,
+            getProtocolVersion: api.replicate.getProtocolVersion, // For protocol version checking
           },
-          collectionName: 'tasks',
+          collection: 'tasks',
           getKey: (task) => task.id,
           initialData,
         })
@@ -342,7 +366,7 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
 }
 ```
 
-### 5. Use in React Components
+### 6. Use in React Components
 
 ```typescript
 // src/routes/index.tsx
@@ -421,7 +445,7 @@ export function TaskList() {
 
 Direct component access for advanced use cases:
 
-- **`ReplicateStorage<T>(component, collectionName)`** - Type-safe API for component
+- **`ReplicateStorage<T>(component, collection)`** - Type-safe API for component
 - **`insertDocument(ctx, documentId, crdtBytes, version)`** - Insert CRDT delta
 - **`updateDocument(ctx, documentId, crdtBytes, version)`** - Update CRDT delta
 - **`deleteDocument(ctx, documentId, crdtBytes, version)`** - Delete CRDT delta
@@ -433,7 +457,7 @@ The internal component uses an **event-sourced** schema:
 
 ```typescript
 {
-  collectionName: string;    // Collection identifier
+  collection: string;    // Collection identifier
   documentId: string;        // Document identifier
   crdtBytes: ArrayBuffer;    // Yjs CRDT delta (not full state!)
   version: number;           // Version for conflict detection
