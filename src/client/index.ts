@@ -30,9 +30,6 @@ export {
   getProtocolMetadata,
 } from './protocol.js';
 
-// Component client (ReplicateStorage class)
-export { ReplicateStorage } from './storage.js';
-
 // TanStack DB collection integration
 export {
   convexCollectionOptions,

@@ -104,6 +104,57 @@ export function convexCollectionOptions<T extends object>({
     });
   });
 
+  // Yjs observer to sync Yjs changes to TanStack DB
+  // This handles CRDT deltas from subscriptions
+  let syncParams: any = null; // Store sync params for observer callback
+
+  ymap.observe((event: Y.YMapEvent<unknown>) => {
+    // Only sync to TanStack DB if sync is initialized
+    if (!syncParams) return;
+
+    // Skip if this change originated from subscription to avoid double-sync
+    const transaction = event.transaction;
+    if (transaction.origin === 'subscription') {
+      return;
+    }
+
+    const { begin, write, commit } = syncParams;
+
+    try {
+      begin();
+
+      // Handle additions and updates
+      event.changes.keys.forEach((change, key) => {
+        if (change.action === 'add' || change.action === 'update') {
+          const itemYMap = ymap.get(key);
+          if (itemYMap instanceof Y.Map) {
+            const item = itemYMap.toJSON() as T;
+            if (change.action === 'add') {
+              write({ type: 'insert', value: item });
+            } else {
+              write({ type: 'update', value: item });
+            }
+          }
+        } else if (change.action === 'delete') {
+          // For deletes, we need the old value
+          if (change.oldValue instanceof Y.Map) {
+            const item = change.oldValue.toJSON() as T;
+            write({ type: 'delete', value: item });
+          }
+        }
+      });
+
+      commit();
+
+      logger.debug('Synced Yjs changes to TanStack DB', {
+        collection,
+        changeCount: event.changes.keys.size,
+      });
+    } catch (error) {
+      logger.error('Failed to sync Yjs changes to TanStack DB', { error, collection });
+    }
+  });
+
   return {
     id: collection,
     getKey,
@@ -144,7 +195,6 @@ export function convexCollectionOptions<T extends object>({
           });
 
           await convexClient.mutation(api.insertDocument, {
-            collection,
             documentId: String(transaction.mutations[0].key),
             crdtBytes: pendingUpdate.buffer,
             materializedDoc: transaction.mutations[0].modified,
@@ -217,7 +267,6 @@ export function convexCollectionOptions<T extends object>({
           });
 
           await convexClient.mutation(api.updateDocument, {
-            collection,
             documentId: String(transaction.mutations[0].key),
             crdtBytes: pendingUpdate.buffer,
             materializedDoc: transaction.mutations[0].modified,
@@ -276,7 +325,6 @@ export function convexCollectionOptions<T extends object>({
           });
 
           await convexClient.mutation(api.deleteDocument, {
-            collection,
             documentId: String(transaction.mutations[0].key),
             crdtBytes: pendingUpdate.buffer,
             version: Date.now(),
@@ -311,27 +359,18 @@ export function convexCollectionOptions<T extends object>({
       sync: (params: any) => {
         const { begin, write, commit, markReady } = params;
 
-        // Step 1: Write initial SSR data to BOTH Yjs AND TanStack DB
-        if (initialData && initialData.length > 0) {
-          // Sync to Yjs first (for CRDT state)
-          ydoc.transact(() => {
-            for (const item of initialData) {
-              const key = getKey(item);
-              const itemYMap = new Y.Map();
-              Object.entries(item as Record<string, unknown>).forEach(([k, v]) => {
-                itemYMap.set(k, v);
-              });
-              ymap.set(String(key), itemYMap);
-            }
-          }, 'ssr-init');
+        // Store sync params for Yjs observer
+        syncParams = params;
 
-          // Then sync to TanStack DB
+        // Step 1: Write initial SSR data to TanStack DB only (NOT Yjs)
+        // Yjs will be populated by CRDT stream to avoid type conflicts
+        if (initialData && initialData.length > 0) {
           begin();
           for (const item of initialData) {
             write({ type: 'insert', value: item });
           }
           commit();
-          logger.debug('Initialized with SSR data', {
+          logger.debug('Initialized with SSR data (TanStack DB only)', {
             collection,
             count: initialData.length,
           });
@@ -340,6 +379,28 @@ export function convexCollectionOptions<T extends object>({
         // Step 2: Wait for initialization before subscribing (async)
         let subscription: (() => void) | null = null;
 
+        // Checkpoint persistence helpers
+        const checkpointKey = `convex-replicate:checkpoint:${collection}`;
+        const loadCheckpoint = (): { lastModified: number } => {
+          try {
+            const stored = localStorage.getItem(checkpointKey);
+            if (stored) {
+              return JSON.parse(stored);
+            }
+          } catch (error) {
+            logger.warn('Failed to load checkpoint from localStorage', { error });
+          }
+          return { lastModified: 0 };
+        };
+
+        const saveCheckpoint = (checkpoint: { lastModified: number }) => {
+          try {
+            localStorage.setItem(checkpointKey, JSON.stringify(checkpoint));
+          } catch (error) {
+            logger.warn('Failed to save checkpoint to localStorage', { error });
+          }
+        };
+
         // Start async initialization + subscription
         (async () => {
           try {
@@ -347,98 +408,60 @@ export function convexCollectionOptions<T extends object>({
             await initPromise;
             logger.debug('Setting up Convex subscription', { collection });
 
-            // Track previous items (full objects) to detect hard deletes
-            // We need full items because TanStack DB write() expects { type: 'delete', value: T }
-            let previousItems = new Map<string | number, T>();
+            // Load persisted checkpoint
+            const checkpoint = loadCheckpoint();
 
-            subscription = convexClient.onUpdate(api.stream, {}, async (items) => {
-              try {
-                logger.debug('Subscription update received', {
-                  collection,
-                  itemCount: items.length,
-                });
+            subscription = convexClient.onUpdate(
+              api.stream,
+              {
+                checkpoint,
+                limit: 100,
+              },
+              async (response) => {
+                // Destructure structured response from stream query
+                const { changes, checkpoint: newCheckpoint } = response;
 
-                // Build map of current items
-                const currentItems = new Map<string | number, T>();
-                for (const item of items) {
-                  const key = getKey(item as T);
-                  currentItems.set(key, item as T);
-                }
-
-                // Detect hard deletes by finding items in previous but not in current
-                const deletedItems: T[] = [];
-                for (const [prevId, prevItem] of previousItems) {
-                  if (!currentItems.has(prevId)) {
-                    deletedItems.push(prevItem);
-                  }
-                }
-
-                if (deletedItems.length > 0) {
-                  logger.info('Detected remote hard deletes', {
+                try {
+                  logger.debug('Subscription update received', {
                     collection,
-                    deletedCount: deletedItems.length,
-                    deletedIds: deletedItems.map((item) => getKey(item)),
+                    changeCount: changes.length,
                   });
-                }
 
-                begin();
+                  // Apply CRDT deltas to Yjs (Yjs handles conflict resolution)
+                  // Use 'subscription' origin to prevent Yjs observer from double-syncing
+                  for (const change of changes) {
+                    // Convert ArrayBuffer to Uint8Array and apply CRDT update
+                    Y.applyUpdate(ydoc, new Uint8Array(change.crdtBytes), 'subscription');
 
-                // STEP 1: Handle deletions FIRST
-                for (const deletedItem of deletedItems) {
-                  const deletedId = getKey(deletedItem);
-
-                  // Remove from Yjs (requires string key)
-                  ydoc.transact(() => {
-                    ymap.delete(String(deletedId));
-                  }, 'remote-delete');
-
-                  // Remove from TanStack DB (requires full item as value)
-                  write({ type: 'delete', value: deletedItem });
-                }
-
-                // STEP 2: Sync items to Yjs
-                ydoc.transact(() => {
-                  for (const item of items) {
-                    const key = getKey(item as T);
-                    const itemYMap = new Y.Map();
-                    Object.entries(item as Record<string, unknown>).forEach(([k, v]) => {
-                      itemYMap.set(k, v);
+                    logger.debug('Applied CRDT delta', {
+                      collection,
+                      documentId: change.documentId,
+                      version: change.version,
                     });
-                    ymap.set(String(key), itemYMap);
                   }
-                }, 'subscription-sync');
 
-                // STEP 3: Sync items to TanStack DB
-                for (const item of items) {
-                  const key = getKey(item as T);
+                  // Save new checkpoint for next sync
+                  saveCheckpoint(newCheckpoint);
 
-                  if ((params as any).collection.has(key)) {
-                    write({ type: 'update', value: item as T });
-                  } else {
-                    write({ type: 'insert', value: item as T });
-                  }
+                  logger.debug('Successfully applied CRDT deltas', {
+                    collection,
+                    count: changes.length,
+                    newCheckpoint,
+                  });
+
+                  // Note: Yjs observer (set up earlier) will automatically sync changes to TanStack DB
+                } catch (error: any) {
+                  logger.error('Failed to apply CRDT deltas from subscription', {
+                    error: error.message,
+                    errorName: error.name,
+                    stack: error?.stack,
+                    collection,
+                    changeCount: changes.length,
+                  });
+                  throw error; // Re-throw to prevent silent failures
                 }
-
-                commit();
-
-                // Update tracking for next iteration
-                previousItems = currentItems;
-
-                logger.debug('Successfully synced items to collection', {
-                  count: items.length,
-                  deletedCount: deletedItems.length,
-                });
-              } catch (error: any) {
-                logger.error('Failed to sync items from subscription', {
-                  error: error.message,
-                  errorName: error.name,
-                  stack: error?.stack,
-                  collection,
-                  itemCount: items.length,
-                });
-                throw error; // Re-throw to prevent silent failures
               }
-            });
+            );
 
             markReady();
           } catch (error) {

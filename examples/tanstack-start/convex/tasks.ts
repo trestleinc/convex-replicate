@@ -1,77 +1,61 @@
-import { mutation, query } from './_generated/server';
+import { ReplicateStorage } from '@trestleinc/replicate/server';
 import { components } from './_generated/api';
-import { v } from 'convex/values';
-import {
-  insertDocumentHelper,
-  updateDocumentHelper,
-  deleteDocumentHelper,
-} from '@trestleinc/replicate/server';
+import type { Task } from '../src/useTasks';
 
 /**
- * TanStack DB endpoints - called by convexCollectionOptions
+ * TanStack Start Example - Tasks Collection
  *
- * These receive CRDT bytes from the client and use replication helpers
- * to write to both the component (CRDT bytes) and main table (materialized docs).
+ * This demonstrates the new ReplicateStorage pattern for ConvexReplicate.
+ * Create one storage instance per collection, then use factory methods to
+ * generate all needed queries and mutations.
  */
 
-export const insertDocument = mutation({
-  args: {
-    collection: v.string(),
-    documentId: v.string(),
-    crdtBytes: v.bytes(),
-    materializedDoc: v.any(),
-    version: v.number(),
-  },
-  handler: async (ctx, args) => {
-    return await insertDocumentHelper(ctx, components, 'tasks', {
-      id: args.documentId,
-      crdtBytes: args.crdtBytes,
-      materializedDoc: args.materializedDoc,
-      version: args.version,
-    });
-  },
-});
-
-export const updateDocument = mutation({
-  args: {
-    collection: v.string(),
-    documentId: v.string(),
-    crdtBytes: v.bytes(),
-    materializedDoc: v.any(),
-    version: v.number(),
-  },
-  handler: async (ctx, args) => {
-    return await updateDocumentHelper(ctx, components, 'tasks', {
-      id: args.documentId,
-      crdtBytes: args.crdtBytes,
-      materializedDoc: args.materializedDoc,
-      version: args.version,
-    });
-  },
-});
-
-export const deleteDocument = mutation({
-  args: {
-    collection: v.string(),
-    documentId: v.string(),
-    crdtBytes: v.bytes(),
-    version: v.number(),
-  },
-  handler: async (ctx, args) => {
-    return await deleteDocumentHelper(ctx, components, 'tasks', {
-      id: args.documentId,
-      crdtBytes: args.crdtBytes,
-      version: args.version,
-    });
-  },
-});
+// Create storage instance for 'tasks' collection
+const tasksStorage = new ReplicateStorage<Task>(components.replicate, 'tasks');
 
 /**
- * Stream endpoint for real-time subscriptions
- * Returns all items (hard deletes are physically removed from table)
+ * CRDT Stream Query (for real-time sync with gap detection)
+ *
+ * This query is used by the client for ongoing synchronization.
+ * It returns CRDT bytes from the component, supporting:
+ * - State vectors for efficient diffing
+ * - Checkpoints for incremental sync
+ * - Gap detection when deltas are compacted
  */
-export const stream = query({
-  handler: async (ctx) => {
-    return await ctx.db.query('tasks').collect();
-  },
-});
+export const stream = tasksStorage.createStreamQuery();
+
+/**
+ * SSR Query (for server-side rendering)
+ *
+ * This query returns materialized JSON documents from the main table.
+ * Used for initial page load to provide fast SSR hydration.
+ * Does NOT include CRDT bytes - just plain objects.
+ */
+export const getTasks = tasksStorage.createSSRQuery();
+
+/**
+ * Insert Mutation (dual-storage)
+ *
+ * Writes to BOTH:
+ * 1. Component (CRDT bytes for conflict resolution)
+ * 2. Main table (materialized doc for efficient queries)
+ */
+export const insertDocument = tasksStorage.createInsertMutation();
+
+/**
+ * Update Mutation (dual-storage)
+ *
+ * Updates BOTH:
+ * 1. Component (appends new CRDT delta)
+ * 2. Main table (patches materialized doc)
+ */
+export const updateDocument = tasksStorage.createUpdateMutation();
+
+/**
+ * Delete Mutation (dual-storage with hard delete)
+ *
+ * Deletes from BOTH:
+ * 1. Component (appends delete delta to event log - history preserved)
+ * 2. Main table (hard delete - physically removes document)
+ */
+export const deleteDocument = tasksStorage.createDeleteMutation();

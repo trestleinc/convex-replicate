@@ -2,7 +2,7 @@
  * End-to-end tests for protocol evolution and initialization
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   initConvexReplicate,
   getProtocolInfo,

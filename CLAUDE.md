@@ -214,83 +214,34 @@ export default defineSchema({
 - Users only define business logic fields
 - Enables dual-storage architecture
 
-### 3. Use Replication Helpers
+### 3. Use ReplicateStorage Wrapper Class
 
 ```typescript
 // convex/tasks.ts
+import { ReplicateStorage } from '@trestleinc/replicate/server';  // IMPORTANT: Use /server!
 import { components } from './_generated/api';
-import {
-  insertDocumentHelper,
-  updateDocumentHelper,
-  deleteDocumentHelper,
-} from '@trestleinc/replicate/server';  // IMPORTANT: Use /server!
-import { mutation, query } from './_generated/server';
-import { v } from 'convex/values';
+import type { Task } from '../src/useTasks';
 
-export const insertDocument = mutation({
-  args: {
-    collection: v.string(),
-    documentId: v.string(),
-    crdtBytes: v.bytes(),
-    materializedDoc: v.any(),
-    version: v.number(),
-  },
-  handler: async (ctx, args) => {
-    // Writes CRDT delta to component AND materialized doc to main table
-    return await insertDocumentHelper(ctx, components, 'tasks', {
-      id: args.documentId,
-      crdtBytes: args.crdtBytes,
-      materializedDoc: args.materializedDoc,
-      version: args.version,
-    });
-  },
-});
+// Create storage instance for 'tasks' collection
+const tasksStorage = new ReplicateStorage<Task>(components.replicate, 'tasks');
 
-export const updateDocument = mutation({
-  args: {
-    collection: v.string(),
-    documentId: v.string(),
-    crdtBytes: v.bytes(),
-    materializedDoc: v.any(),
-    version: v.number(),
-  },
-  handler: async (ctx, args) => {
-    return await updateDocumentHelper(ctx, components, 'tasks', {
-      id: args.documentId,
-      crdtBytes: args.crdtBytes,
-      materializedDoc: args.materializedDoc,
-      version: args.version,
-    });
-  },
-});
-
-export const deleteDocument = mutation({
-  args: {
-    collection: v.string(),
-    documentId: v.string(),
-    crdtBytes: v.bytes(),
-    version: v.number(),
-  },
-  handler: async (ctx, args) => {
-    // Hard delete from main table, append delta to component
-    return await deleteDocumentHelper(ctx, components, 'tasks', {
-      id: args.documentId,
-      crdtBytes: args.crdtBytes,
-      version: args.version,
-    });
-  },
-});
-
-/**
- * Stream endpoint for real-time subscriptions
- * Returns active items only (hard deletes physically removed)
- */
-export const stream = query({
-  handler: async (ctx) => {
-    return await ctx.db.query('tasks').collect();
-  },
-});
+// Generate queries and mutations using factory methods
+export const stream = tasksStorage.createStreamQuery();
+export const getTasks = tasksStorage.createSSRQuery();
+export const insertDocument = tasksStorage.createInsertMutation();
+export const updateDocument = tasksStorage.createUpdateMutation();
+export const deleteDocument = tasksStorage.createDeleteMutation();
 ```
+
+**What `ReplicateStorage` provides:**
+
+- `createStreamQuery()` - CRDT stream with gap detection support (for real-time sync)
+- `createSSRQuery()` - Materialized docs query (for server-side rendering)
+- `createInsertMutation()` - Dual-storage insert (component + main table)
+- `createUpdateMutation()` - Dual-storage update (component + main table)
+- `createDeleteMutation()` - Dual-storage delete (component + main table)
+
+All factory methods support optional hooks for permissions and lifecycle events.
 
 ### 4. Create Protocol Version Wrapper
 
@@ -419,37 +370,36 @@ export function TaskList() {
 
 ## Key API Concepts
 
-### Server-Side Replication Helpers
+### Server-Side: ReplicateStorage Wrapper Class
 
 **IMPORTANT**: Import from `@trestleinc/replicate/server` for server-safe imports!
 
-- **`insertDocumentHelper(ctx, components, tableName, args)`** - Insert to both component (CRDT delta) + main table (materialized doc)
-- **`updateDocumentHelper(ctx, components, tableName, args)`** - Update both component + main table
-- **`deleteDocumentHelper(ctx, components, tableName, args)`** - Hard delete from main table, append delta to component
-- **`streamHelper(ctx, components, tableName, args)`** - Read CRDT deltas from component with pagination
+The `ReplicateStorage<T>` class provides a type-safe wrapper for component operations. Instantiate once per collection:
+
+```typescript
+const storage = new ReplicateStorage<Task>(components.replicate, 'tasks');
+```
+
+**Factory Methods:**
+- **`createStreamQuery(opts?)`** - CRDT stream with gap detection (for real-time sync)
+- **`createSSRQuery(opts?)`** - Materialized docs query (for server-side rendering)
+- **`createInsertMutation(opts?)`** - Dual-storage insert (component + main table)
+- **`createUpdateMutation(opts?)`** - Dual-storage update (component + main table)
+- **`createDeleteMutation(opts?)`** - Dual-storage delete (component + main table)
+
+**Optional Hooks (all factory methods):**
+- `checkRead` / `checkWrite` / `checkDelete` - Permission guards
+- `onStream` / `onInsert` / `onUpdate` / `onDelete` - Lifecycle callbacks
+- `transform` - Transform docs before returning (SSR query only)
 
 ### Client-Side Collection Options
 
 - **`convexCollectionOptions<T>(config)`** - Create TanStack DB collection config with Yjs integration
 - **`createConvexCollection<T>(rawCollection)`** - Wrap collection with offline support (TanStack offline-transactions)
 
-### SSR Utilities
-
-- **`loadCollection<T>(httpClient, config)`** - Load initial data during SSR (deprecated, use custom query instead)
-
 ### Schema Utilities
 
 - **`replicatedTable(fields, applyIndexes?)`** - Automatically inject `version` and `timestamp` fields
-
-### ReplicateStorage (Advanced)
-
-Direct component access for advanced use cases:
-
-- **`ReplicateStorage<T>(component, collection)`** - Type-safe API for component
-- **`insertDocument(ctx, documentId, crdtBytes, version)`** - Insert CRDT delta
-- **`updateDocument(ctx, documentId, crdtBytes, version)`** - Update CRDT delta
-- **`deleteDocument(ctx, documentId, crdtBytes, version)`** - Delete CRDT delta
-- **`stream(ctx, checkpoint, limit?)`** - Stream CRDT deltas
 
 ## Component Storage Schema
 
@@ -522,11 +472,11 @@ pnpm run dev  # Starts both Vite and Convex
 
 1. **Create** - Client generates Yjs document with unique ID
 2. **Encode** - Client calls `Y.encodeStateAsUpdate()` to get CRDT delta
-3. **Insert** - Call `insertDocumentHelper` with both CRDT delta + materialized doc
+3. **Insert** - Client calls `collection.insert()` which triggers `insertDocument` mutation
 4. **Dual-write** - Component appends delta to event log, main table stores current state
 5. **Update** - Client merges changes offline, encodes delta
-6. **Submit** - Call `updateDocumentHelper` with new CRDT delta + materialized doc
-7. **Delete** - Client calls `collection.delete()` (hard delete)
+6. **Submit** - Client calls `collection.update()` which triggers `updateDocument` mutation
+7. **Delete** - Client calls `collection.delete()` which triggers `deleteDocument` mutation (hard delete)
 8. **Sync** - Yjs automatically merges concurrent changes (CRDT magic!)
 
 ### SSR Data Loading
@@ -539,7 +489,7 @@ import { api } from '../convex/_generated/api';
 export const Route = createFileRoute('/tasks')({
   loader: async () => {
     const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
-    const tasks = await httpClient.query(api.tasks.stream);
+    const tasks = await httpClient.query(api.tasks.getTasks); // SSR query
     return { initialTasks: tasks };
   },
 });

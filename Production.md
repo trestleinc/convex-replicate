@@ -7,8 +7,8 @@
 ConvexReplicate has a solid foundation for local-first sync with CRDT-based conflict resolution and dual-storage architecture. All critical questions from the Convex "Object Sync" paper have been addressed with comprehensive implementation plans.
 
 **Current Status:**
-- ✅ **2/7 FULLY IMPLEMENTED** (Consistency model, Type sharing)
-- ✅ **4/7 FULLY PLANNED** (Long histories, Schema migrations, Protocol evolution, Reset handling)
+- ✅ **3/7 FULLY IMPLEMENTED** (Consistency model, Type sharing, Protocol evolution)
+- ✅ **3/7 FULLY PLANNED** (Long histories, Schema migrations, Reset handling)
 - ✅ **1/7 OUT OF SCOPE** (Authorization - developer responsibility using Convex patterns)
 
 **Key Achievements:**
@@ -1183,12 +1183,19 @@ Schema Migrations is now **fully planned** using a two-phase approach:
 
 ### 5. ✅ General Protocol Evolution
 
-**Status: FULLY PLANNED**
+**Status: FULLY IMPLEMENTED** (Framework complete, migration logic added as needed)
 
 **What We Have:**
+- **Protocol version constants:** `PROTOCOL_VERSION = 1` in component (src/component/public.ts)
+- **Server version query:** `getProtocolVersion` query exposed via component API
+- **Client initialization:** `initConvexReplicate()` checks server version on startup (src/client/init.ts)
+- **Version storage:** Local protocol version stored in IndexedDB (src/client/protocol.ts)
+- **Migration framework:** Sequential migration chain (v1→v2→v3...) with `migrateLocalStorage()`
+- **Version negotiation:** Blocks syncing if client/server versions mismatch
+- **Clear error messages:** Tells users to update NPM package when incompatible
+- **Comprehensive tests:** Full test coverage in src/test/protocol.test.ts and src/test/init.e2e.test.ts
 - **Stable component API:** insertDocument, updateDocument, deleteDocument, stream
 - **Delta-based protocol:** Efficient incremental updates
-- **Implicit versioning:** Protocol defined by component schema
 
 **What Protocol Defines:**
 The **component API signatures** - function shapes and argument types:
@@ -1388,7 +1395,7 @@ export const stream = query({
 
 **Summary:**
 
-Protocol Evolution is **fully planned** with a simple versioning approach:
+Protocol Evolution is **fully implemented** with a simple versioning approach:
 
 1. ✅ **Server version check** - Detect client/server mismatch
 2. ✅ **Block syncing on mismatch** - Preserve local changes, don't clear IndexedDB
@@ -2026,10 +2033,10 @@ This insight significantly simplifies our implementation approach and reduces op
 | **HIGH** | #7 Authorization | ❌ Missing | High | Critical | None |
 | **HIGH** | #4 Schema Migrations | ❌ Missing | Medium | Critical | None |
 | **MEDIUM** | #3 Long Histories | ⚠️ Partial | Medium | High | None |
-| **MEDIUM** | #6 Reset Handling | ❌ Missing | Medium | High | #5 Protocol |
-| **MEDIUM** | #5 Protocol Evolution | ⚠️ Partial | Low | Medium | None |
+| **MEDIUM** | #6 Reset Handling | ❌ Missing | Medium | High | None |
 | **LOW** | #1 Consistency | ✅ Complete | Low | Low | None |
 | **LOW** | #2 Type Sharing | ✅ Complete | Low | Low | None |
+| **LOW** | #5 Protocol Evolution | ✅ Complete | Low | Low | None |
 
 ---
 
@@ -2097,6 +2104,7 @@ This insight significantly simplifies our implementation approach and reduces op
 - ❌ Only additive schema changes possible
 - ❌ Unlimited history growth
 - ❌ No recovery from corruption
+- ✅ Protocol versioning implemented (v1 framework complete)
 
 **After Implementation:**
 - ✅ Authorization rules defined once, used everywhere
@@ -2109,22 +2117,24 @@ This insight significantly simplifies our implementation approach and reduces op
 - ✅ Documented consistency guarantees
 
 **Jamie Happiness Score:**
-- **Current:** 2/7 questions answered (29%)
-- **After Phase 1:** 4/7 questions answered (57%)
-- **After Phase 2:** 6/7 questions answered (86%)
-- **After Phase 3:** 7/7 questions answered (100%) 🎉
+- **Current:** 3/7 questions answered (43%) - Consistency, Type sharing, Protocol evolution ✅
+- **After Phase 1:** 5/7 questions answered (71%) - Add Authorization, Schema migrations
+- **After Phase 2:** 6/7 questions answered (86%) - Add Long histories
+- **After Phase 3:** 7/7 questions answered (100%) - Add Reset handling 🎉
 
 ---
 
 ## Conclusion
 
-ConvexReplicate has excellent foundations with CRDT-based conflict resolution and dual-storage architecture. However, to meet production requirements for local-first applications, we need to implement:
+ConvexReplicate has excellent foundations with CRDT-based conflict resolution and dual-storage architecture. To meet production requirements for local-first applications, we need to implement:
 
 1. **Authorization framework** for cohesive security
 2. **Schema migration system** for seamless evolution
 3. **History management** for bounded storage
 4. **Reset/recovery system** for reliability
-5. **Protocol versioning** for backward compatibility
+
+**Already implemented:**
+- ✅ **Protocol versioning** - Complete framework with version negotiation and migration support
 
 **Key Technical Insights:**
 - **Yjs works in standard Convex runtime** - No Node.js actions needed for compaction
