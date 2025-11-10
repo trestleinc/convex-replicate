@@ -93,11 +93,12 @@ export function convexCollectionOptions<T extends object>({
 
   // Track delta updates (NOT full state)
   // This is the key to efficient bandwidth usage: < 1KB per change instead of 100KB+
+  // Using V2 encoding for 30-50% better compression than V1
   let pendingUpdate: Uint8Array | null = null;
-  (ydoc as any).on('update', (update: Uint8Array, origin: any) => {
-    // `update` contains ONLY what changed (delta)
+  (ydoc as any).on('updateV2', (update: Uint8Array, origin: any) => {
+    // `update` contains ONLY what changed (delta) in V2 format
     pendingUpdate = update;
-    logger.debug('Yjs update event fired', {
+    logger.debug('Yjs updateV2 event fired', {
       collection,
       updateSize: update.length,
       origin,
@@ -411,10 +412,15 @@ export function convexCollectionOptions<T extends object>({
             // Load persisted checkpoint
             const checkpoint = loadCheckpoint();
 
+            // Encode client's state vector for gap-free sync
+            // This tells server exactly what we know, enabling minimal diff computation
+            const stateVector = Y.encodeStateVector(ydoc);
+
             subscription = convexClient.onUpdate(
               api.stream,
               {
                 checkpoint,
+                stateVector: stateVector.buffer,
                 limit: 100,
               },
               async (response) => {
@@ -427,23 +433,69 @@ export function convexCollectionOptions<T extends object>({
                     changeCount: changes.length,
                   });
 
-                  // Apply CRDT deltas to Yjs (Yjs handles conflict resolution)
+                  // Apply CRDT changes to Yjs (Yjs handles conflict resolution)
                   // Use 'subscription' origin to prevent Yjs observer from double-syncing
                   for (const change of changes) {
-                    // Convert ArrayBuffer to Uint8Array and apply CRDT update
-                    Y.applyUpdate(ydoc, new Uint8Array(change.crdtBytes), 'subscription');
+                    if (change.operationType === 'snapshot') {
+                      // Full snapshot received - rebuild Y.Doc from snapshot
+                      logger.info('Received snapshot - rebuilding collection', {
+                        collection,
+                        snapshotSize: change.crdtBytes.byteLength,
+                        timestamp: change.timestamp,
+                      });
 
-                    logger.debug('Applied CRDT delta', {
-                      collection,
-                      documentId: change.documentId,
-                      version: change.version,
-                    });
+                      // Decode and restore snapshot
+                      const snapshotDecoded = Y.decodeSnapshotV2(new Uint8Array(change.crdtBytes));
+                      const restoredDoc = Y.createDocFromSnapshot(ydoc, snapshotDecoded);
+
+                      // Clear existing Y.Doc content and copy snapshot data
+                      ydoc.transact(() => {
+                        ymap.clear();
+                        const restoredMap = restoredDoc.getMap(collection);
+                        restoredMap.forEach((value, key) => {
+                          ymap.set(key, value);
+                        });
+                      }, 'snapshot-restore');
+
+                      restoredDoc.destroy();
+
+                      logger.info('Snapshot restored', {
+                        collection,
+                        documentCount: ymap.size,
+                      });
+                    } else if (change.operationType === 'state-diff') {
+                      // State diff received - CRDT merge with offline changes preserved!
+                      logger.info('Received state-diff - merging with local state', {
+                        collection,
+                        diffSize: change.crdtBytes.byteLength,
+                        timestamp: change.timestamp,
+                      });
+
+                      // Apply diff as normal CRDT update
+                      // Yjs automatically merges with our offline changes
+                      Y.applyUpdateV2(ydoc, new Uint8Array(change.crdtBytes), 'state-diff');
+
+                      logger.info('State-diff merged successfully', {
+                        collection,
+                        documentCount: ymap.size,
+                      });
+                    } else {
+                      // Normal delta - apply V2-encoded CRDT update
+                      Y.applyUpdateV2(ydoc, new Uint8Array(change.crdtBytes), 'subscription');
+
+                      logger.debug('Applied V2-encoded CRDT delta', {
+                        collection,
+                        documentId: change.documentId,
+                        version: change.version,
+                        operationType: change.operationType,
+                      });
+                    }
                   }
 
                   // Save new checkpoint for next sync
                   saveCheckpoint(newCheckpoint);
 
-                  logger.debug('Successfully applied CRDT deltas', {
+                  logger.debug('Successfully processed changes', {
                     collection,
                     count: changes.length,
                     newCheckpoint,

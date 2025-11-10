@@ -16,7 +16,12 @@ import { queryGeneric, mutationGeneric } from 'convex/server';
  * import { components } from './_generated/api';
  * import type { Task } from '../src/useTasks';
  *
- * const tasksStorage = new ReplicateStorage<Task>(components.replicate, 'tasks');
+ * // Create storage with automatic compaction at 10MB (default)
+ * const tasksStorage = new ReplicateStorage<Task>(
+ *   components.replicate,
+ *   'tasks',
+ *   { replicationLimit: 10 * 1024 * 1024 }
+ * );
  *
  * export const streamCRDT = tasksStorage.createStreamQuery();
  * export const getTasks = tasksStorage.createSSRQuery();
@@ -26,7 +31,10 @@ import { queryGeneric, mutationGeneric } from 'convex/server';
 export class ReplicateStorage<T extends object> {
   constructor(
     public component: any, // components.replicate from _generated/api
-    public collectionName: string
+    public collectionName: string,
+    public options?: {
+      replicationLimit?: number;
+    }
   ) {}
 
   /**
@@ -146,6 +154,7 @@ export class ReplicateStorage<T extends object> {
   }) {
     const component = this.component;
     const collection = this.collectionName;
+    const replicationLimit = this.options?.replicationLimit ?? 10 * 1024 * 1024; // Default 10MB
 
     return mutationGeneric({
       args: {
@@ -172,6 +181,7 @@ export class ReplicateStorage<T extends object> {
           documentId: args.documentId,
           crdtBytes: args.crdtBytes,
           version: args.version,
+          replicationLimit,
         });
 
         // 2. Write materialized doc to main table
@@ -216,6 +226,7 @@ export class ReplicateStorage<T extends object> {
   }) {
     const component = this.component;
     const collection = this.collectionName;
+    const replicationLimit = this.options?.replicationLimit ?? 10 * 1024 * 1024; // Default 10MB
 
     return mutationGeneric({
       args: {
@@ -242,6 +253,7 @@ export class ReplicateStorage<T extends object> {
           documentId: args.documentId,
           crdtBytes: args.crdtBytes,
           version: args.version,
+          replicationLimit,
         });
 
         // 2. Update materialized doc in main table
@@ -295,6 +307,7 @@ export class ReplicateStorage<T extends object> {
   }) {
     const component = this.component;
     const collection = this.collectionName;
+    const replicationLimit = this.options?.replicationLimit ?? 10 * 1024 * 1024; // Default 10MB
 
     return mutationGeneric({
       args: {
@@ -318,6 +331,7 @@ export class ReplicateStorage<T extends object> {
           documentId: args.documentId,
           crdtBytes: args.crdtBytes,
           version: args.version,
+          replicationLimit,
         });
 
         // 2. Hard delete from main table
