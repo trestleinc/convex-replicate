@@ -72,7 +72,6 @@ ConvexReplicate implements an **event sourcing** architecture:
 **Component Storage** (`src/component/`):
 - Append-only event log of Yjs CRDT deltas
 - Each mutation appends a new entry (never updates existing ones)
-- Schema includes `operationType: 'insert' | 'update' | 'delete'`
 - Preserves complete history for debugging and future recovery
 - Source of truth for conflict resolution
 
@@ -368,6 +367,96 @@ export function TaskList() {
 }
 ```
 
+### 7. Set Up Automatic Compaction (Cron Jobs)
+
+ConvexReplicate uses **cron-based compaction** to automatically clean up old CRDT deltas and maintain storage efficiency. No threshold-based monitoring required - compaction runs on a predictable schedule.
+
+**Step 1: Create wrapper internal mutations**
+
+Cron jobs can't directly reference component functions - they require wrappers in your app's convex folder:
+
+```typescript
+// convex/replicate.ts
+import { query, internalMutation } from './_generated/server';
+import { components } from './_generated/api';
+import { v } from 'convex/values';
+
+export const getProtocolVersion = query({
+  handler: async (ctx) => {
+    return await ctx.runQuery(components.replicate.public.getProtocolVersion);
+  },
+});
+
+// Wrapper for cron jobs
+export const compact = internalMutation({
+  args: { cutoffDays: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    return await ctx.runMutation(components.replicate.compaction.compactSeries, args);
+  },
+});
+
+// Wrapper for cron jobs
+export const prune = internalMutation({
+  args: { retentionDays: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    return await ctx.runMutation(components.replicate.compaction.prune, args);
+  },
+});
+```
+
+**Step 2: Create cron schedule file**
+
+```typescript
+// convex/crons.ts
+import { cronJobs } from 'convex/server';
+import { internal } from './_generated/api';
+
+const crons = cronJobs();
+
+// Daily compaction at 3am UTC
+// Compacts CRDT deltas older than 90 days for all collections
+crons.daily(
+  'compact CRDT storage',
+  { hourUTC: 3, minuteUTC: 0 },
+  internal.replicate.compact,
+  { cutoffDays: 90 }
+);
+
+// Weekly snapshot cleanup on Sundays at 3am UTC
+// Deletes snapshots older than 180 days (keeps latest 2 per collection)
+crons.weekly(
+  'cleanup old snapshots',
+  { dayOfWeek: 'sunday', hourUTC: 3, minuteUTC: 0 },
+  internal.replicate.prune,
+  { retentionDays: 180 }
+);
+
+export default crons;
+```
+
+**Optional: Customize per-collection cutoff days:**
+
+```typescript
+// convex/tasks.ts
+import { ReplicateStorage } from '@trestleinc/replicate/server';
+import { components } from './_generated/api';
+
+// Customize compaction cutoff for this collection (default: 90 days)
+const tasksStorage = new ReplicateStorage<Task>(
+  components.replicate,
+  'tasks',
+  { compactionCutoffDays: 60 } // Compact deltas older than 60 days
+);
+```
+
+**How it works:**
+- **Daily compaction** (3am UTC) - Scans all collections, compacts deltas older than configured cutoff
+- **Weekly cleanup** (Sunday 3am UTC) - Removes snapshots older than 180 days (keeps 2 most recent per collection)
+- **Zero mutation overhead** - No per-mutation size checks or threshold monitoring
+- **Predictable costs** - Compaction runs at known times (easier to budget)
+
+**Note:** The `compactionCutoffDays` parameter in ReplicateStorage is optional and only affects how old deltas must be before they're compacted. Compaction still runs via the cron schedule.
+
 ## Key API Concepts
 
 ### Server-Side: ReplicateStorage Wrapper Class
@@ -408,11 +497,10 @@ The internal component uses an **event-sourced** schema:
 ```typescript
 {
   collection: string;    // Collection identifier
-  documentId: string;        // Document identifier
+  documentId: string;    // Document identifier
   crdtBytes: ArrayBuffer;    // Yjs CRDT delta (not full state!)
   version: number;           // Version for conflict detection
   timestamp: number;         // Last modification time
-  operationType: string;     // 'insert' | 'update' | 'delete'
 }
 ```
 

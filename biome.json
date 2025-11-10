@@ -123,6 +123,16 @@
           }
         }
       }
+    },
+    {
+      "includes": ["src/component/logger.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          }
+        }
+      }
     }
   ]
 }

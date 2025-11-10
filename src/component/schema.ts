@@ -8,7 +8,6 @@ export default defineSchema({
     crdtBytes: v.bytes(),
     version: v.number(),
     timestamp: v.number(),
-    operationType: v.string(), // 'insert' | 'update' | 'delete'
   })
     .index('by_collection', ['collection'])
     .index('by_collection_document_version', ['collection', 'documentId', 'version'])
