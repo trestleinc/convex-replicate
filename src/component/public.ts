@@ -125,13 +125,13 @@ export const stream = query({
     checkpoint: v.object({
       lastModified: v.number(),
     }),
-    stateVector: v.optional(v.bytes()), // Client's CRDT state for gap-free sync
+    vector: v.optional(v.bytes()), // Client's CRDT state for gap-free sync
     limit: v.optional(v.number()),
   },
   returns: v.object({
     changes: v.array(
       v.object({
-        documentId: v.union(v.string(), v.null()), // null for snapshots
+        documentId: v.optional(v.string()),
         crdtBytes: v.bytes(),
         version: v.number(),
         timestamp: v.number(),
@@ -203,14 +203,14 @@ export const stream = query({
 
       // If client sent state vector, compute MINIMAL diff from snapshot
       // This preserves client's offline changes via CRDT merge!
-      if (args.stateVector) {
+      if (args.vector) {
         // Decode snapshot and compute diff against client's state
         const ydoc = new Y.Doc({ guid: args.collection });
         const snapshotDecoded = Y.decodeSnapshotV2(new Uint8Array(snapshot.snapshotBytes));
         const snapshotDoc = Y.createDocFromSnapshot(ydoc, snapshotDecoded);
 
         // Compute what client is missing (diff = snapshot - clientState)
-        const diff = Y.encodeStateAsUpdateV2(snapshotDoc, new Uint8Array(args.stateVector));
+        const diff = Y.encodeStateAsUpdateV2(snapshotDoc, new Uint8Array(args.vector));
 
         // Cleanup
         snapshotDoc.destroy();
@@ -219,7 +219,6 @@ export const stream = query({
         return {
           changes: [
             {
-              documentId: null, // Marker for state-diff
               crdtBytes: diff.buffer as ArrayBuffer,
               version: 0,
               timestamp: snapshot.createdAt,
@@ -236,7 +235,6 @@ export const stream = query({
       return {
         changes: [
           {
-            documentId: null, // Marker for snapshot
             crdtBytes: snapshot.snapshotBytes,
             version: 0,
             timestamp: snapshot.createdAt,

@@ -95,7 +95,7 @@ async function migrateV1toV2(): Promise<void> {
   // for (const checkpoint of checkpoints) {
   //   await updateCheckpoint(checkpoint.collection, {
   //     ...checkpoint,
-  //     stateVector: null, // v2 field, will compute on next sync
+  //     vector: null, // v2 field, will compute on next sync
   //   });
   // }
 

@@ -61,11 +61,12 @@ export class ReplicateStorage<T extends object> {
       args: {
         checkpoint: v.object({ lastModified: v.number() }),
         limit: v.optional(v.number()),
+        vector: v.optional(v.bytes()),
       },
       returns: v.object({
         changes: v.array(
           v.object({
-            documentId: v.string(),
+            documentId: v.optional(v.string()),
             crdtBytes: v.bytes(),
             version: v.number(),
             timestamp: v.number(),
@@ -85,6 +86,7 @@ export class ReplicateStorage<T extends object> {
           collection,
           checkpoint: args.checkpoint,
           limit: args.limit,
+          stateVector: args.vector,
         });
 
         // Lifecycle hook

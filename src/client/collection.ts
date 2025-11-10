@@ -414,13 +414,13 @@ export function convexCollectionOptions<T extends object>({
 
             // Encode client's state vector for gap-free sync
             // This tells server exactly what we know, enabling minimal diff computation
-            const stateVector = Y.encodeStateVector(ydoc);
+            const vector = Y.encodeStateVector(ydoc);
 
             subscription = convexClient.onUpdate(
               api.stream,
               {
                 checkpoint,
-                stateVector: stateVector.buffer,
+                vector: vector.buffer,
                 limit: 100,
               },
               async (response) => {
