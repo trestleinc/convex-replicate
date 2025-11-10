@@ -80,7 +80,6 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@convex-dev/crons": "0.1.9",
     "@logtape/logtape": "1.1.2",
     "@tanstack/offline-transactions": "0.1.3",
     "idb-keyval": "^6.2.2",

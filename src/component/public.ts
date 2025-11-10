@@ -1,9 +1,7 @@
 import * as Y from 'yjs';
 import { v } from 'convex/values';
-import { mutation, query  } from './_generated/server';
-import { internal, components } from './_generated/api';
+import { mutation, query } from './_generated/server';
 import { getLogger } from './logger';
-import { Crons } from '@convex-dev/crons';
 
 // Current protocol version of this ConvexReplicate package
 // Increment when breaking changes are introduced
@@ -308,15 +306,15 @@ export const getSchemaVersion = query({
  * Internal helper to compact a single collection.
  * Extracted for reuse by compactCollection().
  */
-async function _compactCollectionInternal(ctx: any, collection: string, cutoffDays?: number) {
-  const cutoffMs = (cutoffDays ?? 90) * 24 * 60 * 60 * 1000;
+async function _compactCollectionInternal(ctx: any, collection: string, retentionDays?: number) {
+  const cutoffMs = (retentionDays ?? 90) * 24 * 60 * 60 * 1000;
   const cutoffTime = Date.now() - cutoffMs;
 
   const logger = getLogger(['compaction']);
 
   logger.info('Starting compaction', {
     collection,
-    cutoffDays: cutoffDays ?? 90,
+    retentionDays: retentionDays ?? 90,
     cutoffTime,
   });
 
@@ -418,15 +416,15 @@ async function _compactCollectionInternal(ctx: any, collection: string, cutoffDa
  * Used by per-collection factory methods in Replicate class.
  *
  * @param collection - Collection name to compact
- * @param cutoffDays - Compact deltas older than this (default: 90 days)
+ * @param retentionDays - Compact deltas older than this (default: 90 days)
  */
 export const compactCollectionByName = mutation({
   args: {
     collection: v.string(),
-    cutoffDays: v.optional(v.number()),
+    retentionDays: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    return await _compactCollectionInternal(ctx, args.collection, args.cutoffDays);
+    return await _compactCollectionInternal(ctx, args.collection, args.retentionDays);
   },
 });
 
@@ -492,147 +490,5 @@ export const pruneCollectionByName = mutation({
     logger.info('Snapshot cleanup completed for collection', result);
 
     return result;
-  },
-});
-
-/**
- * Register compaction and pruning schedules for a collection.
- * Called by createScheduleInit() factory method in Replicate class.
- *
- * Uses @convex-dev/crons component for dynamic schedule registration.
- *
- * @param collection - Collection name
- * @param compactInterval - Minutes between compaction runs (optional)
- * @param compactRetention - How old deltas must be in minutes (default: 129600 = 90 days)
- * @param pruneInterval - Minutes between prune runs (optional)
- * @param pruneRetention - How old snapshots must be in minutes (default: 259200 = 180 days)
- */
-export const registerSchedule = mutation({
-  args: {
-    collection: v.string(),
-    compactInterval: v.optional(v.number()),
-    compactRetention: v.optional(v.number()),
-    pruneInterval: v.optional(v.number()),
-    pruneRetention: v.optional(v.number()),
-  },
-  returns: v.object({
-    success: v.boolean(),
-    compactScheduleId: v.optional(v.id('_crons_jobs')),
-    pruneScheduleId: v.optional(v.id('_crons_jobs')),
-  }),
-  handler: async (ctx, args) => {
-    const logger = getLogger(['cron-registration']);
-    // Type assertion needed because crons component types are generated at runtime
-    const crons = new Crons((components as any).crons);
-
-    const result: {
-      success: true;
-      compactScheduleId?: any;
-      pruneScheduleId?: any;
-    } = {
-      success: true,
-    };
-
-    // Register compaction schedule if interval specified
-    if (args.compactInterval) {
-      const intervalMs = args.compactInterval * 60 * 1000;
-      // Convert minutes to days for component function
-      const defaultRetentionMinutes = 129600; // 90 days
-      const retentionMinutes = args.compactRetention ?? defaultRetentionMinutes;
-      const cutoffDays = Math.floor(retentionMinutes / 1440); // Convert minutes to days
-
-      const scheduleId = await crons.register(
-        ctx,
-        {
-          kind: 'interval',
-          ms: intervalMs,
-        },
-        (internal as any).compactCollectionByName,
-        {
-          collection: args.collection,
-          cutoffDays,
-        }
-      );
-      result.compactScheduleId = scheduleId;
-
-      logger.info('Registered compaction schedule', {
-        collection: args.collection,
-        intervalMinutes: args.compactInterval,
-        retentionMinutes,
-        cutoffDays,
-        scheduleId,
-      });
-    }
-
-    // Register pruning schedule if interval specified
-    if (args.pruneInterval) {
-      const intervalMs = args.pruneInterval * 60 * 1000;
-      // Convert minutes to days for component function
-      const defaultRetentionMinutes = 259200; // 180 days
-      const retentionMinutes = args.pruneRetention ?? defaultRetentionMinutes;
-      const retentionDays = Math.floor(retentionMinutes / 1440); // Convert minutes to days
-
-      const scheduleId = await crons.register(
-        ctx,
-        {
-          kind: 'interval',
-          ms: intervalMs,
-        },
-        (internal as any).pruneCollectionByName,
-        {
-          collection: args.collection,
-          retentionDays,
-        }
-      );
-      result.pruneScheduleId = scheduleId;
-
-      logger.info('Registered prune schedule', {
-        collection: args.collection,
-        intervalMinutes: args.pruneInterval,
-        retentionMinutes,
-        retentionDays,
-        scheduleId,
-      });
-    }
-
-    return result;
-  },
-});
-
-/**
- * Unregister compaction and pruning schedules for a collection.
- * Used for cleanup or schedule updates.
- *
- * @param compactScheduleId - ID of compaction schedule to remove
- * @param pruneScheduleId - ID of prune schedule to remove
- */
-export const unregisterSchedule = mutation({
-  args: {
-    compactScheduleId: v.optional(v.id('_crons_jobs')),
-    pruneScheduleId: v.optional(v.id('_crons_jobs')),
-  },
-  returns: v.object({
-    success: v.boolean(),
-  }),
-  handler: async (ctx, args) => {
-    const logger = getLogger(['cron-registration']);
-    // Type assertion needed because crons component types are generated at runtime
-    const crons = new Crons((components as any).crons);
-
-    if (args.compactScheduleId) {
-      await crons.delete(ctx, { id: args.compactScheduleId });
-      logger.info('Unregistered compaction schedule', {
-        scheduleId: args.compactScheduleId,
-      });
-    }
-
-    if (args.pruneScheduleId) {
-      await crons.delete(ctx, { id: args.pruneScheduleId });
-      logger.info('Unregistered prune schedule', {
-        scheduleId: args.pruneScheduleId,
-      });
-    }
-
-    return { success: true };
   },
 });

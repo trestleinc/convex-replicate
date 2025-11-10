@@ -16,22 +16,14 @@ import { queryGeneric, mutationGeneric, internalMutationGeneric } from 'convex/s
  * import { components } from './_generated/api';
  * import type { Task } from '../src/useTasks';
  *
- * // Create storage with automatic compaction
- * const tasksStorage = new Replicate<Task>(
- *   components.replicate,
- *   'tasks',
- *   {
- *     compactInterval: 1440,          // Run compaction every 24 hours
- *     compactRetention: 129600,       // Compact deltas older than 90 days
- *     pruneInterval: 10080,           // Run pruning every 7 days
- *     pruneRetention: 259200,         // Delete snapshots older than 180 days
- *   }
- * );
+ * // Create storage instance for 'tasks' collection
+ * const tasksStorage = new Replicate<Task>(components.replicate, 'tasks');
  *
- * export const streamCRDT = tasksStorage.createStreamQuery();
+ * export const stream = tasksStorage.createStreamQuery();
  * export const getTasks = tasksStorage.createSSRQuery();
  * export const insertDocument = tasksStorage.createInsertMutation();
- * export const initSchedule = tasksStorage.createScheduleInit(); // One-time init
+ * export const compact = tasksStorage.createCompactMutation({ retentionDays: 90 });
+ * export const prune = tasksStorage.createPruneMutation({ retentionDays: 180 });
  * ```
  */
 export class Replicate<T extends object> {
@@ -39,10 +31,6 @@ export class Replicate<T extends object> {
     public component: any, // components.replicate from _generated/api
     public collectionName: string,
     public options?: {
-      compactInterval?: number; // Minutes between compaction runs
-      compactRetention?: number; // How old deltas must be for compaction in minutes (default: 129600 = 90 days)
-      pruneInterval?: number; // Minutes between prune runs
-      pruneRetention?: number; // How old snapshots must be in minutes (default: 259200 = 180 days)
       migrations?: {
         schemaVersion: number; // Server schema version
         functions: Record<number, (doc: any) => any>; // Version -> migration function
@@ -199,7 +187,12 @@ export class Replicate<T extends object> {
         }
 
         // Migration step (if configured and client provided version)
-        if (hasMigrations && args._schemaVersion !== undefined && args._schemaVersion !== null && typeof args._schemaVersion === 'number') {
+        if (
+          hasMigrations &&
+          args._schemaVersion !== undefined &&
+          args._schemaVersion !== null &&
+          typeof args._schemaVersion === 'number'
+        ) {
           const targetVersion = this.options!.migrations!.schemaVersion;
           if (args._schemaVersion < targetVersion) {
             doc = this.migrate(doc, args._schemaVersion) as T;
@@ -287,7 +280,12 @@ export class Replicate<T extends object> {
         }
 
         // Migration step (if configured and client provided version)
-        if (hasMigrations && args._schemaVersion !== undefined && args._schemaVersion !== null && typeof args._schemaVersion === 'number') {
+        if (
+          hasMigrations &&
+          args._schemaVersion !== undefined &&
+          args._schemaVersion !== null &&
+          typeof args._schemaVersion === 'number'
+        ) {
           const targetVersion = this.options!.migrations!.schemaVersion;
           if (args._schemaVersion < targetVersion) {
             doc = this.migrate(doc, args._schemaVersion) as T;
@@ -444,7 +442,7 @@ export class Replicate<T extends object> {
       if (!migrationFn) {
         throw new Error(
           `No migration function defined for ${this.collectionName} version ${v}. ` +
-          `Required to migrate from v${fromVersion} to v${targetVersion}.`
+            `Required to migrate from v${fromVersion} to v${targetVersion}.`
         );
       }
       currentDoc = migrationFn(currentDoc);
@@ -478,31 +476,28 @@ export class Replicate<T extends object> {
    * Call this from cron jobs to compact CRDT deltas on a schedule.
    *
    * Compaction merges old CRDT deltas into efficient snapshots, reducing storage size.
-   * Uses the cutoffDays from constructor options as default.
    *
-   * @param opts - Optional hooks for permissions and lifecycle
+   * @param opts - Configuration options
+   * @param opts.retentionDays - Compact deltas older than this many days (default: 90)
+   * @param opts.checkCompact - Permission check hook
+   * @param opts.onCompact - Lifecycle callback after compaction
    * @returns Convex internal mutation function
    */
   createCompactMutation(opts?: {
+    retentionDays?: number;
     checkCompact?: (
       ctx: GenericMutationCtx<GenericDataModel>,
       collection: string
     ) => void | Promise<void>;
-    onCompact?: (
-      ctx: GenericMutationCtx<GenericDataModel>,
-      result: any
-    ) => void | Promise<void>;
+    onCompact?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
   }) {
     const component = this.component;
     const collection = this.collectionName;
-    // Convert retention from minutes to days (default: 129600 minutes = 90 days)
-    const defaultRetentionMinutes = 129600;
-    const retentionMinutes = this.options?.compactRetention ?? defaultRetentionMinutes;
-    const defaultCutoffDays = Math.floor(retentionMinutes / 1440);
+    const defaultRetentionDays = opts?.retentionDays ?? 90;
 
     return internalMutationGeneric({
       args: {
-        cutoffDays: v.optional(v.number()),
+        retentionDays: v.optional(v.number()),
       },
       returns: v.any(),
       handler: async (ctx, args) => {
@@ -511,10 +506,10 @@ export class Replicate<T extends object> {
           await opts.checkCompact(ctx, collection);
         }
 
-        // Call component with collection-specific cutoff
+        // Call component with collection-specific retention
         const result = await ctx.runMutation(component.public.compactCollectionByName, {
           collection,
-          cutoffDays: args.cutoffDays ?? defaultCutoffDays,
+          retentionDays: args.retentionDays ?? defaultRetentionDays,
         });
 
         // Lifecycle hook
@@ -533,21 +528,23 @@ export class Replicate<T extends object> {
    *
    * Pruning deletes old snapshots while keeping the latest 2 per collection.
    *
-   * @param opts - Optional hooks for permissions and lifecycle
+   * @param opts - Configuration options
+   * @param opts.retentionDays - Delete snapshots older than this many days (default: 180)
+   * @param opts.checkPrune - Permission check hook
+   * @param opts.onPrune - Lifecycle callback after pruning
    * @returns Convex internal mutation function
    */
   createPruneMutation(opts?: {
+    retentionDays?: number;
     checkPrune?: (
       ctx: GenericMutationCtx<GenericDataModel>,
       collection: string
     ) => void | Promise<void>;
-    onPrune?: (
-      ctx: GenericMutationCtx<GenericDataModel>,
-      result: any
-    ) => void | Promise<void>;
+    onPrune?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
   }) {
     const component = this.component;
     const collection = this.collectionName;
+    const defaultRetentionDays = opts?.retentionDays ?? 180;
 
     return internalMutationGeneric({
       args: {
@@ -563,68 +560,12 @@ export class Replicate<T extends object> {
         // Call component with collection-specific retention
         const result = await ctx.runMutation(component.public.pruneCollectionByName, {
           collection,
-          retentionDays: args.retentionDays ?? 180,
+          retentionDays: args.retentionDays ?? defaultRetentionDays,
         });
 
         // Lifecycle hook
         if (opts?.onPrune) {
           await opts.onPrune(ctx, result);
-        }
-
-        return result;
-      },
-    });
-  }
-
-  /**
-   * Creates an initialization mutation to register compaction/pruning schedules.
-   * Call this once after installation to enable automatic compaction.
-   *
-   * Uses @convex-dev/crons component for dynamic schedule registration.
-   * Only registers schedules if compactInterval or pruneInterval are configured.
-   *
-   * @param opts - Optional hooks for permissions and lifecycle
-   * @returns Convex mutation function
-   */
-  createScheduleInit(opts?: {
-    checkInit?: (
-      ctx: GenericMutationCtx<GenericDataModel>,
-      collection: string
-    ) => void | Promise<void>;
-    onInit?: (
-      ctx: GenericMutationCtx<GenericDataModel>,
-      result: any
-    ) => void | Promise<void>;
-  }) {
-    const component = this.component;
-    const collection = this.collectionName;
-    const options = this.options;
-
-    return mutationGeneric({
-      args: {},
-      returns: v.object({
-        success: v.boolean(),
-        compactScheduleId: v.optional(v.string()),
-        pruneScheduleId: v.optional(v.string()),
-      }),
-      handler: async (ctx) => {
-        // Permission check hook
-        if (opts?.checkInit) {
-          await opts.checkInit(ctx, collection);
-        }
-
-        // Call component to register schedules
-        const result = await ctx.runMutation(component.public.registerSchedule, {
-          collection,
-          compactInterval: options?.compactInterval,
-          compactRetention: options?.compactRetention,
-          pruneInterval: options?.pruneInterval,
-          pruneRetention: options?.pruneRetention,
-        });
-
-        // Lifecycle hook
-        if (opts?.onInit) {
-          await opts.onInit(ctx, result);
         }
 
         return result;

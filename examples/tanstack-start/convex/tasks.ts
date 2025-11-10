@@ -10,13 +10,8 @@ import type { Task } from '../src/useTasks';
  * generate all needed queries and mutations.
  */
 
-// Create storage instance for 'tasks' collection with automatic compaction
-const tasksStorage = new Replicate<Task>(components.replicate, 'tasks', {
-  compactInterval: 1440,          // Run compaction every 24 hours
-  compactRetention: 129600,       // Compact deltas older than 90 days
-  pruneInterval: 10080,           // Run pruning every 7 days
-  pruneRetention: 259200,         // Delete snapshots older than 180 days
-});
+// Create storage instance for 'tasks' collection
+const tasksStorage = new Replicate<Task>(components.replicate, 'tasks');
 
 /**
  * CRDT Stream Query (for real-time sync with gap detection)
@@ -74,17 +69,17 @@ export const deleteDocument = tasksStorage.createDeleteMutation();
 export const getProtocolVersion = tasksStorage.createProtocolVersionQuery();
 
 /**
- * Schedule Initialization Mutation (one-time setup)
+ * Compaction Mutation (for cron jobs)
  *
- * Registers compaction and pruning schedules based on constructor options.
- * Call this once after installing the replicate component:
- *
- * ```
- * await ctx.runMutation(api.tasks.initSchedule);
- * ```
- *
- * This will register:
- * - Compaction every 24 hours (compacts deltas older than 129600 minutes / 90 days)
- * - Pruning every 7 days (deletes snapshots older than 259200 minutes / 180 days)
+ * Compacts CRDT deltas older than 90 days into efficient snapshots.
+ * Call this from a cron job (see convex/crons.ts).
  */
-export const initSchedule = tasksStorage.createScheduleInit();
+export const compact = tasksStorage.createCompactMutation({ retentionDays: 90 });
+
+/**
+ * Prune Mutation (for cron jobs)
+ *
+ * Deletes snapshots older than 180 days (keeps 2 most recent per collection).
+ * Call this from a cron job (see convex/crons.ts).
+ */
+export const prune = tasksStorage.createPruneMutation({ retentionDays: 180 });
