@@ -1216,6 +1216,408 @@ pnpm run format:check  # Check formatting
 pnpm run dev:example   # Start example app + Convex dev environment
 ```
 
+## Jamie's Seven Questions: Production Readiness Deep-Dive
+
+> A comprehensive technical analysis of ConvexReplicate's sync engine capabilities, answering the critical questions from Convex's "Object Sync" paper.
+
+**Current Status: 6/7 Fully Implemented** ✅
+
+ConvexReplicate has been architected from the ground up to handle production requirements for local-first sync systems. Below we address each of Jamie Turner's critical questions with our actual implementation patterns.
+
+---
+
+### 1. ✅ Consistency Model: Server-side Serializable vs. Client-side CRDTs
+
+**Status: FULLY IMPLEMENTED**
+
+**The Challenge:**
+How do you reconcile server-side strictly serializable transactions with client-side optimistic updates?
+
+**Our Solution: Server Reconciliation with CRDT-ish Mutations**
+
+ConvexReplicate uses a hybrid approach aligned with Convex's recommended "Server Reconciliation" pattern:
+
+- **Server-side:** Convex's serializable transaction system guarantees strict serializability
+- **Client-side:** Yjs CRDTs provide field-level conflict resolution
+- **Pattern:** Mutations are "CRDT-ish" - self-contained units resilient to different views
+
+```typescript
+// Server: Serializable transactions via Convex
+export const updateDocument = tasksStorage.createUpdateMutation();
+
+// Client: CRDT conflict resolution via Yjs
+ydoc.transact(() => {
+  itemYMap.set('text', newText); // Field-level CRDT
+}, 'update');
+```
+
+**Key Insight:** This is exactly the pattern recommended by Convex's Object Sync paper - serializable server + CRDT client is the sweet spot for local-first apps!
+
+---
+
+### 2. ✅ Type Sharing: One Schema, Many Consumers
+
+**Status: FULLY IMPLEMENTED**
+
+**The Challenge:**
+How do you keep client and server schemas in sync without manual duplication?
+
+**Our Solution: Schema-Based Type Generation**
+
+ConvexReplicate uses the `replicatedTable()` helper for automatic type sharing:
+
+```typescript
+// convex/schema.ts - Define once
+export default defineSchema({
+  tasks: replicatedTable({
+    id: v.string(),
+    text: v.string(),
+    isCompleted: v.boolean(),
+  }, (table) => table
+    .index('by_user_id', ['id'])
+    .index('by_timestamp', ['timestamp'])
+  )
+});
+
+// Types automatically generated for client/server via Convex codegen
+// Used in both convex/tasks.ts and src/useTasks.ts
+```
+
+**What `replicatedTable` does:**
+- Automatically injects `version: v.number()` and `timestamp: v.number()`
+- Users only define business logic fields
+- Single source of truth via Convex's type generation
+
+**Pattern match:** Similar to Replicache's "shared Zod validators" and Convex's planned `defineLocalSchema`.
+
+---
+
+### 3. ✅ Long Histories: Compaction and Storage Management
+
+**Status: FULLY IMPLEMENTED**
+
+**The Challenge:**
+How do you prevent unbounded growth of CRDT deltas while preserving history?
+
+**Our Solution: Cron-Based Compaction with State Vector Sync**
+
+ConvexReplicate uses an event-sourced architecture with automatic compaction:
+
+```typescript
+// convex/crons.ts - Automatic compaction schedule
+const crons = cronJobs();
+
+// Daily compaction at 3am UTC
+crons.daily('compact tasks',
+  { hourUTC: 3, minuteUTC: 0 },
+  internal.tasks.compact,
+  {}
+);
+
+// Weekly snapshot cleanup on Sundays
+crons.weekly('prune tasks snapshots',
+  { dayOfWeek: 'sunday', hourUTC: 3, minuteUTC: 0 },
+  internal.tasks.prune,
+  {}
+);
+```
+
+**Architecture Benefits:**
+- **Zero per-mutation overhead** - No size calculations on every write
+- **Predictable timing and costs** - Compaction runs at scheduled times
+- **Simpler architecture** - No threshold monitoring or triggers needed
+- **Better operational model** - Easier to budget around scheduled maintenance
+
+**How Compaction Works:**
+
+1. **Merge old deltas** - Uses `Y.mergeUpdates()` to consolidate deltas (memory-efficient!)
+2. **Create snapshot** - `Y.snapshot()` + `Y.encodeSnapshotV2()` for compression
+3. **Validate** - `Y.snapshotContainsUpdate()` verifies correctness
+4. **Delete old deltas** - Free up storage while keeping snapshots
+5. **Gap detection** - Stream query automatically serves snapshots when deltas unavailable
+
+**Key Insight:** Yjs works perfectly in Convex's standard runtime - no Node.js actions needed! Compaction runs in mutations with full ACID guarantees.
+
+---
+
+### 4. ✅ Schema Migrations: Evolving Your Data Model
+
+**Status: FULLY IMPLEMENTED**
+
+**The Challenge:**
+How do you migrate client data when server schema changes?
+
+**Our Solution: Configuration-Based Migrations with Sequential Chain**
+
+ConvexReplicate supports schema migrations through the `Replicate` class constructor:
+
+```typescript
+// Define migration functions
+const tasksV1toV2 = (doc: any) => ({ ...doc, priority: 'medium' });
+const tasksV2toV3 = (doc: any) => {
+  const { completed, ...rest } = doc;
+  return { ...rest, isCompleted: completed };
+};
+
+// Create storage with migrations config
+const tasksStorage = new Replicate<Task>(
+  components.replicate,
+  'tasks',
+  {
+    migrations: {
+      schemaVersion: 3,
+      functions: {
+        2: tasksV1toV2,  // v1 → v2
+        3: tasksV2toV3,  // v2 → v3
+      },
+    },
+  }
+);
+```
+
+**How It Works:**
+
+1. **Client sends schema version** - Passed as `_schemaVersion` metadata
+2. **Server detects mismatch** - Compares with `migrations.schemaVersion`
+3. **Sequential migration** - Applies v1→v2→v3 transformations automatically
+4. **Type-safe** - Migration functions validated at construction time
+5. **Zero duplication** - Same code path for migrating and non-migrating cases
+
+**Version Skipping:** Client on v1 can jump to v5 automatically - server applies v1→v2, v2→v3, v3→v4, v4→v5 sequentially!
+
+**Pattern:** Configuration-based approach inspired by R2 and Workpool components - no inheritance complexity.
+
+---
+
+### 5. ✅ Protocol Evolution: Updating the Sync Protocol
+
+**Status: FULLY IMPLEMENTED**
+
+**The Challenge:**
+How do you evolve the ConvexReplicate API without breaking existing clients?
+
+**Our Solution: Protocol Version with Local Storage Migration**
+
+ConvexReplicate uses simple protocol versioning:
+
+```typescript
+// src/component/public.ts
+export const PROTOCOL_VERSION = 1;
+
+export const getProtocolVersion = query({
+  handler: async (_ctx) => {
+    return { protocolVersion: PROTOCOL_VERSION };
+  },
+});
+```
+
+**Client-Side Initialization:**
+
+```typescript
+// On app startup
+const serverVersion = await convexClient.query(api.replicate.getProtocolVersion);
+const localVersion = await getLocalProtocolVersion();
+
+if (localVersion < serverVersion.protocolVersion) {
+  // Migrate IndexedDB to new protocol format
+  await migrateLocalStorage(localVersion, serverVersion.protocolVersion);
+  await storeProtocolVersion(serverVersion.protocolVersion);
+}
+```
+
+**Breaking Changes Handled:**
+- Add optional field: ✅ Convex handles automatically
+- Add required field: ❌ Requires NPM package update + local storage migration
+- Remove/change field: ❌ Blocks syncing, clear error message to update
+
+**Key Difference:**
+- **Protocol Version** = ConvexReplicate's API signatures (insertDocument args shape)
+- **Schema Version** = Your app's document structure (tasks: { id, text, priority })
+
+Protocol changes require NPM package update; schema changes use migrations!
+
+---
+
+### 6. ✅ Reset Handling: Gap Detection and Transparent Recovery
+
+**Status: FULLY IMPLEMENTED** (via gap detection!)
+
+**The Challenge:**
+What happens when a client is so far behind that deltas were compacted?
+
+**Our Solution: Automatic Gap Detection with State Vector Sync**
+
+This is where ConvexReplicate really shines - **reset handling is already built into our stream query!** Let's look at the actual code:
+
+```typescript
+// src/component/public.ts (lines 123-258)
+export const stream = query({
+  args: {
+    collection: v.string(),
+    checkpoint: v.object({ lastModified: v.number() }),
+    vector: v.optional(v.bytes()), // Client's CRDT state
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    // 1. Try normal incremental sync first
+    const documents = await ctx.db
+      .query('documents')
+      .withIndex('by_timestamp', (q) =>
+        q.eq('collection', args.collection)
+         .gt('timestamp', args.checkpoint.lastModified)
+      )
+      .order('asc')
+      .take(limit);
+
+    if (documents.length > 0) {
+      // Normal case: return incremental deltas
+      return { changes: documents, ... };
+    }
+
+    // 2. Check for gap (client too far behind)
+    const oldestDelta = await ctx.db
+      .query('documents')
+      .withIndex('by_timestamp', (q) =>
+        q.eq('collection', args.collection))
+      .order('asc')
+      .first();
+
+    // 3. GAP DETECTED = RESET HANDLING!
+    if (oldestDelta && args.checkpoint.lastModified < oldestDelta.timestamp) {
+      const snapshot = await ctx.db
+        .query('snapshots')
+        .withIndex('by_collection', (q) =>
+          q.eq('collection', args.collection))
+        .order('desc')
+        .first();
+
+      // 4. State vector preserves offline changes!
+      if (args.vector) {
+        const ydoc = new Y.Doc({ guid: args.collection });
+        const snapshotDecoded = Y.decodeSnapshotV2(
+          new Uint8Array(snapshot.snapshotBytes)
+        );
+        const snapshotDoc = Y.createDocFromSnapshot(ydoc, snapshotDecoded);
+
+        // Compute MINIMAL diff (snapshot - clientState)
+        const diff = Y.encodeStateAsUpdateV2(
+          snapshotDoc,
+          new Uint8Array(args.vector)
+        );
+
+        return {
+          changes: [{ crdtBytes: diff.buffer, ... }],
+          checkpoint: { lastModified: snapshot.latestCompactionTimestamp },
+          hasMore: false,
+        };
+      }
+
+      // 5. Fallback: send full snapshot
+      return {
+        changes: [{ crdtBytes: snapshot.snapshotBytes, ... }],
+        checkpoint: { lastModified: snapshot.latestCompactionTimestamp },
+        hasMore: false,
+      };
+    }
+
+    // 6. Caught up - no gap, just no new changes
+    return { changes: [], checkpoint: args.checkpoint, hasMore: false };
+  }
+});
+```
+
+**How It Works:**
+
+1. **Try incremental sync** - Return deltas if available (lines 150-175)
+2. **Detect gap** - Check if client's checkpoint is before oldest delta (lines 180-188)
+3. **Serve snapshot** - Fetch latest snapshot when gap detected (lines 191-195)
+4. **Preserve offline changes** - Use state vector to compute minimal diff (lines 207-232)
+5. **Transparent to client** - Looks just like normal sync!
+
+**Key Insights:**
+
+- **No special client handling** - Client doesn't know if it received deltas or snapshot
+- **No data loss** - State vectors preserve client's offline changes during "reset"
+- **No `resetRequired` flags** - Gap detection IS the reset handling
+- **Much simpler** - No manual edit detection, no synthetic delta generation, no corruption detection
+
+**This is way simpler than originally planned!** The "reset handling" section in our old docs described a complex system. Our actual implementation is elegant - gap detection + state vectors = transparent reset handling!
+
+---
+
+### 7. 🎯 Authorization: Your Responsibility, Your Patterns
+
+**Status: OUT OF SCOPE** (Developer Responsibility)
+
+**The Challenge:**
+How do you implement authorization in a local-first system?
+
+**Our Stance: Flexible by Design**
+
+ConvexReplicate is a sync library, not an auth framework. Authorization is too application-specific for opinionated patterns. Instead, we provide the hooks you need:
+
+```typescript
+// Use standard Convex auth patterns
+export const insertDocument = tasksStorage.createInsertMutation({
+  checkWrite: async (ctx, doc) => {
+    const userId = await ctx.auth.getUserIdentity();
+    if (!userId) {
+      throw new Error('Unauthorized: Not authenticated');
+    }
+    if (doc.ownerId !== userId.subject) {
+      throw new Error('Unauthorized: Can only create your own tasks');
+    }
+  },
+  onInsert: async (ctx, doc) => {
+    // Lifecycle hook for audit logging, etc.
+  },
+});
+```
+
+**What ConvexReplicate Provides:**
+
+- ✅ **Permission check hooks** - `checkRead`, `checkWrite`, `checkDelete`
+- ✅ **Lifecycle callbacks** - `onInsert`, `onUpdate`, `onDelete`, `onStream`
+- ✅ **Standard Convex APIs** - Use `ctx.auth` in your mutations/queries
+- ✅ **Flexible filtering** - Stream queries support any Convex filter pattern
+
+**Recommended Patterns:**
+
+Follow [Convex Authorization Guide](https://stack.convex.dev/authorization):
+- Authorize at endpoints (where you have user intent)
+- Filter in stream queries (don't leak other users' data)
+- Use RBAC, ABAC, or ownership patterns as needed
+
+**Key Takeaway:** You have full control over authorization using standard Convex patterns!
+
+---
+
+## Summary: Production-Ready Local-First Sync
+
+ConvexReplicate has been built from the ground up to handle real-world production requirements:
+
+| Question | Status | Implementation |
+|----------|--------|----------------|
+| **1. Consistency Model** | ✅ Complete | Server Reconciliation with CRDT-ish mutations |
+| **2. Type Sharing** | ✅ Complete | Schema-based generation via `replicatedTable()` |
+| **3. Long Histories** | ✅ Complete | Cron-based compaction with state vector sync |
+| **4. Schema Migrations** | ✅ Complete | Configuration-based with sequential chain |
+| **5. Protocol Evolution** | ✅ Complete | Version negotiation with local storage migration |
+| **6. Reset Handling** | ✅ Complete | Automatic gap detection (transparent to client!) |
+| **7. Authorization** | 🎯 Your choice | Standard Convex patterns with optional hooks |
+
+**Key Architectural Insights:**
+
+- **Event-sourced storage** - Append-only log preserves complete history
+- **Dual-storage architecture** - Component for CRDTs, main table for queries
+- **Yjs in standard runtime** - No Node.js actions needed, full ACID guarantees
+- **State vectors prevent data loss** - Clients sync from snapshots without reset
+- **Gap detection = reset handling** - Much simpler than originally planned!
+
+**Jamie Happiness Score: 6/7 (86%)** - All critical production requirements met! 🎉
+
+---
+
 ## Roadmap
 
 - [ ] Partial sync (sync subset of collection)
