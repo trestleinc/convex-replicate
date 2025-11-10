@@ -1,86 +1,39 @@
-import { mutation, query } from './_generated/server';
+import { Replicate } from '@trestleinc/replicate/server';
 import { components } from './_generated/api';
-import { v } from 'convex/values';
-import {
-  insertDocumentHelper,
-  updateDocumentHelper,
-  deleteDocumentHelper,
-} from '@trestleinc/replicate/server';
+import type { Task } from '../src/useTasks';
 
 /**
- * TanStack DB endpoints - called by convexCollectionOptions
+ * SvelteKit Example - Tasks Collection
  *
- * These receive CRDT bytes from the client and use replication helpers
- * to write to both the component (CRDT bytes) and main table (materialized docs).
+ * This demonstrates the Replicate pattern for ConvexReplicate.
+ * Create one storage instance per collection, then use factory methods to
+ * generate all needed queries and mutations.
  */
 
-export const insertDocument = mutation({
-  args: {
-    collection: v.string(),
-    documentId: v.string(),
-    crdtBytes: v.bytes(),
-    materializedDoc: v.any(),
-    version: v.number(),
-  },
-  handler: async (ctx, args) => {
-    return await insertDocumentHelper(ctx, components, 'tasks', {
-      id: args.documentId,
-      crdtBytes: args.crdtBytes,
-      materializedDoc: args.materializedDoc,
-      version: args.version,
-    });
-  },
-});
-
-export const updateDocument = mutation({
-  args: {
-    collection: v.string(),
-    documentId: v.string(),
-    crdtBytes: v.bytes(),
-    materializedDoc: v.any(),
-    version: v.number(),
-  },
-  handler: async (ctx, args) => {
-    return await updateDocumentHelper(ctx, components, 'tasks', {
-      id: args.documentId,
-      crdtBytes: args.crdtBytes,
-      materializedDoc: args.materializedDoc,
-      version: args.version,
-    });
-  },
-});
-
-export const deleteDocument = mutation({
-  args: {
-    collection: v.string(),
-    documentId: v.string(),
-    crdtBytes: v.bytes(),
-    version: v.number(),
-  },
-  handler: async (ctx, args) => {
-    return await deleteDocumentHelper(ctx, components, 'tasks', {
-      id: args.documentId,
-      crdtBytes: args.crdtBytes,
-      version: args.version,
-    });
-  },
-});
+// Create storage instance for 'tasks' collection
+const tasksStorage = new Replicate<Task>(components.replicate, 'tasks');
 
 /**
- * Stream endpoint for real-time subscriptions
- * Returns all items (hard deletes are physically removed from table)
+ * CRDT Stream Query (for real-time sync with gap detection)
  */
-export const stream = query({
-  handler: async (ctx) => {
-    return await ctx.db.query('tasks').collect();
-  },
-});
+export const stream = tasksStorage.createStreamQuery();
 
 /**
- * SSR query endpoint - returns all tasks for server-side rendering
+ * SSR Query (for server-side rendering)
  */
-export const getTasks = query({
-  handler: async (ctx) => {
-    return await ctx.db.query('tasks').collect();
-  },
-});
+export const getTasks = tasksStorage.createSSRQuery();
+
+/**
+ * Insert Mutation (dual-storage)
+ */
+export const insertDocument = tasksStorage.createInsertMutation();
+
+/**
+ * Update Mutation (dual-storage)
+ */
+export const updateDocument = tasksStorage.createUpdateMutation();
+
+/**
+ * Delete Mutation (dual-storage with hard delete)
+ */
+export const deleteDocument = tasksStorage.createDeleteMutation();

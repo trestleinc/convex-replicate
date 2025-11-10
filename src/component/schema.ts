@@ -21,4 +21,12 @@ export default defineSchema({
     latestCompactionTimestamp: v.number(), // Timestamp of newest delta included in snapshot
     createdAt: v.number(), // When this snapshot was created
   }).index('by_collection', ['collection']),
+
+  // Schema version tracking for migrations
+  // Stores the current schema version for each collection
+  migrations: defineTable({
+    collection: v.string(),
+    version: v.number(), // Current schema version for this collection
+    updatedAt: v.number(), // When this version was set
+  }).index('by_collection', ['collection']),
 });

@@ -32,7 +32,7 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
               insertDocument: api.tasks.insertDocument,
               updateDocument: api.tasks.updateDocument,
               deleteDocument: api.tasks.deleteDocument,
-              getProtocolVersion: api.replicate.getProtocolVersion,
+              getProtocolVersion: api.tasks.getProtocolVersion,
             },
             collection: 'tasks',
             getKey: (task) => task.id,

@@ -1,6 +1,9 @@
 import * as Y from 'yjs';
 import { v } from 'convex/values';
-import { mutation, query } from './_generated/server';
+import { mutation, query  } from './_generated/server';
+import { internal, components } from './_generated/api';
+import { getLogger } from './logger';
+import { Crons } from '@convex-dev/crons';
 
 // Current protocol version of this ConvexReplicate package
 // Increment when breaking changes are introduced
@@ -269,5 +272,367 @@ export const getProtocolVersion = query({
     return {
       protocolVersion: PROTOCOL_VERSION,
     };
+  },
+});
+
+/**
+ * Get the current schema version for a collection.
+ * Used by clients to detect schema version mismatches and trigger migrations.
+ *
+ * Returns the version stored in the migrations table for this collection.
+ * If no version is set, returns 1 (default initial version).
+ *
+ * @param collection - Collection identifier
+ * @returns Schema version number (defaults to 1 if not set)
+ */
+export const getSchemaVersion = query({
+  args: {
+    collection: v.string(),
+  },
+  returns: v.object({
+    schemaVersion: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    const migrationRecord = await ctx.db
+      .query('migrations')
+      .withIndex('by_collection', (q) => q.eq('collection', args.collection))
+      .first();
+
+    return {
+      schemaVersion: migrationRecord?.version ?? 1,
+    };
+  },
+});
+
+/**
+ * Internal helper to compact a single collection.
+ * Extracted for reuse by compactCollection().
+ */
+async function _compactCollectionInternal(ctx: any, collection: string, cutoffDays?: number) {
+  const cutoffMs = (cutoffDays ?? 90) * 24 * 60 * 60 * 1000;
+  const cutoffTime = Date.now() - cutoffMs;
+
+  const logger = getLogger(['compaction']);
+
+  logger.info('Starting compaction', {
+    collection,
+    cutoffDays: cutoffDays ?? 90,
+    cutoffTime,
+  });
+
+  // 1. Fetch old deltas for this collection
+  const oldDeltas = await ctx.db
+    .query('documents')
+    .withIndex('by_timestamp', (q: any) =>
+      q.eq('collection', collection).lt('timestamp', cutoffTime)
+    )
+    .collect();
+
+  if (oldDeltas.length < 100) {
+    logger.info('Skipping compaction - insufficient deltas', {
+      collection,
+      deltaCount: oldDeltas.length,
+    });
+    return {
+      skipped: true,
+      reason: 'insufficient deltas',
+      deltaCount: oldDeltas.length,
+    };
+  }
+
+  // 2. Sort by timestamp (chronological order)
+  const sorted = oldDeltas.sort((a: any, b: any) => a.timestamp - b.timestamp);
+
+  logger.info('Compacting deltas', {
+    collection,
+    deltaCount: sorted.length,
+    oldestTimestamp: sorted[0].timestamp,
+    newestTimestamp: sorted[sorted.length - 1].timestamp,
+  });
+
+  // 3. Merge updates into single update (COLLECTION-LEVEL)
+  const updates = sorted.map((d: any) => new Uint8Array(d.crdtBytes));
+  const merged = Y.mergeUpdates(updates);
+
+  // 4. Create Y.Doc with correct collection GUID (matches client!)
+  const ydoc = new Y.Doc({ guid: collection });
+  Y.applyUpdateV2(ydoc, merged);
+
+  // 5. Create snapshot of ENTIRE collection
+  const snapshot = Y.snapshot(ydoc);
+  const snapshotBytes = Y.encodeSnapshotV2(snapshot);
+
+  logger.info('Created snapshot', {
+    collection,
+    snapshotSize: snapshotBytes.length,
+    compressionRatio: (
+      sorted.reduce((sum: any, d: any) => sum + d.crdtBytes.byteLength, 0) / snapshotBytes.length
+    ).toFixed(2),
+  });
+
+  // 6. Validate snapshot contains all updates
+  const isValid = updates.every((update: any) => Y.snapshotContainsUpdate(snapshot, update));
+
+  if (!isValid) {
+    logger.error('Snapshot validation failed', {
+      collection,
+    });
+    ydoc.destroy();
+    return {
+      success: false,
+      error: 'validation_failed',
+    };
+  }
+
+  // 7. Store snapshot
+  await ctx.db.insert('snapshots', {
+    collection,
+    snapshotBytes: snapshotBytes.buffer as ArrayBuffer,
+    latestCompactionTimestamp: sorted[sorted.length - 1].timestamp,
+    createdAt: Date.now(),
+  });
+
+  // 8. Delete compacted deltas
+  for (const delta of sorted) {
+    await ctx.db.delete(delta._id);
+  }
+
+  // Cleanup
+  ydoc.destroy();
+
+  const result = {
+    success: true,
+    deltasCompacted: sorted.length,
+    snapshotSize: snapshotBytes.length,
+    oldestDelta: sorted[0].timestamp,
+    newestDelta: sorted[sorted.length - 1].timestamp,
+  };
+
+  logger.info('Compaction completed', result);
+
+  return result;
+}
+
+/**
+ * Compact a specific collection by name.
+ * Used by per-collection factory methods in Replicate class.
+ *
+ * @param collection - Collection name to compact
+ * @param cutoffDays - Compact deltas older than this (default: 90 days)
+ */
+export const compactCollectionByName = mutation({
+  args: {
+    collection: v.string(),
+    cutoffDays: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    return await _compactCollectionInternal(ctx, args.collection, args.cutoffDays);
+  },
+});
+
+/**
+ * Prune snapshots for a specific collection by name.
+ * Used by per-collection factory methods in Replicate class.
+ *
+ * @param collection - Collection name to prune
+ * @param retentionDays - Delete snapshots older than this (default: 180 days)
+ */
+export const pruneCollectionByName = mutation({
+  args: {
+    collection: v.string(),
+    retentionDays: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const retentionMs = (args.retentionDays ?? 180) * 24 * 60 * 60 * 1000;
+    const cutoffTime = Date.now() - retentionMs;
+
+    const logger = getLogger(['compaction']);
+
+    logger.info('Starting snapshot cleanup for collection', {
+      collection: args.collection,
+      retentionDays: args.retentionDays ?? 180,
+      cutoffTime,
+    });
+
+    // Get snapshots for this collection, newest first
+    const snapshots = await ctx.db
+      .query('snapshots')
+      .withIndex('by_collection', (q) => q.eq('collection', args.collection))
+      .order('desc')
+      .collect();
+
+    logger.debug('Processing collection snapshots', {
+      collection: args.collection,
+      snapshotCount: snapshots.length,
+    });
+
+    let deletedCount = 0;
+
+    // Delete old snapshots (keep at least 2 recent ones)
+    for (let i = 2; i < snapshots.length; i++) {
+      const snapshot = snapshots[i];
+
+      if (snapshot.createdAt < cutoffTime) {
+        await ctx.db.delete(snapshot._id);
+        deletedCount++;
+        logger.debug('Deleted old snapshot', {
+          collection: args.collection,
+          snapshotAge: Date.now() - snapshot.createdAt,
+          createdAt: snapshot.createdAt,
+        });
+      }
+    }
+
+    const result = {
+      collection: args.collection,
+      deletedCount,
+      snapshotsRemaining: Math.min(2, snapshots.length),
+    };
+
+    logger.info('Snapshot cleanup completed for collection', result);
+
+    return result;
+  },
+});
+
+/**
+ * Register compaction and pruning schedules for a collection.
+ * Called by createScheduleInit() factory method in Replicate class.
+ *
+ * Uses @convex-dev/crons component for dynamic schedule registration.
+ *
+ * @param collection - Collection name
+ * @param compactInterval - Minutes between compaction runs (optional)
+ * @param compactRetention - How old deltas must be in minutes (default: 129600 = 90 days)
+ * @param pruneInterval - Minutes between prune runs (optional)
+ * @param pruneRetention - How old snapshots must be in minutes (default: 259200 = 180 days)
+ */
+export const registerSchedule = mutation({
+  args: {
+    collection: v.string(),
+    compactInterval: v.optional(v.number()),
+    compactRetention: v.optional(v.number()),
+    pruneInterval: v.optional(v.number()),
+    pruneRetention: v.optional(v.number()),
+  },
+  returns: v.object({
+    success: v.boolean(),
+    compactScheduleId: v.optional(v.id('_crons_jobs')),
+    pruneScheduleId: v.optional(v.id('_crons_jobs')),
+  }),
+  handler: async (ctx, args) => {
+    const logger = getLogger(['cron-registration']);
+    // Type assertion needed because crons component types are generated at runtime
+    const crons = new Crons((components as any).crons);
+
+    const result: {
+      success: true;
+      compactScheduleId?: any;
+      pruneScheduleId?: any;
+    } = {
+      success: true,
+    };
+
+    // Register compaction schedule if interval specified
+    if (args.compactInterval) {
+      const intervalMs = args.compactInterval * 60 * 1000;
+      // Convert minutes to days for component function
+      const defaultRetentionMinutes = 129600; // 90 days
+      const retentionMinutes = args.compactRetention ?? defaultRetentionMinutes;
+      const cutoffDays = Math.floor(retentionMinutes / 1440); // Convert minutes to days
+
+      const scheduleId = await crons.register(
+        ctx,
+        {
+          kind: 'interval',
+          ms: intervalMs,
+        },
+        (internal as any).compactCollectionByName,
+        {
+          collection: args.collection,
+          cutoffDays,
+        }
+      );
+      result.compactScheduleId = scheduleId;
+
+      logger.info('Registered compaction schedule', {
+        collection: args.collection,
+        intervalMinutes: args.compactInterval,
+        retentionMinutes,
+        cutoffDays,
+        scheduleId,
+      });
+    }
+
+    // Register pruning schedule if interval specified
+    if (args.pruneInterval) {
+      const intervalMs = args.pruneInterval * 60 * 1000;
+      // Convert minutes to days for component function
+      const defaultRetentionMinutes = 259200; // 180 days
+      const retentionMinutes = args.pruneRetention ?? defaultRetentionMinutes;
+      const retentionDays = Math.floor(retentionMinutes / 1440); // Convert minutes to days
+
+      const scheduleId = await crons.register(
+        ctx,
+        {
+          kind: 'interval',
+          ms: intervalMs,
+        },
+        (internal as any).pruneCollectionByName,
+        {
+          collection: args.collection,
+          retentionDays,
+        }
+      );
+      result.pruneScheduleId = scheduleId;
+
+      logger.info('Registered prune schedule', {
+        collection: args.collection,
+        intervalMinutes: args.pruneInterval,
+        retentionMinutes,
+        retentionDays,
+        scheduleId,
+      });
+    }
+
+    return result;
+  },
+});
+
+/**
+ * Unregister compaction and pruning schedules for a collection.
+ * Used for cleanup or schedule updates.
+ *
+ * @param compactScheduleId - ID of compaction schedule to remove
+ * @param pruneScheduleId - ID of prune schedule to remove
+ */
+export const unregisterSchedule = mutation({
+  args: {
+    compactScheduleId: v.optional(v.id('_crons_jobs')),
+    pruneScheduleId: v.optional(v.id('_crons_jobs')),
+  },
+  returns: v.object({
+    success: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const logger = getLogger(['cron-registration']);
+    // Type assertion needed because crons component types are generated at runtime
+    const crons = new Crons((components as any).crons);
+
+    if (args.compactScheduleId) {
+      await crons.delete(ctx, { id: args.compactScheduleId });
+      logger.info('Unregistered compaction schedule', {
+        scheduleId: args.compactScheduleId,
+      });
+    }
+
+    if (args.pruneScheduleId) {
+      await crons.delete(ctx, { id: args.pruneScheduleId });
+      logger.info('Unregistered prune schedule', {
+        scheduleId: args.pruneScheduleId,
+      });
+    }
+
+    return { success: true };
   },
 });

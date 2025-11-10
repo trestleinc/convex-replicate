@@ -37,6 +37,11 @@ export interface ConvexCollectionOptionsConfig<T extends object> {
 
   /** Unique collection name */
   collection: string;
+
+  /** Optional metadata to pass with mutations (e.g., schema version for migrations) */
+  metadata?: {
+    schemaVersion?: number; // Client schema version for migration support
+  };
 }
 
 /**
@@ -76,6 +81,7 @@ export function convexCollectionOptions<T extends object>({
   convexClient,
   api,
   collection,
+  metadata,
 }: ConvexCollectionOptionsConfig<T>): CollectionConfig<T> & {
   _convexClient: ConvexClient;
   _collection: string;
@@ -195,12 +201,19 @@ export function convexCollectionOptions<T extends object>({
             deltaSize: pendingUpdate.length,
           });
 
-          await convexClient.mutation(api.insertDocument, {
+          const mutationArgs: any = {
             documentId: String(transaction.mutations[0].key),
             crdtBytes: pendingUpdate.buffer,
             materializedDoc: transaction.mutations[0].modified,
             version: Date.now(),
-          });
+          };
+
+          // Add schema version if metadata is provided
+          if (metadata?.schemaVersion !== undefined) {
+            mutationArgs._schemaVersion = metadata.schemaVersion;
+          }
+
+          await convexClient.mutation(api.insertDocument, mutationArgs);
 
           pendingUpdate = null;
           logger.info('Insert persisted to Convex', {
@@ -267,12 +280,19 @@ export function convexCollectionOptions<T extends object>({
             deltaSize: pendingUpdate.length,
           });
 
-          await convexClient.mutation(api.updateDocument, {
+          const mutationArgs: any = {
             documentId: String(transaction.mutations[0].key),
             crdtBytes: pendingUpdate.buffer,
             materializedDoc: transaction.mutations[0].modified,
             version: Date.now(),
-          });
+          };
+
+          // Add schema version if metadata is provided
+          if (metadata?.schemaVersion !== undefined) {
+            mutationArgs._schemaVersion = metadata.schemaVersion;
+          }
+
+          await convexClient.mutation(api.updateDocument, mutationArgs);
 
           pendingUpdate = null;
           logger.info('Update persisted to Convex', {
@@ -325,11 +345,18 @@ export function convexCollectionOptions<T extends object>({
             deltaSize: pendingUpdate.length,
           });
 
-          await convexClient.mutation(api.deleteDocument, {
+          const mutationArgs: any = {
             documentId: String(transaction.mutations[0].key),
             crdtBytes: pendingUpdate.buffer,
             version: Date.now(),
-          });
+          };
+
+          // Add schema version if metadata is provided
+          if (metadata?.schemaVersion !== undefined) {
+            mutationArgs._schemaVersion = metadata.schemaVersion;
+          }
+
+          await convexClient.mutation(api.deleteDocument, mutationArgs);
 
           pendingUpdate = null;
           logger.info('Delete persisted to Convex', {

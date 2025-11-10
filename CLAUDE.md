@@ -35,7 +35,7 @@ This is a **single package** that provides:
 │   ├── client/          # Client-side utilities (browser/React/Svelte)
 │   │   ├── index.ts     # Main exports (convexCollectionOptions, createConvexCollection)
 │   │   ├── collection.ts # TanStack DB + Yjs integration
-│   │   ├── storage.ts   # ReplicateStorage class (direct component access)
+│   │   ├── storage.ts   # Replicate class (direct component access)
 │   │   └── logger.ts    # LogTape logger
 │   ├── server/          # Server-side utilities (Convex functions)
 │   │   ├── index.ts     # Main exports (replication helpers, schema utilities)
@@ -213,16 +213,21 @@ export default defineSchema({
 - Users only define business logic fields
 - Enables dual-storage architecture
 
-### 3. Use ReplicateStorage Wrapper Class
+### 3. Use Replicate Wrapper Class
 
 ```typescript
 // convex/tasks.ts
-import { ReplicateStorage } from '@trestleinc/replicate/server';  // IMPORTANT: Use /server!
+import { Replicate } from '@trestleinc/replicate/server';  // IMPORTANT: Use /server!
 import { components } from './_generated/api';
 import type { Task } from '../src/useTasks';
 
-// Create storage instance for 'tasks' collection
-const tasksStorage = new ReplicateStorage<Task>(components.replicate, 'tasks');
+// Create storage instance with automatic compaction
+const tasksStorage = new Replicate<Task>(components.replicate, 'tasks', {
+  compactInterval: 1440,          // Run compaction every 24 hours
+  compactRetention: 129600,       // Compact deltas older than 90 days (in minutes)
+  pruneInterval: 10080,           // Run pruning every 7 days
+  pruneRetention: 259200,         // Delete snapshots older than 180 days (in minutes)
+});
 
 // Generate queries and mutations using factory methods
 export const stream = tasksStorage.createStreamQuery();
@@ -230,40 +235,28 @@ export const getTasks = tasksStorage.createSSRQuery();
 export const insertDocument = tasksStorage.createInsertMutation();
 export const updateDocument = tasksStorage.createUpdateMutation();
 export const deleteDocument = tasksStorage.createDeleteMutation();
+
+// Required for client protocol checking
+export const getProtocolVersion = tasksStorage.createProtocolVersionQuery();
+
+// One-time initialization (call after installation)
+export const initSchedule = tasksStorage.createScheduleInit();
+// Usage: await ctx.runMutation(api.tasks.initSchedule);
 ```
 
-**What `ReplicateStorage` provides:**
+**What `Replicate` provides:**
 
 - `createStreamQuery()` - CRDT stream with gap detection support (for real-time sync)
 - `createSSRQuery()` - Materialized docs query (for server-side rendering)
 - `createInsertMutation()` - Dual-storage insert (component + main table)
 - `createUpdateMutation()` - Dual-storage update (component + main table)
 - `createDeleteMutation()` - Dual-storage delete (component + main table)
+- `createProtocolVersionQuery()` - Protocol version wrapper (required for client)
+- `createScheduleInit()` - Register compaction/pruning schedules (one-time setup)
 
 All factory methods support optional hooks for permissions and lifecycle events.
 
-### 4. Create Protocol Version Wrapper
-
-Create a wrapper query to expose the component's protocol version to clients:
-
-```typescript
-// convex/replicate.ts
-import { query } from './_generated/server';
-import { components } from './_generated/api';
-
-export const getProtocolVersion = query({
-  handler: async (ctx) => {
-    return await ctx.runQuery(components.replicate.public.getProtocolVersion);
-  },
-});
-```
-
-**What this does:**
-- Wraps the component's `getProtocolVersion` query for client access
-- Required for automatic protocol compatibility checking
-- Follows the same pattern as insertDocument/updateDocument/deleteDocument
-
-### 5. Client-Side Integration (TanStack DB)
+### 4. Client-Side Integration (TanStack DB)
 
 **Note:** Protocol initialization happens automatically when you create your first collection - no manual setup required!
 
@@ -300,7 +293,7 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
             insertDocument: api.tasks.insertDocument,
             updateDocument: api.tasks.updateDocument,
             deleteDocument: api.tasks.deleteDocument,
-            getProtocolVersion: api.replicate.getProtocolVersion, // For protocol version checking
+            getProtocolVersion: api.tasks.getProtocolVersion, // For protocol version checking
           },
           collection: 'tasks',
           getKey: (task) => task.id,
@@ -316,7 +309,7 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
 }
 ```
 
-### 6. Use in React Components
+### 5. Use in React Components
 
 ```typescript
 // src/routes/index.tsx
@@ -367,106 +360,101 @@ export function TaskList() {
 }
 ```
 
-### 7. Set Up Automatic Compaction (Cron Jobs)
+### 6. Set Up Automatic Compaction (Dynamic Scheduling)
 
-ConvexReplicate uses **cron-based compaction** to automatically clean up old CRDT deltas and maintain storage efficiency. No threshold-based monitoring required - compaction runs on a predictable schedule.
+ConvexReplicate uses **dynamic cron scheduling** to automatically clean up old CRDT deltas and maintain storage efficiency. Configure schedules in the Replicate constructor, then call a one-time init function.
 
-**Step 1: Create wrapper internal mutations**
-
-Cron jobs can't directly reference component functions - they require wrappers in your app's convex folder:
-
-```typescript
-// convex/replicate.ts
-import { query, internalMutation } from './_generated/server';
-import { components } from './_generated/api';
-import { v } from 'convex/values';
-
-export const getProtocolVersion = query({
-  handler: async (ctx) => {
-    return await ctx.runQuery(components.replicate.public.getProtocolVersion);
-  },
-});
-
-// Wrapper for cron jobs
-export const compact = internalMutation({
-  args: { cutoffDays: v.optional(v.number()) },
-  handler: async (ctx, args) => {
-    return await ctx.runMutation(components.replicate.compaction.compactSeries, args);
-  },
-});
-
-// Wrapper for cron jobs
-export const prune = internalMutation({
-  args: { retentionDays: v.optional(v.number()) },
-  handler: async (ctx, args) => {
-    return await ctx.runMutation(components.replicate.compaction.prune, args);
-  },
-});
-```
-
-**Step 2: Create cron schedule file**
-
-```typescript
-// convex/crons.ts
-import { cronJobs } from 'convex/server';
-import { internal } from './_generated/api';
-
-const crons = cronJobs();
-
-// Daily compaction at 3am UTC
-// Compacts CRDT deltas older than 90 days for all collections
-crons.daily(
-  'compact CRDT storage',
-  { hourUTC: 3, minuteUTC: 0 },
-  internal.replicate.compact,
-  { cutoffDays: 90 }
-);
-
-// Weekly snapshot cleanup on Sundays at 3am UTC
-// Deletes snapshots older than 180 days (keeps latest 2 per collection)
-crons.weekly(
-  'cleanup old snapshots',
-  { dayOfWeek: 'sunday', hourUTC: 3, minuteUTC: 0 },
-  internal.replicate.prune,
-  { retentionDays: 180 }
-);
-
-export default crons;
-```
-
-**Optional: Customize per-collection cutoff days:**
+**Step 1: Configure schedules in constructor**
 
 ```typescript
 // convex/tasks.ts
-import { ReplicateStorage } from '@trestleinc/replicate/server';
+import { Replicate } from '@trestleinc/replicate/server';
 import { components } from './_generated/api';
+import type { Task } from '../src/useTasks';
 
-// Customize compaction cutoff for this collection (default: 90 days)
-const tasksStorage = new ReplicateStorage<Task>(
-  components.replicate,
-  'tasks',
-  { compactionCutoffDays: 60 } // Compact deltas older than 60 days
-);
+// Create storage with automatic compaction
+const tasksStorage = new Replicate<Task>(components.replicate, 'tasks', {
+  compactInterval: 1440,          // Run compaction every 24 hours (in minutes)
+  compactRetention: 129600,       // Compact deltas older than 90 days (in minutes)
+  pruneInterval: 10080,           // Run pruning every 7 days (in minutes)
+  pruneRetention: 259200,         // Delete snapshots older than 180 days (in minutes)
+});
+
+export const stream = tasksStorage.createStreamQuery();
+export const getTasks = tasksStorage.createSSRQuery();
+export const insertDocument = tasksStorage.createInsertMutation();
+export const updateDocument = tasksStorage.createUpdateMutation();
+export const deleteDocument = tasksStorage.createDeleteMutation();
+export const getProtocolVersion = tasksStorage.createProtocolVersionQuery();
+
+// One-time initialization to register schedules
+export const initSchedule = tasksStorage.createScheduleInit();
+```
+
+**Step 2: Call init function once after installation**
+
+After deploying your app, call the init function once to register the schedules:
+
+```typescript
+// From Convex dashboard or via script
+await ctx.runMutation(api.tasks.initSchedule);
+```
+
+Or from your app:
+```typescript
+import { api } from '../convex/_generated/api';
+import { convexClient } from './convex';
+
+// Call once during app initialization
+await convexClient.mutation(api.tasks.initSchedule);
+```
+
+**Per-collection customization:**
+
+```typescript
+// Tasks: Compact frequently, short retention
+const tasksStorage = new Replicate<Task>(components.replicate, 'tasks', {
+  compactInterval: 720,           // Every 12 hours
+  compactRetention: 43200,        // Compact after 30 days (in minutes)
+});
+
+// Users: Compact rarely, long retention
+const usersStorage = new Replicate<User>(components.replicate, 'users', {
+  compactInterval: 10080,         // Weekly
+  compactRetention: 525600,       // Compact after 1 year (in minutes)
+});
+```
+
+**Optional compaction:**
+
+```typescript
+// No intervals = no automatic compaction
+const tasksStorage = new Replicate<Task>(components.replicate, 'tasks');
+// Can still manually trigger compaction when needed
 ```
 
 **How it works:**
-- **Daily compaction** (3am UTC) - Scans all collections, compacts deltas older than configured cutoff
-- **Weekly cleanup** (Sunday 3am UTC) - Removes snapshots older than 180 days (keeps 2 most recent per collection)
-- **Zero mutation overhead** - No per-mutation size checks or threshold monitoring
-- **Predictable costs** - Compaction runs at known times (easier to budget)
+- **Dynamic registration** - Schedules registered via @convex-dev/crons component at runtime
+- **Per-collection control** - Each collection can have different intervals and retention policies
+- **Zero boilerplate** - No manual cron files needed
+- **All configuration in one place** - Intervals and cutoffs defined together
 
-**Note:** The `compactionCutoffDays` parameter in ReplicateStorage is optional and only affects how old deltas must be before they're compacted. Compaction still runs via the cron schedule.
+**Interval values (in minutes):**
+- 1440 = daily (24 hours)
+- 720 = every 12 hours
+- 10080 = weekly (7 days)
+- 43200 = monthly (30 days)
 
 ## Key API Concepts
 
-### Server-Side: ReplicateStorage Wrapper Class
+### Server-Side: Replicate Wrapper Class
 
 **IMPORTANT**: Import from `@trestleinc/replicate/server` for server-safe imports!
 
-The `ReplicateStorage<T>` class provides a type-safe wrapper for component operations. Instantiate once per collection:
+The `Replicate<T>` class provides a type-safe wrapper for component operations. Instantiate once per collection:
 
 ```typescript
-const storage = new ReplicateStorage<Task>(components.replicate, 'tasks');
+const storage = new Replicate<Task>(components.replicate, 'tasks');
 ```
 
 **Factory Methods:**
