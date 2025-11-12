@@ -12,6 +12,21 @@ import { ensureInitialized } from './init.js';
 
 const logger = getLogger(['convex-replicate', 'collection']);
 
+// Re-export shared enum for type-safe operation type handling
+export { OperationType } from '../component/shared.js';
+
+// Yjs transaction origins (local and remote)
+export enum YjsOrigin {
+  // Local mutations (from TanStack DB handlers)
+  Insert = 'insert',
+  Update = 'update',
+  Delete = 'delete',
+
+  // Remote subscription updates
+  Subscription = 'subscription',
+  Snapshot = 'snapshot',
+}
+
 /**
  * Configuration for convexCollectionOptions (Step 1)
  * All params go here - they'll be used to create the collection config
@@ -116,14 +131,38 @@ export function convexCollectionOptions<T extends object>({
   let syncParams: any = null; // Store sync params for observer callback
 
   ymap.observe((event: Y.YMapEvent<unknown>) => {
-    // Only sync to TanStack DB if sync is initialized
-    if (!syncParams) return;
-
-    // Skip if this change originated from subscription to avoid double-sync
     const transaction = event.transaction;
-    if (transaction.origin === 'subscription') {
+    const origin = transaction.origin;
+
+    logger.debug('Yjs observer fired', {
+      collection,
+      origin,
+      changeCount: event.changes.keys.size,
+      syncParamsInitialized: !!syncParams,
+    });
+
+    // Only sync to TanStack DB if sync is initialized
+    if (!syncParams) {
+      logger.debug('Skipping observer - syncParams not initialized', { collection });
       return;
     }
+
+    // Only sync remote subscription changes to TanStack DB
+    // Skip local mutations as they already came from TanStack DB (would create nested transactions)
+    const remoteOrigins = [YjsOrigin.Subscription, YjsOrigin.Snapshot];
+    if (!remoteOrigins.includes(origin as YjsOrigin)) {
+      logger.debug('Skipping observer - local origin', {
+        collection,
+        origin,
+        remoteOrigins,
+      });
+      return;
+    }
+
+    logger.debug('Observer processing remote changes', {
+      collection,
+      origin,
+    });
 
     const { begin, write, commit } = syncParams;
 
@@ -136,16 +175,26 @@ export function convexCollectionOptions<T extends object>({
           const itemYMap = ymap.get(key);
           if (itemYMap instanceof Y.Map) {
             const item = itemYMap.toJSON() as T;
-            if (change.action === 'add') {
-              write({ type: 'insert', value: item });
-            } else {
-              write({ type: 'update', value: item });
-            }
+            logger.debug('Observer writing to TanStack DB', {
+              collection,
+              action: change.action,
+              key,
+              item,
+            });
+            // Always use 'update' for both add and update
+            // Initial data is loaded to TanStack DB, so items already exist
+            // Yjs action is based on Yjs Map state, not TanStack DB state
+            write({ type: 'update', value: item });
           }
         } else if (change.action === 'delete') {
           // For deletes, we need the old value
           if (change.oldValue instanceof Y.Map) {
             const item = change.oldValue.toJSON() as T;
+            logger.debug('Observer deleting from TanStack DB', {
+              collection,
+              key,
+              item,
+            });
             write({ type: 'delete', value: item });
           }
         }
@@ -191,7 +240,7 @@ export function convexCollectionOptions<T extends object>({
             });
             ymap.set(String(mut.key), itemYMap);
           });
-        }, 'insert');
+        }, YjsOrigin.Insert);
 
         // Send DELTA to Convex (not full state)
         if (pendingUpdate) {
@@ -201,8 +250,9 @@ export function convexCollectionOptions<T extends object>({
             deltaSize: pendingUpdate.length,
           });
 
+          const documentKey = String(transaction.mutations[0].key);
           const mutationArgs: any = {
-            documentId: String(transaction.mutations[0].key),
+            documentId: documentKey,
             crdtBytes: pendingUpdate.buffer,
             materializedDoc: transaction.mutations[0].modified,
             version: Date.now(),
@@ -218,7 +268,7 @@ export function convexCollectionOptions<T extends object>({
           pendingUpdate = null;
           logger.info('Insert persisted to Convex', {
             collection,
-            documentId: String(transaction.mutations[0].key),
+            documentId: documentKey,
           });
         }
       } catch (error: any) {
@@ -252,38 +302,97 @@ export function convexCollectionOptions<T extends object>({
         // Wait for initialization before syncing
         await initPromise;
 
+        // Log mutation details for debugging
+        transaction.mutations.forEach((mut: any, index: number) => {
+          logger.debug('Processing mutation', {
+            collection,
+            index,
+            key: String(mut.key),
+            modified: mut.modified,
+            original: mut.original,
+          });
+        });
+
+        // Log Yjs state BEFORE update
+        transaction.mutations.forEach((mut: any) => {
+          const key = String(mut.key);
+          const itemYMap = ymap.get(key) as Y.Map<any> | undefined;
+          logger.debug('Yjs state BEFORE update', {
+            collection,
+            key,
+            existsInYjs: !!itemYMap,
+            yjsState: itemYMap ? itemYMap.toJSON() : null,
+          });
+        });
+
         // Update Yjs in transaction
         ydoc.transact(() => {
           transaction.mutations.forEach((mut: any) => {
             const itemYMap = ymap.get(String(mut.key)) as Y.Map<any> | undefined;
             if (itemYMap) {
               // Update only changed fields (field-level CRDT)
-              Object.entries((mut.modified as Record<string, unknown>) || {}).forEach(([k, v]) => {
+              const modifiedFields = mut.modified as Record<string, unknown>;
+              if (!modifiedFields) {
+                logger.warn('mut.modified is null/undefined', {
+                  collection,
+                  key: String(mut.key),
+                });
+                return;
+              }
+              Object.entries(modifiedFields).forEach(([k, v]) => {
                 itemYMap.set(k, v);
               });
             } else {
               // Create new Y.Map if doesn't exist (defensive)
+              const modifiedFields = mut.modified as Record<string, unknown>;
+              if (!modifiedFields) {
+                logger.warn('mut.modified is null/undefined for new item', {
+                  collection,
+                  key: String(mut.key),
+                });
+                return;
+              }
               const newYMap = new Y.Map();
-              Object.entries(mut.modified as Record<string, unknown>).forEach(([k, v]) => {
+              Object.entries(modifiedFields).forEach(([k, v]) => {
                 newYMap.set(k, v);
               });
               ymap.set(String(mut.key), newYMap);
             }
           });
-        }, 'update');
+        }, YjsOrigin.Update);
+
+        // Log Yjs state AFTER update
+        transaction.mutations.forEach((mut: any) => {
+          const key = String(mut.key);
+          const itemYMap = ymap.get(key) as Y.Map<any> | undefined;
+          logger.debug('Yjs state AFTER update', {
+            collection,
+            key,
+            yjsState: itemYMap ? itemYMap.toJSON() : null,
+          });
+        });
 
         // Send delta to Convex
         if (pendingUpdate) {
+          // Extract document key for clarity and reuse
+          const documentKey = String(transaction.mutations[0].key);
+
+          // Retrieve full document from Yjs after applying changes
+          // (transaction.mutations[0].modified contains only changed fields, not full doc)
+          const itemYMap = ymap.get(documentKey) as Y.Map<any>;
+          const fullDoc = itemYMap ? itemYMap.toJSON() : transaction.mutations[0].modified;
+
           logger.debug('Sending update delta to Convex', {
             collection,
-            documentId: String(transaction.mutations[0].key),
+            documentId: documentKey,
             deltaSize: pendingUpdate.length,
+            fullDoc,
           });
 
           const mutationArgs: any = {
-            documentId: String(transaction.mutations[0].key),
+            documentId: documentKey,
             crdtBytes: pendingUpdate.buffer,
-            materializedDoc: transaction.mutations[0].modified,
+            materializedDoc: fullDoc, // Send full document, not partial changes
             version: Date.now(),
           };
 
@@ -297,7 +406,11 @@ export function convexCollectionOptions<T extends object>({
           pendingUpdate = null;
           logger.info('Update persisted to Convex', {
             collection,
-            documentId: String(transaction.mutations[0].key),
+            documentId: documentKey,
+          });
+        } else {
+          logger.warn('pendingUpdate is null - no delta to send', {
+            collection,
           });
         }
       } catch (error: any) {
@@ -335,7 +448,7 @@ export function convexCollectionOptions<T extends object>({
           transaction.mutations.forEach((mut: any) => {
             ymap.delete(String(mut.key));
           });
-        }, 'delete');
+        }, YjsOrigin.Delete);
 
         // Send deletion DELTA to Convex
         if (pendingUpdate) {
@@ -345,8 +458,9 @@ export function convexCollectionOptions<T extends object>({
             deltaSize: pendingUpdate.length,
           });
 
+          const documentKey = String(transaction.mutations[0].key);
           const mutationArgs: any = {
-            documentId: String(transaction.mutations[0].key),
+            documentId: documentKey,
             crdtBytes: pendingUpdate.buffer,
             version: Date.now(),
           };
@@ -361,7 +475,7 @@ export function convexCollectionOptions<T extends object>({
           pendingUpdate = null;
           logger.info('Delete persisted to Convex', {
             collection,
-            documentId: String(transaction.mutations[0].key),
+            documentId: documentKey,
           });
         }
       } catch (error: any) {
@@ -461,61 +575,65 @@ export function convexCollectionOptions<T extends object>({
                   });
 
                   // Apply CRDT changes to Yjs (Yjs handles conflict resolution)
-                  // Use 'subscription' origin to prevent Yjs observer from double-syncing
                   for (const change of changes) {
-                    if (change.operationType === 'snapshot') {
-                      // Full snapshot received - rebuild Y.Doc from snapshot
-                      logger.info('Received snapshot - rebuilding collection', {
-                        collection,
-                        snapshotSize: change.crdtBytes.byteLength,
-                        timestamp: change.timestamp,
-                      });
-
-                      // Decode and restore snapshot
-                      const snapshotDecoded = Y.decodeSnapshotV2(new Uint8Array(change.crdtBytes));
-                      const restoredDoc = Y.createDocFromSnapshot(ydoc, snapshotDecoded);
-
-                      // Clear existing Y.Doc content and copy snapshot data
-                      ydoc.transact(() => {
-                        ymap.clear();
-                        const restoredMap = restoredDoc.getMap(collection);
-                        restoredMap.forEach((value, key) => {
-                          ymap.set(key, value);
+                    switch (change.operationType) {
+                      case 'snapshot': {
+                        // Full snapshot received - rebuild Y.Doc from snapshot
+                        logger.info('Received snapshot - rebuilding collection', {
+                          collection,
+                          snapshotSize: change.crdtBytes.byteLength,
+                          timestamp: change.timestamp,
                         });
-                      }, 'snapshot-restore');
 
-                      restoredDoc.destroy();
+                        // Decode and restore snapshot
+                        const snapshotDecoded = Y.decodeSnapshotV2(
+                          new Uint8Array(change.crdtBytes)
+                        );
+                        const restoredDoc = Y.createDocFromSnapshot(ydoc, snapshotDecoded);
 
-                      logger.info('Snapshot restored', {
-                        collection,
-                        documentCount: ymap.size,
-                      });
-                    } else if (change.operationType === 'state-diff') {
-                      // State diff received - CRDT merge with offline changes preserved!
-                      logger.info('Received state-diff - merging with local state', {
-                        collection,
-                        diffSize: change.crdtBytes.byteLength,
-                        timestamp: change.timestamp,
-                      });
+                        // Clear existing Y.Doc content and copy snapshot data
+                        ydoc.transact(() => {
+                          ymap.clear();
+                          const restoredMap = restoredDoc.getMap(collection);
+                          restoredMap.forEach((value, key) => {
+                            ymap.set(key, value);
+                          });
+                        }, YjsOrigin.Snapshot);
 
-                      // Apply diff as normal CRDT update
-                      // Yjs automatically merges with our offline changes
-                      Y.applyUpdateV2(ydoc, new Uint8Array(change.crdtBytes), 'state-diff');
+                        restoredDoc.destroy();
 
-                      logger.info('State-diff merged successfully', {
-                        collection,
-                        documentCount: ymap.size,
-                      });
-                    } else {
-                      // Normal delta - apply V2-encoded CRDT update
-                      Y.applyUpdateV2(ydoc, new Uint8Array(change.crdtBytes), 'subscription');
+                        logger.info('Snapshot restored', {
+                          collection,
+                          documentCount: ymap.size,
+                        });
+                        break;
+                      }
 
-                      logger.debug('Applied V2-encoded CRDT delta', {
-                        collection,
-                        documentId: change.documentId,
-                        version: change.version,
-                        operationType: change.operationType,
-                      });
+                      case 'diff':
+                      case 'delta': {
+                        // Both diffs and deltas use UpdateV2 format
+                        // Apply as normal CRDT update - Yjs automatically merges
+                        Y.applyUpdateV2(
+                          ydoc,
+                          new Uint8Array(change.crdtBytes),
+                          YjsOrigin.Subscription
+                        );
+
+                        logger.debug('Applied CRDT update', {
+                          collection,
+                          documentId: change.documentId,
+                          operationType: change.operationType,
+                          version: change.version,
+                        });
+                        break;
+                      }
+
+                      default: {
+                        logger.warn('Unknown operationType - skipping', {
+                          collection,
+                          operationType: change.operationType,
+                        });
+                      }
                     }
                   }
 

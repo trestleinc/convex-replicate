@@ -71,6 +71,7 @@ export class Replicate<T extends object> {
             crdtBytes: v.bytes(),
             version: v.number(),
             timestamp: v.number(),
+            operationType: v.string(),
           })
         ),
         checkpoint: v.object({ lastModified: v.number() }),
@@ -87,7 +88,7 @@ export class Replicate<T extends object> {
           collection,
           checkpoint: args.checkpoint,
           limit: args.limit,
-          stateVector: args.vector,
+          vector: args.vector,
         });
 
         // Lifecycle hook
@@ -193,8 +194,8 @@ export class Replicate<T extends object> {
           args._schemaVersion !== null &&
           typeof args._schemaVersion === 'number'
         ) {
-          const targetVersion = this.options!.migrations!.schemaVersion;
-          if (args._schemaVersion < targetVersion) {
+          const targetVersion = this.options?.migrations?.schemaVersion;
+          if (targetVersion && args._schemaVersion < targetVersion) {
             doc = this.migrate(doc, args._schemaVersion) as T;
             args.materializedDoc = doc;
           }
@@ -286,8 +287,8 @@ export class Replicate<T extends object> {
           args._schemaVersion !== null &&
           typeof args._schemaVersion === 'number'
         ) {
-          const targetVersion = this.options!.migrations!.schemaVersion;
-          if (args._schemaVersion < targetVersion) {
+          const targetVersion = this.options?.migrations?.schemaVersion;
+          if (targetVersion && args._schemaVersion < targetVersion) {
             doc = this.migrate(doc, args._schemaVersion) as T;
             args.materializedDoc = doc;
           }

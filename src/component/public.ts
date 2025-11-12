@@ -2,10 +2,14 @@ import * as Y from 'yjs';
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
 import { getLogger } from './logger';
+import { OperationType } from './shared.js';
 
 // Current protocol version of this ConvexReplicate package
 // Increment when breaking changes are introduced
 export const PROTOCOL_VERSION = 1;
+
+// Re-export shared enum for server-side use
+export { OperationType };
 
 /**
  * Insert a new document with CRDT bytes (Yjs format).
@@ -136,6 +140,7 @@ export const stream = query({
         crdtBytes: v.bytes(),
         version: v.number(),
         timestamp: v.number(),
+        operationType: v.string(), // 'delta' | 'diff' | 'snapshot'
       })
     ),
     checkpoint: v.object({
@@ -162,6 +167,7 @@ export const stream = query({
         crdtBytes: doc.crdtBytes,
         version: doc.version,
         timestamp: doc.timestamp,
+        operationType: OperationType.Delta,
       }));
 
       const newCheckpoint = {
@@ -223,6 +229,7 @@ export const stream = query({
               crdtBytes: diff.buffer as ArrayBuffer,
               version: 0,
               timestamp: snapshot.createdAt,
+              operationType: OperationType.Diff,
             },
           ],
           checkpoint: {
@@ -239,6 +246,7 @@ export const stream = query({
             crdtBytes: snapshot.snapshotBytes,
             version: 0,
             timestamp: snapshot.createdAt,
+            operationType: OperationType.Snapshot,
           },
         ],
         checkpoint: {
