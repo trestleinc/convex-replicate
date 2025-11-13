@@ -141,13 +141,23 @@ export function convexCollectionOptions<T extends object>({
   // Using V2 encoding for 30-50% better compression than V1
   let pendingUpdate: Uint8Array | null = null;
   (ydoc as any).on('updateV2', (update: Uint8Array, origin: any) => {
-    // `update` contains ONLY what changed (delta) in V2 format
-    pendingUpdate = update;
-    logger.debug('Yjs updateV2 event fired', {
-      collection,
-      updateSize: update.length,
-      origin,
-    });
+    // Only capture LOCAL mutations (ignore remote subscription updates)
+    // Remote updates should NOT be re-sent to Convex
+    if (origin === YjsOrigin.Insert || origin === YjsOrigin.Update || origin === YjsOrigin.Delete) {
+      // `update` contains ONLY what changed (delta) in V2 format
+      pendingUpdate = update;
+      logger.debug('Yjs updateV2 event captured (local origin)', {
+        collection,
+        updateSize: update.length,
+        origin,
+      });
+    } else {
+      logger.debug('Yjs updateV2 event ignored (remote origin)', {
+        collection,
+        updateSize: update.length,
+        origin,
+      });
+    }
   });
 
   logger.debug('Yjs persistence initialized', { collection });
@@ -198,7 +208,7 @@ export function convexCollectionOptions<T extends object>({
           const documentKey = String(transaction.mutations[0].key);
           const mutationArgs: any = {
             documentId: documentKey,
-            crdtBytes: pendingUpdate.buffer,
+            crdtBytes: pendingUpdate.slice().buffer, // Create clean copy to avoid byte offset issues
             materializedDoc: transaction.mutations[0].modified,
             version: Date.now(),
           };
@@ -336,7 +346,7 @@ export function convexCollectionOptions<T extends object>({
 
           const mutationArgs: any = {
             documentId: documentKey,
-            crdtBytes: pendingUpdate.buffer,
+            crdtBytes: pendingUpdate.slice().buffer, // Create clean copy to avoid byte offset issues
             materializedDoc: fullDoc, // Send full document, not partial changes
             version: Date.now(),
           };
@@ -412,7 +422,7 @@ export function convexCollectionOptions<T extends object>({
           const documentKey = String(transaction.mutations[0].key);
           const mutationArgs: any = {
             documentId: documentKey,
-            crdtBytes: pendingUpdate.buffer,
+            crdtBytes: pendingUpdate.slice().buffer, // Create clean copy to avoid byte offset issues
             version: Date.now(),
           };
 
