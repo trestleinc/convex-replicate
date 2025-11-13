@@ -33,6 +33,7 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
             updateDocument: api.tasks.updateDocument,
             deleteDocument: api.tasks.deleteDocument,
             getProtocolVersion: api.tasks.getProtocolVersion,
+            ssrQuery: api.tasks.getTasks, // For reconciliation - ensures deleted items are removed
           },
           collection: 'tasks',
           getKey: (task) => task.id,

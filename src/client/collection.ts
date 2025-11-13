@@ -50,6 +50,7 @@ export interface ConvexCollectionOptionsConfig<T extends object> {
     updateDocument: FunctionReference<'mutation'>; // Update handler (required)
     deleteDocument: FunctionReference<'mutation'>; // Delete handler (required)
     getProtocolVersion?: FunctionReference<'query'>; // Protocol version check (optional)
+    ssrQuery?: FunctionReference<'query'>; // For reconciliation - fetches current main table state (optional but recommended)
   };
 
   /** Unique collection name */
@@ -165,6 +166,102 @@ export function convexCollectionOptions<T extends object>({
   // Store TanStack DB sync methods for direct writes
   // Used during snapshot restore to sync Yjs state to TanStack DB
   let syncParams: any = null;
+
+  /**
+   * Reconcile Yjs state with main table.
+   * Removes documents from Yjs that don't exist in main table.
+   * This handles the case where component event log has full history
+   * of deleted documents, causing clients to reconstruct items that shouldn't exist.
+   */
+  const reconcileWithMainTable = async (): Promise<void> => {
+    if (!api.ssrQuery) {
+      logger.debug('Skipping reconciliation - no SSR query configured', { collection });
+      return;
+    }
+
+    try {
+      // Query main table for documents that currently exist
+      const serverDocs = (await convexClient.query(api.ssrQuery, {})) as T[];
+      const serverDocIds = new Set(serverDocs.map((doc) => String(getKey(doc))));
+
+      // Find Yjs documents that don't exist in main table
+      const toDelete: string[] = [];
+      ymap.forEach((_itemYMap, key) => {
+        if (!serverDocIds.has(key)) {
+          toDelete.push(key);
+        }
+      });
+
+      if (toDelete.length > 0) {
+        logger.info('Reconciliation: removing stale documents from Yjs', {
+          collection,
+          deleteCount: toDelete.length,
+          deletedKeys: toDelete,
+        });
+
+        // Capture data BEFORE deleting from Yjs
+        // This is necessary because Yjs garbage collects deleted content
+        // and we need the full item data for TanStack DB's delete handler
+        const deletedItems: Array<{ key: string; item: T }> = [];
+        for (const key of toDelete) {
+          const itemYMap = ymap.get(key);
+          if (itemYMap instanceof Y.Map) {
+            deletedItems.push({ key, item: itemYMap.toJSON() as T });
+          }
+        }
+
+        // Remove from Yjs
+        ydoc.transact(() => {
+          for (const key of toDelete) {
+            ymap.delete(key);
+          }
+        }, 'reconciliation');
+
+        // Sync deletes to TanStack DB using captured data
+        if (deletedItems.length > 0 && syncParams) {
+          const { begin, write, commit } = syncParams;
+          try {
+            begin();
+            for (const { key, item } of deletedItems) {
+              logger.debug('Reconciliation: deleting from TanStack DB', {
+                collection,
+                key,
+                item,
+              });
+              write({ type: 'delete', value: item });
+            }
+            commit();
+
+            logger.info('Reconciliation: deleted items from TanStack DB', {
+              collection,
+              deletedCount: deletedItems.length,
+            });
+          } catch (error) {
+            logger.error('Reconciliation: failed to delete from TanStack DB', {
+              collection,
+              error,
+            });
+          }
+        }
+
+        logger.info('Reconciliation complete', {
+          collection,
+          removedCount: toDelete.length,
+        });
+      } else {
+        logger.debug('Reconciliation: no stale documents found', {
+          collection,
+          yjsCount: ymap.size,
+          serverCount: serverDocs.length,
+        });
+      }
+    } catch (error) {
+      logger.error('Reconciliation failed', {
+        collection,
+        error,
+      });
+    }
+  };
 
   return {
     id: collection,
@@ -575,7 +672,14 @@ export function convexCollectionOptions<T extends object>({
             }
 
             // ═══════════════════════════════════════════════════════
-            // STEP 4: TanStack DB is now synced
+            // STEP 4: Reconcile with main table
+            // Remove any documents from Yjs that don't exist in main table
+            // This handles deleted documents whose deltas are still in component
+            // ═══════════════════════════════════════════════════════
+            await reconcileWithMainTable();
+
+            // ═══════════════════════════════════════════════════════
+            // STEP 5: TanStack DB is now synced
             // Final merged state from IndexedDB + SSR is now in TanStack DB
             // ═══════════════════════════════════════════════════════
 
@@ -676,71 +780,109 @@ export function convexCollectionOptions<T extends object>({
                           collection,
                           documentCount: ymap.size,
                         });
+
+                        // Reconcile after snapshot restore
+                        // Snapshots may include deleted documents from event log
+                        await reconcileWithMainTable();
                         break;
                       }
 
                       case 'diff':
                       case 'delta': {
-                        // Log Yjs state BEFORE applying subscription delta
-                        const yjsStateBefore = change.documentId
-                          ? (ymap.get(change.documentId) as Y.Map<any>)?.toJSON()
-                          : null;
-
                         logger.info('Applying subscription delta', {
                           collection,
                           documentId: change.documentId,
                           operationType: change.operationType,
                           version: change.version,
                           deltaSize: change.crdtBytes.byteLength,
-                          yjsStateBefore,
                         });
 
-                        // Both diffs and deltas use UpdateV2 format
-                        // Apply as normal CRDT update - Yjs automatically merges
+                        // Capture item data BEFORE applying delta (for delete detection)
+                        // This is necessary because Yjs will remove the item before we can access it
+                        let beforeItem: T | null = null;
+                        if (change.documentId && ymap.has(change.documentId)) {
+                          const itemYMap = ymap.get(change.documentId) as Y.Map<any>;
+                          if (itemYMap) {
+                            beforeItem = itemYMap.toJSON() as T;
+                            logger.debug('Captured item before applying delta', {
+                              collection,
+                              documentId: change.documentId,
+                              item: beforeItem,
+                            });
+                          }
+                        }
+
+                        // Apply CRDT delta to Yjs
                         Y.applyUpdateV2(
                           ydoc,
                           new Uint8Array(change.crdtBytes),
                           YjsOrigin.Subscription
                         );
 
-                        // Log Yjs state AFTER applying subscription delta
-                        const yjsStateAfter = change.documentId
-                          ? (ymap.get(change.documentId) as Y.Map<any>)?.toJSON()
-                          : null;
+                        // Check if item was deleted by comparing before/after
+                        // Use !! to force boolean (prevents null && false → null)
+                        const wasDeleted = !!beforeItem && !ymap.has(change.documentId);
 
                         logger.info('Applied subscription delta', {
                           collection,
                           documentId: change.documentId,
                           operationType: change.operationType,
                           version: change.version,
-                          yjsStateAfter,
+                          wasDeleted,
                         });
 
-                        // CRITICAL FIX: Sync ALL Yjs documents to TanStack DB
-                        // After applying delta, Yjs state is updated but we need to ensure
-                        // TanStack DB reflects the complete Yjs state, not just the changed document
-                        // This handles cases where delta creates new documents or merges with existing ones
+                        // Sync changes to TanStack DB
                         if (syncParams) {
                           const { begin, write, commit } = syncParams;
                           try {
                             begin();
 
-                            // Sync all documents from Yjs to TanStack DB
-                            ymap.forEach((itemYMap, _key) => {
+                            if (wasDeleted) {
+                              // Handle delete using captured data
+                              logger.info('Syncing delete to TanStack DB using captured data', {
+                                collection,
+                                documentId: change.documentId,
+                                item: beforeItem,
+                              });
+                              write({ type: 'delete', value: beforeItem });
+                            } else if (change.documentId) {
+                              // Only sync the SPECIFIC document that changed (not all docs!)
+                              const itemYMap = ymap.get(change.documentId);
                               if (itemYMap instanceof Y.Map) {
                                 const item = itemYMap.toJSON() as T;
+                                logger.info('Syncing update to TanStack DB for changed document', {
+                                  collection,
+                                  documentId: change.documentId,
+                                });
                                 write({ type: 'update', value: item });
+                              } else {
+                                // Document doesn't exist in Yjs - skip syncing
+                                // This happens when Client A receives echo of its own delete
+                                logger.debug(
+                                  'Skipping sync - document not found after applying delta',
+                                  {
+                                    collection,
+                                    documentId: change.documentId,
+                                  }
+                                );
                               }
-                            });
+                            } else {
+                              // No documentId - skip syncing (shouldn't happen for delta operations)
+                              logger.debug('Skipping sync - no documentId provided', {
+                                collection,
+                                operationType: change.operationType,
+                              });
+                            }
 
                             commit();
 
                             logger.debug(
-                              'Synced all Yjs state to TanStack DB after subscription delta',
+                              'Synced Yjs state to TanStack DB after subscription delta',
                               {
                                 collection,
                                 yjsMapSize: ymap.size,
                                 triggeringDocId: change.documentId,
+                                wasDeleted,
                               }
                             );
                           } catch (error) {
@@ -772,6 +914,7 @@ export function convexCollectionOptions<T extends object>({
                     collection,
                     count: changes.length,
                     newCheckpoint,
+                    yjsMapSizeAfter: ymap.size,
                   });
                 } catch (error: any) {
                   logger.error('Failed to apply CRDT deltas from subscription', {
