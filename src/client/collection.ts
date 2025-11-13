@@ -1,4 +1,5 @@
 import * as Y from 'yjs';
+import { IndexeddbPersistence } from 'y-indexeddb';
 import {
   startOfflineExecutor,
   NonRetriableError,
@@ -25,6 +26,7 @@ export enum YjsOrigin {
   // Remote subscription updates
   Subscription = 'subscription',
   Snapshot = 'snapshot',
+  SSRInit = 'ssr-init', // SSR data loaded before IndexedDB
 }
 
 /**
@@ -108,11 +110,33 @@ export function convexCollectionOptions<T extends object>({
     api: api.getProtocolVersion ? { getProtocolVersion: api.getProtocolVersion } : undefined,
   });
 
-  // Initialize Yjs document for CRDT operations
+  // ═══════════════════════════════════════════════════════════
+  // LAYER 2: Yjs + IndexedDB Persistence (Source of Truth)
+  // ═══════════════════════════════════════════════════════════
+
+  // Initialize Yjs document with persistent IndexedDB storage
   const ydoc = new Y.Doc({ guid: collection });
   const ymap = ydoc.getMap(collection);
 
-  // Track delta updates (NOT full state)
+  logger.info('Creating Yjs IndexedDB persistence', { collection });
+
+  // Create IndexedDB persistence provider
+  // This will merge cached data with existing Yjs state using CRDT semantics
+  const persistence = new IndexeddbPersistence(collection, ydoc);
+
+  // Track persistence initialization
+  const persistenceReadyPromise = new Promise<void>((resolve) => {
+    persistence.on('synced', () => {
+      logger.info('Yjs IndexedDB persistence synced', {
+        collection,
+        documentCount: ymap.size,
+        state: 'ready',
+      });
+      resolve();
+    });
+  });
+
+  // Track delta updates for Convex sync (NOT full state)
   // This is the key to efficient bandwidth usage: < 1KB per change instead of 100KB+
   // Using V2 encoding for 30-50% better compression than V1
   let pendingUpdate: Uint8Array | null = null;
@@ -126,90 +150,11 @@ export function convexCollectionOptions<T extends object>({
     });
   });
 
-  // Yjs observer to sync Yjs changes to TanStack DB
-  // This handles CRDT deltas from subscriptions
-  let syncParams: any = null; // Store sync params for observer callback
+  logger.debug('Yjs persistence initialized', { collection });
 
-  ymap.observe((event: Y.YMapEvent<unknown>) => {
-    const transaction = event.transaction;
-    const origin = transaction.origin;
-
-    logger.debug('Yjs observer fired', {
-      collection,
-      origin,
-      changeCount: event.changes.keys.size,
-      syncParamsInitialized: !!syncParams,
-    });
-
-    // Only sync to TanStack DB if sync is initialized
-    if (!syncParams) {
-      logger.debug('Skipping observer - syncParams not initialized', { collection });
-      return;
-    }
-
-    // Only sync remote subscription changes to TanStack DB
-    // Skip local mutations as they already came from TanStack DB (would create nested transactions)
-    const remoteOrigins = [YjsOrigin.Subscription, YjsOrigin.Snapshot];
-    if (!remoteOrigins.includes(origin as YjsOrigin)) {
-      logger.debug('Skipping observer - local origin', {
-        collection,
-        origin,
-        remoteOrigins,
-      });
-      return;
-    }
-
-    logger.debug('Observer processing remote changes', {
-      collection,
-      origin,
-    });
-
-    const { begin, write, commit } = syncParams;
-
-    try {
-      begin();
-
-      // Handle additions and updates
-      event.changes.keys.forEach((change, key) => {
-        if (change.action === 'add' || change.action === 'update') {
-          const itemYMap = ymap.get(key);
-          if (itemYMap instanceof Y.Map) {
-            const item = itemYMap.toJSON() as T;
-            logger.debug('Observer writing to TanStack DB', {
-              collection,
-              action: change.action,
-              key,
-              item,
-            });
-            // Always use 'update' for both add and update
-            // Initial data is loaded to TanStack DB, so items already exist
-            // Yjs action is based on Yjs Map state, not TanStack DB state
-            write({ type: 'update', value: item });
-          }
-        } else if (change.action === 'delete') {
-          // For deletes, we need the old value
-          if (change.oldValue instanceof Y.Map) {
-            const item = change.oldValue.toJSON() as T;
-            logger.debug('Observer deleting from TanStack DB', {
-              collection,
-              key,
-              item,
-            });
-            write({ type: 'delete', value: item });
-          }
-        }
-      });
-
-      commit();
-
-      logger.debug('Synced Yjs changes to TanStack DB', {
-        collection,
-        changeCount: event.changes.keys.size,
-      });
-    } catch (error) {
-      logger.error('Failed to sync Yjs changes to TanStack DB', { error, collection });
-    }
-  });
+  // Store TanStack DB sync methods for direct writes
+  // Used during snapshot restore to sync Yjs state to TanStack DB
+  let syncParams: any = null;
 
   return {
     id: collection,
@@ -227,8 +172,8 @@ export function convexCollectionOptions<T extends object>({
       });
 
       try {
-        // Wait for initialization before syncing
-        await initPromise;
+        // Wait for BOTH initialization AND IndexedDB persistence
+        await Promise.all([initPromise, persistenceReadyPromise]);
 
         // Update Yjs in transaction (batches multiple changes into ONE 'update' event)
         ydoc.transact(() => {
@@ -299,8 +244,8 @@ export function convexCollectionOptions<T extends object>({
       });
 
       try {
-        // Wait for initialization before syncing
-        await initPromise;
+        // Wait for BOTH initialization AND IndexedDB persistence
+        await Promise.all([initPromise, persistenceReadyPromise]);
 
         // Log mutation details for debugging
         transaction.mutations.forEach((mut: any, index: number) => {
@@ -404,9 +349,15 @@ export function convexCollectionOptions<T extends object>({
           await convexClient.mutation(api.updateDocument, mutationArgs);
 
           pendingUpdate = null;
+
+          // Log complete state after mutation
+          const finalYjsState = itemYMap ? itemYMap.toJSON() : null;
           logger.info('Update persisted to Convex', {
             collection,
             documentId: documentKey,
+            version: mutationArgs.version,
+            sentToConvex: fullDoc,
+            yjsStateAfterMutation: finalYjsState,
           });
         } else {
           logger.warn('pendingUpdate is null - no delta to send', {
@@ -440,8 +391,8 @@ export function convexCollectionOptions<T extends object>({
       });
 
       try {
-        // Wait for initialization before syncing
-        await initPromise;
+        // Wait for BOTH initialization AND IndexedDB persistence
+        await Promise.all([initPromise, persistenceReadyPromise]);
 
         // Remove from Yjs Y.Map - creates deletion tombstone
         ydoc.transact(() => {
@@ -499,26 +450,12 @@ export function convexCollectionOptions<T extends object>({
     // Sync function for pulling data from server
     sync: {
       sync: (params: any) => {
-        const { begin, write, commit, markReady } = params;
+        const { markReady } = params;
 
-        // Store sync params for Yjs observer
+        // Store TanStack DB sync methods for snapshot restore
         syncParams = params;
 
-        // Step 1: Write initial SSR data to TanStack DB only (NOT Yjs)
-        // Yjs will be populated by CRDT stream to avoid type conflicts
-        if (initialData && initialData.length > 0) {
-          begin();
-          for (const item of initialData) {
-            write({ type: 'insert', value: item });
-          }
-          commit();
-          logger.debug('Initialized with SSR data (TanStack DB only)', {
-            collection,
-            count: initialData.length,
-          });
-        }
-
-        // Step 2: Wait for initialization before subscribing (async)
+        // Initialize subscription variable
         let subscription: (() => void) | null = null;
 
         // Checkpoint persistence helpers
@@ -543,15 +480,112 @@ export function convexCollectionOptions<T extends object>({
           }
         };
 
-        // Start async initialization + subscription
+        // Start async initialization + data loading + subscription
         (async () => {
           try {
-            // Wait for initialization before setting up subscriptions
-            await initPromise;
-            logger.debug('Setting up Convex subscription', { collection });
+            // ═══════════════════════════════════════════════════════
+            // STEP 1: Wait for initialization AND IndexedDB to load
+            // ═══════════════════════════════════════════════════════
+            await Promise.all([initPromise, persistenceReadyPromise]);
+
+            logger.info('Initialization complete - IndexedDB loaded', {
+              collection,
+              yjsDocumentCount: ymap.size,
+              hasSSRData: !!initialData && initialData.length > 0,
+            });
+
+            // ═══════════════════════════════════════════════════════
+            // STEP 2: Merge SSR data into Yjs using CRDT semantics
+            // IndexedDB loaded first, now merge fresh SSR data
+            // ═══════════════════════════════════════════════════════
+            if (initialData && initialData.length > 0) {
+              logger.info('Merging SSR data into Yjs after IndexedDB', {
+                collection,
+                ssrCount: initialData.length,
+                cachedCount: ymap.size,
+              });
+
+              ydoc.transact(() => {
+                for (const item of initialData) {
+                  const key = String(getKey(item));
+
+                  // Get existing Y.Map or create new one
+                  let itemYMap = ymap.get(key) as Y.Map<any> | undefined;
+                  if (!itemYMap) {
+                    itemYMap = new Y.Map();
+                    ymap.set(key, itemYMap);
+                  }
+
+                  // CRDT merge: Update all fields from SSR data
+                  // Yjs automatically handles conflicts based on last-write-wins semantics
+                  Object.entries(item).forEach(([k, v]) => {
+                    itemYMap.set(k, v);
+                  });
+                }
+              }, YjsOrigin.SSRInit);
+
+              logger.info('SSR data merged into Yjs', {
+                collection,
+                finalCount: ymap.size,
+              });
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // STEP 3: Sync Yjs state to TanStack DB
+            // After IndexedDB + SSR merge, sync final state to TanStack DB
+            // ═══════════════════════════════════════════════════════
+            if (ymap.size > 0) {
+              logger.info('Triggering observer to sync Yjs to TanStack DB', {
+                collection,
+                yjsCount: ymap.size,
+              });
+
+              // Manually sync all Yjs data to TanStack DB
+              // Direct write since Yjs already contains the SSR state
+              const { begin, write, commit } = syncParams;
+              begin();
+
+              ymap.forEach((itemYMap, _key) => {
+                if (itemYMap instanceof Y.Map) {
+                  const item = itemYMap.toJSON() as T;
+                  write({ type: 'update', value: item });
+                }
+              });
+
+              commit();
+
+              logger.info('Yjs state synced to TanStack DB', {
+                collection,
+                count: ymap.size,
+              });
+            } else {
+              logger.debug('No data in Yjs - starting fresh', {
+                collection,
+              });
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // STEP 4: TanStack DB is now synced
+            // Final merged state from IndexedDB + SSR is now in TanStack DB
+            // ═══════════════════════════════════════════════════════
+
+            logger.debug('TanStack DB synced from Yjs', {
+              collection,
+              yjsCount: ymap.size,
+            });
+
+            // ═══════════════════════════════════════════════════════
+            // STEP 5: Set up Convex subscription for real-time sync
+            // State vector ensures server only sends diffs we don't have
+            // ═══════════════════════════════════════════════════════
 
             // Load persisted checkpoint
             const checkpoint = loadCheckpoint();
+
+            logger.debug('Starting Convex subscription', {
+              collection,
+              checkpoint,
+            });
 
             // Encode client's state vector for gap-free sync
             // This tells server exactly what we know, enabling minimal diff computation
@@ -602,6 +636,32 @@ export function convexCollectionOptions<T extends object>({
 
                         restoredDoc.destroy();
 
+                        // CRITICAL FIX: Directly sync all items to TanStack DB
+                        // Snapshot restore uses YjsOrigin.Snapshot, but we need explicit sync
+                        if (syncParams) {
+                          const { begin, write, commit } = syncParams;
+                          try {
+                            begin();
+                            ymap.forEach((itemYMap, _key) => {
+                              if (itemYMap instanceof Y.Map) {
+                                const item = itemYMap.toJSON() as T;
+                                write({ type: 'update', value: item });
+                              }
+                            });
+                            commit();
+
+                            logger.debug('Synced snapshot to TanStack DB', {
+                              collection,
+                              itemCount: ymap.size,
+                            });
+                          } catch (error) {
+                            logger.error('Failed to sync snapshot to TanStack DB', {
+                              collection,
+                              error,
+                            });
+                          }
+                        }
+
                         logger.info('Snapshot restored', {
                           collection,
                           documentCount: ymap.size,
@@ -611,6 +671,20 @@ export function convexCollectionOptions<T extends object>({
 
                       case 'diff':
                       case 'delta': {
+                        // Log Yjs state BEFORE applying subscription delta
+                        const yjsStateBefore = change.documentId
+                          ? (ymap.get(change.documentId) as Y.Map<any>)?.toJSON()
+                          : null;
+
+                        logger.info('Applying subscription delta', {
+                          collection,
+                          documentId: change.documentId,
+                          operationType: change.operationType,
+                          version: change.version,
+                          deltaSize: change.crdtBytes.byteLength,
+                          yjsStateBefore,
+                        });
+
                         // Both diffs and deltas use UpdateV2 format
                         // Apply as normal CRDT update - Yjs automatically merges
                         Y.applyUpdateV2(
@@ -619,12 +693,56 @@ export function convexCollectionOptions<T extends object>({
                           YjsOrigin.Subscription
                         );
 
-                        logger.debug('Applied CRDT update', {
+                        // Log Yjs state AFTER applying subscription delta
+                        const yjsStateAfter = change.documentId
+                          ? (ymap.get(change.documentId) as Y.Map<any>)?.toJSON()
+                          : null;
+
+                        logger.info('Applied subscription delta', {
                           collection,
                           documentId: change.documentId,
                           operationType: change.operationType,
                           version: change.version,
+                          yjsStateAfter,
                         });
+
+                        // CRITICAL FIX: Sync ALL Yjs documents to TanStack DB
+                        // After applying delta, Yjs state is updated but we need to ensure
+                        // TanStack DB reflects the complete Yjs state, not just the changed document
+                        // This handles cases where delta creates new documents or merges with existing ones
+                        if (syncParams) {
+                          const { begin, write, commit } = syncParams;
+                          try {
+                            begin();
+
+                            // Sync all documents from Yjs to TanStack DB
+                            ymap.forEach((itemYMap, _key) => {
+                              if (itemYMap instanceof Y.Map) {
+                                const item = itemYMap.toJSON() as T;
+                                write({ type: 'update', value: item });
+                              }
+                            });
+
+                            commit();
+
+                            logger.debug(
+                              'Synced all Yjs state to TanStack DB after subscription delta',
+                              {
+                                collection,
+                                yjsMapSize: ymap.size,
+                                triggeringDocId: change.documentId,
+                              }
+                            );
+                          } catch (error) {
+                            logger.error(
+                              'Failed to sync Yjs state to TanStack DB after subscription delta',
+                              {
+                                collection,
+                                error,
+                              }
+                            );
+                          }
+                        }
                         break;
                       }
 
@@ -645,8 +763,6 @@ export function convexCollectionOptions<T extends object>({
                     count: changes.length,
                     newCheckpoint,
                   });
-
-                  // Note: Yjs observer (set up earlier) will automatically sync changes to TanStack DB
                 } catch (error: any) {
                   logger.error('Failed to apply CRDT deltas from subscription', {
                     error: error.message,
@@ -670,10 +786,15 @@ export function convexCollectionOptions<T extends object>({
 
         // Return cleanup function (subscription might not be ready yet)
         return () => {
-          logger.debug('Cleaning up Convex subscription', { collection });
+          logger.debug('Cleaning up Convex subscription and persistence', { collection });
+
+          // Cleanup subscription
           if (subscription) {
             subscription();
           }
+
+          // Cleanup IndexedDB persistence connection
+          persistence.destroy();
         };
       },
     },
@@ -681,9 +802,17 @@ export function convexCollectionOptions<T extends object>({
 }
 
 /**
- * Step 2: Wrap collection with offline support.
+ * ═══════════════════════════════════════════════════════════
+ * LAYER 1: Offline Reconnect (Retry Layer)
+ * ═══════════════════════════════════════════════════════════
  *
- * This implements the CORRECT pattern:
+ * Wraps a TanStack DB collection with offline reconnect capabilities.
+ * Queues failed mutations and retries them when connection is restored.
+ *
+ * This layer does NOT handle storage - that's Yjs IndexedDB's job.
+ * It ONLY handles retry logic and leadership coordination.
+ *
+ * Architecture:
  * - Wraps collection ONCE with startOfflineExecutor
  * - Returns raw collection (NO CUSTOM WRAPPER)
  * - Uses beforeRetry filter for stale transactions
@@ -694,28 +823,35 @@ export function convexCollectionOptions<T extends object>({
  * @example
  * ```typescript
  * import { createCollection } from '@tanstack/react-db'
- * import { convexCollectionOptions, createConvexCollection } from '@trestleinc/convex-replicate-core'
+ * import { convexCollectionOptions, handleReconnect } from '@trestleinc/replicate/client'
  *
- * // Step 1: Create raw collection with ALL config
+ * // Layer 3: TanStack DB (reactive queries)
+ * // Layer 2: Yjs + IndexedDB (source of truth) - configured via convexCollectionOptions
  * const rawCollection = createCollection(
  *   convexCollectionOptions<Task>({
  *     convexClient,
- *     api: api.tasks,
+ *     api: {
+ *       stream: api.tasks.stream,
+ *       insertDocument: api.tasks.insertDocument,
+ *       updateDocument: api.tasks.updateDocument,
+ *       deleteDocument: api.tasks.deleteDocument,
+ *       getProtocolVersion: api.tasks.getProtocolVersion,
+ *     },
  *     collection: 'tasks',
  *     getKey: (task) => task.id,
  *     initialData,
  *   })
  * )
  *
- * // Step 2: Wrap with offline support - params automatically extracted!
- * const collection = createConvexCollection(rawCollection)
+ * // Layer 1: Offline reconnect (retry layer)
+ * const collection = handleReconnect(rawCollection)
  *
  * // Use like a normal TanStack DB collection
  * const tx = collection.insert({ id: '1', text: 'Buy milk', isCompleted: false })
  * await tx.isPersisted.promise  // Built-in promise (not custom awaitReplication)
  * ```
  */
-export function createConvexCollection<T extends object>(
+export function handleReconnect<T extends object>(
   rawCollection: Collection<T>
 ): ConvexCollection<T> {
   // Extract config from rawCollection
@@ -725,12 +861,12 @@ export function createConvexCollection<T extends object>(
 
   if (!convexClient || !collection) {
     throw new Error(
-      'createConvexCollection requires a collection created with convexCollectionOptions. ' +
+      'handleReconnect requires a collection created with convexCollectionOptions. ' +
         'Make sure you pass convexClient and collection to convexCollectionOptions.'
     );
   }
 
-  logger.info('Creating Convex collection with offline support', { collection });
+  logger.info('Creating Convex collection with offline reconnect support', { collection });
 
   // Create offline executor (wraps collection ONCE)
   const offline: OfflineExecutor = startOfflineExecutor({

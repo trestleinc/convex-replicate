@@ -7,7 +7,7 @@
  * // src/useTasks.ts
  * import {
  *   convexCollectionOptions,
- *   createConvexCollection,
+ *   handleReconnect,
  *   type ConvexCollection,
  * } from '@trestleinc/replicate/client';
  * ```
@@ -33,13 +33,17 @@ export {
 // TanStack DB collection integration
 export {
   convexCollectionOptions,
-  createConvexCollection,
+  handleReconnect,
   type ConvexCollection,
   type ConvexCollectionOptionsConfig,
 } from './collection.js';
 
-// Re-export Yjs for convenience
+// Re-export Yjs and IndexedDB persistence for advanced usage
 export * as Y from 'yjs';
+export { IndexeddbPersistence } from 'y-indexeddb';
+
+// Re-export shared types
+export { OperationType } from '../component/shared.js';
 
 // Re-export TanStack DB offline utilities
 export { NonRetriableError } from '@tanstack/offline-transactions';
