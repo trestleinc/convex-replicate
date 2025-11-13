@@ -83,6 +83,7 @@
     "@logtape/logtape": "1.1.2",
     "@tanstack/offline-transactions": "0.1.3",
     "idb-keyval": "^6.2.2",
+    "y-indexeddb": "^9.0.12",
     "yjs": "13.6.27"
   },
   "peerDependencies": {

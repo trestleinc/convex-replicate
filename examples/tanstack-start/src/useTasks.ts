@@ -1,7 +1,7 @@
 import { createCollection } from '@tanstack/react-db';
 import {
   convexCollectionOptions,
-  createConvexCollection,
+  handleReconnect,
   type ConvexCollection,
 } from '@trestleinc/replicate/client';
 import { api } from '../convex/_generated/api';
@@ -22,24 +22,26 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
     tasksCollection = null;
 
     if (!tasksCollection) {
-      // Step 1: Create raw collection with ALL config (params only passed once!)
-      tasksCollection = createConvexCollection(
-        createCollection(
-          convexCollectionOptions<Task>({
-            convexClient,
-            api: {
-              stream: api.tasks.stream,
-              insertDocument: api.tasks.insertDocument,
-              updateDocument: api.tasks.updateDocument,
-              deleteDocument: api.tasks.deleteDocument,
-              getProtocolVersion: api.tasks.getProtocolVersion,
-            },
-            collection: 'tasks',
-            getKey: (task) => task.id,
-            initialData,
-          })
-        )
+      // Layer 3: TanStack DB (reactive queries)
+      // Layer 2: Yjs + IndexedDB (source of truth) - configured via convexCollectionOptions
+      const rawCollection = createCollection(
+        convexCollectionOptions<Task>({
+          convexClient,
+          api: {
+            stream: api.tasks.stream,
+            insertDocument: api.tasks.insertDocument,
+            updateDocument: api.tasks.updateDocument,
+            deleteDocument: api.tasks.deleteDocument,
+            getProtocolVersion: api.tasks.getProtocolVersion,
+          },
+          collection: 'tasks',
+          getKey: (task) => task.id,
+          initialData,
+        })
       );
+
+      // Layer 1: Offline reconnect (retry layer)
+      tasksCollection = handleReconnect(rawCollection);
     }
     return tasksCollection;
   }, [initialData]);
