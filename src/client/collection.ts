@@ -16,6 +16,9 @@ const logger = getLogger(['convex-replicate', 'collection']);
 // Re-export shared enum for type-safe operation type handling
 export { OperationType } from '../component/shared.js';
 
+// Global cleanup tracking to prevent subscription leaks
+const cleanupFunctions = new Map<string, () => void>();
+
 // Yjs transaction origins (local and remote)
 export enum YjsOrigin {
   // Local mutations (from TanStack DB handlers)
@@ -30,6 +33,31 @@ export enum YjsOrigin {
 }
 
 /**
+ * SSR data format - supports both legacy (array) and enhanced (object with metadata)
+ */
+export type SSRData<T> =
+  | ReadonlyArray<T> // Legacy format: just array of documents
+  | {
+      // Enhanced format: documents + metadata + optional CRDT state
+      documents: ReadonlyArray<T>;
+      checkpoint?: { lastModified: number };
+      count?: number;
+      crdtBytes?: ArrayBuffer; // CRDT state for Yjs initialization
+    };
+
+/**
+ * Type predicate to distinguish enhanced SSR format from legacy array format
+ */
+function isEnhancedSSRFormat<T>(data: SSRData<T>): data is {
+  documents: ReadonlyArray<T>;
+  checkpoint?: { lastModified: number };
+  count?: number;
+  crdtBytes?: ArrayBuffer;
+} {
+  return !Array.isArray(data) && 'documents' in data;
+}
+
+/**
  * Configuration for convexCollectionOptions (Step 1)
  * All params go here - they'll be used to create the collection config
  */
@@ -37,8 +65,8 @@ export interface ConvexCollectionOptionsConfig<T extends object> {
   /** Function to extract unique key from items */
   getKey: (item: T) => string | number;
 
-  /** Optional initial data to populate collection */
-  initialData?: ReadonlyArray<T>;
+  /** Optional initial data to populate collection (supports both legacy array and enhanced object formats) */
+  initialData?: SSRData<T>;
 
   /** Convex client instance */
   convexClient: ConvexClient;
@@ -115,8 +143,23 @@ export function convexCollectionOptions<T extends object>({
   // LAYER 2: Yjs + IndexedDB Persistence (Source of Truth)
   // ═══════════════════════════════════════════════════════════
 
-  // Initialize Yjs document with persistent IndexedDB storage
-  const ydoc = new Y.Doc({ guid: collection });
+  // Generate or load stable client ID for this collection
+  // CRITICAL: Client ID must be stable across page refreshes to maintain CRDT causality
+  // Without this, Yjs will reject deltas from other clients after refresh due to Item ID mismatches
+  const clientIdKey = `convex-replicate:yjsClientId:${collection}`;
+  let clientId = Number.parseInt(localStorage.getItem(clientIdKey) || '0', 10);
+  if (!clientId) {
+    // Generate random client ID in valid Yjs range (0 to 2^31-1)
+    clientId = Math.floor(Math.random() * 2147483647);
+    localStorage.setItem(clientIdKey, clientId.toString());
+    logger.debug('Generated new stable client ID', { collection, clientId });
+  } else {
+    logger.debug('Loaded existing stable client ID', { collection, clientId });
+  }
+
+  // Initialize Yjs document with persistent IndexedDB storage and stable client ID
+  // Note: Using type assertion because Yjs types don't expose clientID option in TypeScript
+  const ydoc = new Y.Doc({ guid: collection, clientID: clientId } as any);
   const ymap = ydoc.getMap(collection);
 
   logger.info('Creating Yjs IndexedDB persistence', { collection });
@@ -181,7 +224,11 @@ export function convexCollectionOptions<T extends object>({
 
     try {
       // Query main table for documents that currently exist
-      const serverDocs = (await convexClient.query(api.ssrQuery, {})) as T[];
+      const serverResponse = await convexClient.query(api.ssrQuery, {});
+      // Handle both legacy array format and enhanced format with crdtBytes
+      const serverDocs = Array.isArray(serverResponse)
+        ? serverResponse
+        : ((serverResponse as any).documents as T[] | undefined) || [];
       const serverDocIds = new Set(serverDocs.map((doc) => String(getKey(doc))));
 
       // Find Yjs documents that don't exist in main table
@@ -395,20 +442,12 @@ export function convexCollectionOptions<T extends object>({
                 itemYMap.set(k, v);
               });
             } else {
-              // Create new Y.Map if doesn't exist (defensive)
-              const modifiedFields = mut.modified as Record<string, unknown>;
-              if (!modifiedFields) {
-                logger.warn('mut.modified is null/undefined for new item', {
-                  collection,
-                  key: String(mut.key),
-                });
-                return;
-              }
-              const newYMap = new Y.Map();
-              Object.entries(modifiedFields).forEach(([k, v]) => {
-                newYMap.set(k, v);
+              // Item should exist for update - if not, skip (don't create with wrong IDs)
+              logger.error('Update attempted on non-existent item - skipping', {
+                collection,
+                key: String(mut.key),
               });
-              ymap.set(String(mut.key), newYMap);
+              return;
             }
           });
         }, YjsOrigin.Update);
@@ -556,14 +595,45 @@ export function convexCollectionOptions<T extends object>({
 
     // Sync function for pulling data from server
     sync: {
+      rowUpdateMode: 'full', // We send complete documents from Yjs, not partial updates
       sync: (params: any) => {
         const { markReady } = params;
+
+        // Clean up any existing collection instance for this collection
+        // This prevents subscription leaks when collections are recreated (e.g., during HMR)
+        const existingCleanup = cleanupFunctions.get(collection);
+        if (existingCleanup) {
+          logger.debug('Cleaning up existing collection before recreation', { collection });
+          existingCleanup();
+          cleanupFunctions.delete(collection);
+        }
 
         // Store TanStack DB sync methods for snapshot restore
         syncParams = params;
 
         // Initialize subscription variable
         let subscription: (() => void) | null = null;
+
+        // Declare SSR variables
+        let ssrDocuments: ReadonlyArray<T> | undefined;
+        let ssrCheckpoint: { lastModified: number } | undefined;
+        let ssrCRDTBytes: ArrayBuffer | undefined;
+
+        // Parse initialData if provided
+        if (initialData) {
+          if (isEnhancedSSRFormat(initialData)) {
+            // Enhanced format: object with documents + metadata + optional CRDT
+            ssrDocuments = initialData.documents;
+            ssrCheckpoint = initialData.checkpoint;
+            ssrCRDTBytes = initialData.crdtBytes;
+          } else {
+            // Legacy format: just array of documents
+            ssrDocuments = initialData;
+          }
+        }
+
+        // NEW: Collect items for TanStack DB - defined in sync function scope
+        const initialItemsForTanStack: T[] = ssrDocuments ? [...ssrDocuments] : [];
 
         // Checkpoint persistence helpers
         const checkpointKey = `convex-replicate:checkpoint:${collection}`;
@@ -598,81 +668,37 @@ export function convexCollectionOptions<T extends object>({
             logger.info('Initialization complete - IndexedDB loaded', {
               collection,
               yjsDocumentCount: ymap.size,
-              hasSSRData: !!initialData && initialData.length > 0,
+              hasSSRData: !!ssrDocuments && ssrDocuments.length > 0,
+              hasSSRCRDT: !!ssrCRDTBytes,
             });
 
             // ═══════════════════════════════════════════════════════
-            // STEP 2: Merge SSR data into Yjs using CRDT semantics
-            // IndexedDB loaded first, now merge fresh SSR data
+            // CRITICAL: If SSR includes CRDT bytes, apply to Yjs FIRST
+            // This ensures late-joining clients get correct Item IDs
             // ═══════════════════════════════════════════════════════
-            if (initialData && initialData.length > 0) {
-              logger.info('Merging SSR data into Yjs after IndexedDB', {
+            if (ssrCRDTBytes) {
+              logger.info('Applying SSR CRDT state to Yjs (preserves Item IDs)', {
                 collection,
-                ssrCount: initialData.length,
+                crdtSize: ssrCRDTBytes.byteLength,
                 cachedCount: ymap.size,
               });
 
-              ydoc.transact(() => {
-                for (const item of initialData) {
-                  const key = String(getKey(item));
+              // Apply CRDT bytes to Yjs (preserves original Item IDs)
+              Y.applyUpdateV2(ydoc, new Uint8Array(ssrCRDTBytes), YjsOrigin.SSRInit);
 
-                  // Get existing Y.Map or create new one
-                  let itemYMap = ymap.get(key) as Y.Map<any> | undefined;
-                  if (!itemYMap) {
-                    itemYMap = new Y.Map();
-                    ymap.set(key, itemYMap);
-                  }
-
-                  // CRDT merge: Update all fields from SSR data
-                  // Yjs automatically handles conflicts based on last-write-wins semantics
-                  Object.entries(item).forEach(([k, v]) => {
-                    itemYMap.set(k, v);
-                  });
-                }
-              }, YjsOrigin.SSRInit);
-
-              logger.info('SSR data merged into Yjs', {
-                collection,
-                finalCount: ymap.size,
-              });
+              // Save checkpoint so subscription starts from correct point
+              if (ssrCheckpoint) {
+                saveCheckpoint(ssrCheckpoint);
+                logger.info('SSR CRDT applied - checkpoint saved', {
+                  collection,
+                  checkpoint: ssrCheckpoint.lastModified,
+                  yjsDocumentCount: ymap.size,
+                });
+              }
             }
 
             // ═══════════════════════════════════════════════════════
-            // STEP 3: Sync Yjs state to TanStack DB
-            // After IndexedDB + SSR merge, sync final state to TanStack DB
-            // ═══════════════════════════════════════════════════════
-            if (ymap.size > 0) {
-              logger.info('Triggering observer to sync Yjs to TanStack DB', {
-                collection,
-                yjsCount: ymap.size,
-              });
-
-              // Manually sync all Yjs data to TanStack DB
-              // Direct write since Yjs already contains the SSR state
-              const { begin, write, commit } = syncParams;
-              begin();
-
-              ymap.forEach((itemYMap, _key) => {
-                if (itemYMap instanceof Y.Map) {
-                  const item = itemYMap.toJSON() as T;
-                  write({ type: 'update', value: item });
-                }
-              });
-
-              commit();
-
-              logger.info('Yjs state synced to TanStack DB', {
-                collection,
-                count: ymap.size,
-              });
-            } else {
-              logger.debug('No data in Yjs - starting fresh', {
-                collection,
-              });
-            }
-
-            // ═══════════════════════════════════════════════════════
-            // STEP 4: Reconcile with main table
+            // STEP 3: Reconcile with main table
             // Remove any documents from Yjs that don't exist in main table
             // This handles deleted documents whose deltas are still in component
             // ═══════════════════════════════════════════════════════
@@ -690,264 +716,161 @@ export function convexCollectionOptions<T extends object>({
 
             // ═══════════════════════════════════════════════════════
             // STEP 5: Set up Convex subscription for real-time sync
-            // State vector ensures server only sends diffs we don't have
             // ═══════════════════════════════════════════════════════
 
-            // Load persisted checkpoint
-            const checkpoint = loadCheckpoint();
-
-            logger.debug('Starting Convex subscription', {
-              collection,
-              checkpoint,
-            });
-
-            // Encode client's state vector for gap-free sync
-            // This tells server exactly what we know, enabling minimal diff computation
-            const vector = Y.encodeStateVector(ydoc);
-
-            subscription = convexClient.onUpdate(
-              api.stream,
-              {
-                checkpoint,
-                vector: vector.buffer,
+            // Set up subscription with checkpoint-based incremental sync
+            try {
+              logger.debug('Setting up Convex subscription', {
+                collection,
+                checkpoint:
+                  initialItemsForTanStack.length > 0 ? { lastModified: 0 } : loadCheckpoint(),
                 limit: 100,
-              },
-              async (response) => {
-                // Destructure structured response from stream query
-                const { changes, checkpoint: newCheckpoint } = response;
+              });
 
-                try {
-                  logger.debug('Subscription update received', {
+              subscription = convexClient.onUpdate(
+                api.stream,
+                {
+                  checkpoint:
+                    initialItemsForTanStack.length > 0 ? { lastModified: 0 } : loadCheckpoint(),
+                  limit: 100,
+                },
+                async (response) => {
+                  const { changes, checkpoint: newCheckpoint } = response;
+
+                  logger.debug('Received subscription update', {
                     collection,
                     changeCount: changes.length,
                   });
 
-                  // Apply CRDT changes to Yjs (Yjs handles conflict resolution)
                   for (const change of changes) {
-                    switch (change.operationType) {
+                    const { operationType, crdtBytes, documentId } = change;
+
+                    switch (operationType) {
                       case 'snapshot': {
-                        // Full snapshot received - rebuild Y.Doc from snapshot
-                        logger.info('Received snapshot - rebuilding collection', {
+                        logger.info('Applying snapshot from server', {
                           collection,
-                          snapshotSize: change.crdtBytes.byteLength,
-                          timestamp: change.timestamp,
+                          snapshotSize: crdtBytes.byteLength,
                         });
 
-                        // Decode and restore snapshot
-                        const snapshotDecoded = Y.decodeSnapshotV2(
-                          new Uint8Array(change.crdtBytes)
-                        );
-                        const restoredDoc = Y.createDocFromSnapshot(ydoc, snapshotDecoded);
+                        // Apply snapshot to Yjs
+                        Y.applyUpdateV2(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Snapshot);
 
-                        // Clear existing Y.Doc content and copy snapshot data
-                        ydoc.transact(() => {
-                          ymap.clear();
-                          const restoredMap = restoredDoc.getMap(collection);
-                          restoredMap.forEach((value, key) => {
-                            ymap.set(key, value);
-                          });
-                        }, YjsOrigin.Snapshot);
+                        // Clear TanStack DB before syncing snapshot to avoid conflicts
+                        const {
+                          truncate,
+                          begin: snapshotBegin,
+                          write: snapshotWrite,
+                          commit: snapshotCommit,
+                        } = syncParams;
 
-                        restoredDoc.destroy();
+                        truncate(); // Clear existing data
 
-                        // CRITICAL FIX: Directly sync all items to TanStack DB
-                        // Snapshot restore uses YjsOrigin.Snapshot, but we need explicit sync
-                        if (syncParams) {
-                          const { begin, write, commit } = syncParams;
-                          try {
-                            begin();
-                            ymap.forEach((itemYMap, _key) => {
-                              if (itemYMap instanceof Y.Map) {
-                                const item = itemYMap.toJSON() as T;
-                                write({ type: 'update', value: item });
-                              }
-                            });
-                            commit();
-
-                            logger.debug('Synced snapshot to TanStack DB', {
-                              collection,
-                              itemCount: ymap.size,
-                            });
-                          } catch (error) {
-                            logger.error('Failed to sync snapshot to TanStack DB', {
-                              collection,
-                              error,
-                            });
+                        snapshotBegin();
+                        ymap.forEach((itemYMap) => {
+                          if (itemYMap instanceof Y.Map) {
+                            snapshotWrite({ type: 'insert', value: itemYMap.toJSON() });
                           }
-                        }
-
-                        logger.info('Snapshot restored', {
-                          collection,
-                          documentCount: ymap.size,
                         });
-
-                        // Reconcile after snapshot restore
-                        // Snapshots may include deleted documents from event log
-                        await reconcileWithMainTable();
+                        snapshotCommit();
                         break;
                       }
 
+                      case 'delta':
                       case 'diff':
-                      case 'delta': {
-                        logger.info('Applying subscription delta', {
+                      default:
+                        logger.debug('Applying delta from server', {
                           collection,
-                          documentId: change.documentId,
-                          operationType: change.operationType,
-                          version: change.version,
-                          deltaSize: change.crdtBytes.byteLength,
+                          documentId,
+                          deltaSize: crdtBytes.byteLength,
                         });
 
-                        // Capture item data BEFORE applying delta (for delete detection)
-                        // This is necessary because Yjs will remove the item before we can access it
-                        let beforeItem: T | null = null;
-                        if (change.documentId && ymap.has(change.documentId)) {
-                          const itemYMap = ymap.get(change.documentId) as Y.Map<any>;
-                          if (itemYMap) {
-                            beforeItem = itemYMap.toJSON() as T;
-                            logger.debug('Captured item before applying delta', {
-                              collection,
-                              documentId: change.documentId,
-                              item: beforeItem,
-                            });
-                          }
-                        }
+                        // Apply delta to Yjs
+                        Y.applyUpdateV2(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Subscription);
 
-                        // Apply CRDT delta to Yjs
-                        Y.applyUpdateV2(
-                          ydoc,
-                          new Uint8Array(change.crdtBytes),
-                          YjsOrigin.Subscription
-                        );
+                        // Sync affected document to TanStack DB if we know which one
+                        if (documentId) {
+                          const itemYMap = ymap.get(documentId);
+                          if (itemYMap instanceof Y.Map) {
+                            const { begin, write, commit } = syncParams;
+                            const item = itemYMap.toJSON() as T;
 
-                        // Check if item was deleted by comparing before/after
-                        // Use !! to force boolean (prevents null && false → null)
-                        const wasDeleted = !!beforeItem && !ymap.has(change.documentId);
-
-                        logger.info('Applied subscription delta', {
-                          collection,
-                          documentId: change.documentId,
-                          operationType: change.operationType,
-                          version: change.version,
-                          wasDeleted,
-                        });
-
-                        // Sync changes to TanStack DB
-                        if (syncParams) {
-                          const { begin, write, commit } = syncParams;
-                          try {
+                            // Try update first, fall back to insert if item doesn't exist
+                            // TanStack DB only supports 'insert', 'update', 'delete' (NO 'upsert')
                             begin();
-
-                            if (wasDeleted) {
-                              // Handle delete using captured data
-                              logger.info('Syncing delete to TanStack DB using captured data', {
+                            try {
+                              write({ type: 'update', value: item });
+                              commit();
+                              logger.debug('Updated document in TanStack DB', {
                                 collection,
-                                documentId: change.documentId,
-                                item: beforeItem,
+                                documentId,
                               });
-                              write({ type: 'delete', value: beforeItem });
-                            } else if (change.documentId) {
-                              // Only sync the SPECIFIC document that changed (not all docs!)
-                              const itemYMap = ymap.get(change.documentId);
-                              if (itemYMap instanceof Y.Map) {
-                                const item = itemYMap.toJSON() as T;
-                                logger.info('Syncing update to TanStack DB for changed document', {
-                                  collection,
-                                  documentId: change.documentId,
-                                });
-                                write({ type: 'update', value: item });
-                              } else {
-                                // Document doesn't exist in Yjs - skip syncing
-                                // This happens when Client A receives echo of its own delete
-                                logger.debug(
-                                  'Skipping sync - document not found after applying delta',
-                                  {
-                                    collection,
-                                    documentId: change.documentId,
-                                  }
-                                );
-                              }
-                            } else {
-                              // No documentId - skip syncing (shouldn't happen for delta operations)
-                              logger.debug('Skipping sync - no documentId provided', {
+                            } catch {
+                              // Item doesn't exist yet, insert it
+                              write({ type: 'insert', value: item });
+                              commit();
+                              logger.debug('Inserted new document in TanStack DB', {
                                 collection,
-                                operationType: change.operationType,
+                                documentId,
                               });
                             }
-
-                            commit();
-
-                            logger.debug(
-                              'Synced Yjs state to TanStack DB after subscription delta',
-                              {
-                                collection,
-                                yjsMapSize: ymap.size,
-                                triggeringDocId: change.documentId,
-                                wasDeleted,
-                              }
-                            );
-                          } catch (error) {
-                            logger.error(
-                              'Failed to sync Yjs state to TanStack DB after subscription delta',
-                              {
-                                collection,
-                                error,
-                              }
-                            );
+                          } else {
+                            // Document doesn't exist in Yjs (was deleted)
+                            // Reconciliation will handle cleanup
+                            logger.debug('Document not found in Yjs after delta - likely deleted', {
+                              collection,
+                              documentId,
+                            });
                           }
                         }
                         break;
-                      }
-
-                      default: {
-                        logger.warn('Unknown operationType - skipping', {
-                          collection,
-                          operationType: change.operationType,
-                        });
-                      }
                     }
                   }
 
-                  // Save new checkpoint for next sync
+                  // Save checkpoint
                   saveCheckpoint(newCheckpoint);
 
-                  logger.debug('Successfully processed changes', {
+                  logger.debug('Subscription update processed', {
                     collection,
-                    count: changes.length,
                     newCheckpoint,
-                    yjsMapSizeAfter: ymap.size,
                   });
-                } catch (error: any) {
-                  logger.error('Failed to apply CRDT deltas from subscription', {
-                    error: error.message,
-                    errorName: error.name,
-                    stack: error?.stack,
-                    collection,
-                    changeCount: changes.length,
-                  });
-                  throw error; // Re-throw to prevent silent failures
                 }
-              }
-            );
+              );
 
+              logger.info('Convex subscription established', { collection });
+            } catch (subscriptionError) {
+              logger.error('Failed to setup subscription', {
+                collection,
+                error: subscriptionError,
+              });
+              throw subscriptionError;
+            }
+
+            // Mark collection as ready
             markReady();
+            logger.info('Collection initialized and ready', { collection });
           } catch (error) {
-            logger.error('Failed to initialize or setup subscription', { error, collection });
-            // Mark ready anyway to avoid blocking the collection
-            markReady();
+            logger.error('Failed to initialize collection', { error, collection });
+            markReady(); // Mark ready anyway to avoid blocking
           }
         })();
 
-        // Return cleanup function (subscription might not be ready yet)
-        return () => {
-          logger.debug('Cleaning up Convex subscription and persistence', { collection });
+        // Return initial data and cleanup function
+        return {
+          initialData: initialItemsForTanStack,
+          cleanup: () => {
+            logger.debug('Cleaning up Convex subscription and persistence', { collection });
 
-          // Cleanup subscription
-          if (subscription) {
-            subscription();
-          }
+            // Cleanup subscription
+            if (subscription) {
+              subscription();
+            }
 
-          // Cleanup IndexedDB persistence connection
-          persistence.destroy();
+            // Cleanup IndexedDB persistence connection
+            persistence.destroy();
+
+            // Track cleanup for HMR
+            cleanupFunctions.delete(collection);
+          },
         };
       },
     },

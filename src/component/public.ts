@@ -208,38 +208,7 @@ export const stream = query({
         );
       }
 
-      // If client sent state vector, compute MINIMAL diff from snapshot
-      // This preserves client's offline changes via CRDT merge!
-      if (args.vector) {
-        // Decode snapshot and compute diff against client's state
-        const ydoc = new Y.Doc({ guid: args.collection });
-        const snapshotDecoded = Y.decodeSnapshotV2(new Uint8Array(snapshot.snapshotBytes));
-        const snapshotDoc = Y.createDocFromSnapshot(ydoc, snapshotDecoded);
-
-        // Compute what client is missing (diff = snapshot - clientState)
-        const diff = Y.encodeStateAsUpdateV2(snapshotDoc, new Uint8Array(args.vector));
-
-        // Cleanup
-        snapshotDoc.destroy();
-        ydoc.destroy();
-
-        return {
-          changes: [
-            {
-              crdtBytes: diff.buffer as ArrayBuffer,
-              version: 0,
-              timestamp: snapshot.createdAt,
-              operationType: OperationType.Diff,
-            },
-          ],
-          checkpoint: {
-            lastModified: snapshot.latestCompactionTimestamp,
-          },
-          hasMore: false,
-        };
-      }
-
-      // No state vector - send full snapshot (fallback for older clients)
+      // Send full snapshot (no diff computation to avoid state vector timing issues)
       return {
         changes: [
           {
@@ -306,6 +275,95 @@ export const getSchemaVersion = query({
 
     return {
       schemaVersion: migrationRecord?.version ?? 1,
+    };
+  },
+});
+
+/**
+ * Get initial CRDT state for a collection (for SSR).
+ * Returns latest snapshot if available, otherwise reconstructs from deltas.
+ * Used by clients to initialize Yjs with correct Item IDs.
+ *
+ * @param collection - Collection identifier
+ * @returns CRDT bytes (snapshot or merged deltas) + checkpoint, or null if empty
+ */
+export const getInitialState = query({
+  args: {
+    collection: v.string(),
+  },
+  returns: v.union(
+    v.object({
+      crdtBytes: v.bytes(),
+      checkpoint: v.object({
+        lastModified: v.number(),
+      }),
+    }),
+    v.null()
+  ),
+  handler: async (ctx, args) => {
+    const logger = getLogger(['ssr']);
+
+    // Try to fetch latest snapshot first (most efficient)
+    const snapshot = await ctx.db
+      .query('snapshots')
+      .withIndex('by_collection', (q) => q.eq('collection', args.collection))
+      .order('desc')
+      .first();
+
+    if (snapshot) {
+      logger.info('Serving initial state from snapshot', {
+        collection: args.collection,
+        snapshotSize: snapshot.snapshotBytes.byteLength,
+        checkpoint: snapshot.latestCompactionTimestamp,
+      });
+
+      return {
+        crdtBytes: snapshot.snapshotBytes,
+        checkpoint: {
+          lastModified: snapshot.latestCompactionTimestamp,
+        },
+      };
+    }
+
+    // No snapshot - reconstruct from all deltas
+    const deltas = await ctx.db
+      .query('documents')
+      .withIndex('by_collection', (q) => q.eq('collection', args.collection))
+      .collect();
+
+    if (deltas.length === 0) {
+      logger.info('No initial state available - collection is empty', {
+        collection: args.collection,
+      });
+      return null;
+    }
+
+    logger.info('Reconstructing initial state from deltas', {
+      collection: args.collection,
+      deltaCount: deltas.length,
+    });
+
+    // Sort by timestamp (chronological order)
+    const sorted = deltas.sort((a, b) => a.timestamp - b.timestamp);
+
+    // Merge all deltas into single update
+    const updates = sorted.map((d) => new Uint8Array(d.crdtBytes));
+    const merged = Y.mergeUpdates(updates);
+
+    logger.info('Initial state reconstructed', {
+      collection: args.collection,
+      originalSize: updates.reduce((sum, u) => sum + u.byteLength, 0),
+      mergedSize: merged.byteLength,
+      compressionRatio: (
+        updates.reduce((sum, u) => sum + u.byteLength, 0) / merged.byteLength
+      ).toFixed(2),
+    });
+
+    return {
+      crdtBytes: merged.buffer as ArrayBuffer,
+      checkpoint: {
+        lastModified: sorted[sorted.length - 1].timestamp,
+      },
     };
   },
 });

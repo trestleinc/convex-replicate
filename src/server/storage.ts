@@ -106,9 +106,9 @@ export class Replicate<T extends object> {
    *
    * This query fetches documents directly from the main application table,
    * returning plain JSON objects suitable for server-side rendering.
-   * Does NOT include CRDT bytes.
+   * Optionally includes checkpoint information for efficient CRDT sync.
    *
-   * @param opts - Optional hooks for permissions and transformation
+   * @param opts - Optional hooks for permissions, transformation, and metadata
    * @returns Convex query function
    */
   createSSRQuery(opts?: {
@@ -117,12 +117,23 @@ export class Replicate<T extends object> {
       collection: string
     ) => void | Promise<void>;
     transform?: (docs: T[]) => T[] | Promise<T[]>;
+    includeMetadata?: boolean; // Include checkpoint and count information
+    includeCRDTState?: boolean; // Include CRDT bytes for Yjs initialization
   }) {
     const collection = this.collectionName;
+    const component = this.component;
 
     return queryGeneric({
       args: {},
-      returns: v.any(), // Array of materialized documents
+      returns:
+        opts?.includeMetadata || opts?.includeCRDTState
+          ? v.object({
+              documents: v.any(),
+              checkpoint: v.optional(v.object({ lastModified: v.number() })),
+              count: v.number(),
+              crdtBytes: v.optional(v.bytes()), // CRDT state for Yjs initialization
+            })
+          : v.any(), // Backward compatible: just array of documents
       handler: async (ctx) => {
         // Permission check hook
         if (opts?.checkRead) {
@@ -137,6 +148,39 @@ export class Replicate<T extends object> {
           docs = await opts.transform(docs);
         }
 
+        // If metadata or CRDT state requested, build enhanced response
+        if (opts?.includeMetadata || opts?.includeCRDTState) {
+          const latestTimestamp =
+            docs.length > 0 ? Math.max(...docs.map((doc: any) => doc.timestamp || 0)) : 0;
+
+          const response: {
+            documents: T[];
+            checkpoint?: { lastModified: number };
+            count: number;
+            crdtBytes?: ArrayBuffer;
+          } = {
+            documents: docs,
+            checkpoint: latestTimestamp > 0 ? { lastModified: latestTimestamp } : undefined,
+            count: docs.length,
+          };
+
+          // Fetch CRDT state from component if requested
+          if (opts?.includeCRDTState) {
+            const crdtState = await ctx.runQuery(component.public.getInitialState, {
+              collection,
+            });
+
+            if (crdtState) {
+              response.crdtBytes = crdtState.crdtBytes;
+              // Use component checkpoint if available (more accurate)
+              response.checkpoint = crdtState.checkpoint;
+            }
+          }
+
+          return response;
+        }
+
+        // Backward compatible: just return array
         return docs;
       },
     });

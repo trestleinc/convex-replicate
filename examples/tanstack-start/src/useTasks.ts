@@ -17,10 +17,10 @@ export interface Task {
 let tasksCollection: ConvexCollection<Task> | null = null;
 
 export function useTasks(initialData?: ReadonlyArray<Task>) {
+  // biome-ignore lint/correctness/useExhaustiveDependencies: initialData only used on first render - DO NOT add to deps as it would recreate Y.Doc and corrupt CRDT state
   return useMemo(() => {
-    // Force recreation to pick up code changes (temporary fix for HMR)
-    tasksCollection = null;
-
+    // Create singleton collection - persist across renders to maintain Y.Doc state
+    // DO NOT force recreation as it creates new Y.Doc instances causing CRDT state corruption
     if (!tasksCollection) {
       // Layer 3: TanStack DB (reactive queries)
       // Layer 2: Yjs + IndexedDB (source of truth) - configured via convexCollectionOptions
@@ -45,5 +45,5 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
       tasksCollection = handleReconnect(rawCollection);
     }
     return tasksCollection;
-  }, [initialData]);
+  }, []); // Empty deps - only create once per session to prevent Y.Doc recreation
 }

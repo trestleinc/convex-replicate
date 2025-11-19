@@ -240,11 +240,15 @@ function LiveTasksView({ initialTasks }: { initialTasks: ReadonlyArray<Task> }) 
 }
 
 function HomeComponent() {
-  const { tasks: initialTasks } = Route.useLoaderData();
+  const { tasks: ssrData } = Route.useLoaderData();
+
+  // Extract documents array for static display
+  // Pass full enhanced format (with crdtBytes) for live initialization
+  const documents = Array.isArray(ssrData) ? ssrData : ssrData.documents;
 
   return (
-    <ClientOnly fallback={<StaticTasksView tasks={initialTasks} />}>
-      <LiveTasksView initialTasks={initialTasks} />
+    <ClientOnly fallback={<StaticTasksView tasks={documents} />}>
+      <LiveTasksView initialTasks={ssrData} />
     </ClientOnly>
   );
 }

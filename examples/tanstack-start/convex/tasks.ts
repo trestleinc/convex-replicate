@@ -25,11 +25,17 @@ const tasksStorage = new Replicate<Task>(components.replicate, 'tasks');
 export const stream = tasksStorage.createStreamQuery();
 
 /**
- * SSR Query (for server-side rendering)
+ * SSR Query (for server-side rendering with CRDT state)
  *
- * This query returns materialized JSON documents from the main table.
- * Used for initial page load to provide fast SSR hydration.
- * Does NOT include CRDT bytes - just plain objects.
+ * This query returns:
+ * - Materialized JSON documents from the main table (for immediate UI)
+ * - CRDT bytes from component (for correct Yjs initialization with Item IDs)
+ * - Checkpoint for efficient incremental sync
+ *
+ * The CRDT bytes ensure late-joining clients get the exact same Yjs structure
+ * as existing clients, preserving CRDT Item IDs for proper conflict resolution.
+ *
+ * Returns: { documents: Task[], crdtBytes?: ArrayBuffer, checkpoint?: { lastModified: number }, count: number }
  */
 export const getTasks = tasksStorage.createSSRQuery();
 
