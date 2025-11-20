@@ -524,7 +524,49 @@ export function convexCollectionOptions<T extends object>({
             }
 
             // ═══════════════════════════════════════════════════════
-            // STEP 3: Reconcile with main table
+            // STEP 2: Merge SSR documents into Yjs using CRDT semantics
+            // This handles plain document arrays from SSR loaders
+            // ═══════════════════════════════════════════════════════
+            if (ssrDocuments && ssrDocuments.length > 0) {
+              ydoc.transact(() => {
+                for (const item of ssrDocuments) {
+                  const key = String(getKey(item));
+
+                  // Get existing Y.Map or create new one
+                  let itemYMap = ymap.get(key) as Y.Map<unknown> | undefined;
+                  if (!itemYMap) {
+                    itemYMap = new Y.Map();
+                    ymap.set(key, itemYMap);
+                  }
+
+                  // CRDT merge: Update all fields from SSR data
+                  Object.entries(item as Record<string, unknown>).forEach(([k, v]) => {
+                    itemYMap.set(k, v);
+                  });
+                }
+              }, YjsOrigin.SSRInit);
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // STEP 3: Sync Yjs state to TanStack DB
+            // This ensures TanStack DB has the complete merged state
+            // ═══════════════════════════════════════════════════════
+            if (ymap.size > 0) {
+              const { begin, write, commit } = syncParams;
+              begin();
+
+              ymap.forEach((itemYMap, _key) => {
+                if (itemYMap instanceof Y.Map) {
+                  const item = itemYMap.toJSON() as T;
+                  write({ type: 'update', value: item });
+                }
+              });
+
+              commit();
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // STEP 4: Reconcile with main table
             // Remove any documents from Yjs that don't exist in main table
             // This handles deleted documents whose deltas are still in component
             // ═══════════════════════════════════════════════════════
