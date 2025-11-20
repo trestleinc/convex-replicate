@@ -3,7 +3,7 @@ import { IDBService } from './IDBService';
 import type { ConvexClient } from 'convex/browser';
 import { type IDBError, type IDBWriteError, NetworkError } from '../errors';
 
-class ProtocolMismatchError extends Data.TaggedError('ProtocolMismatchError')<{
+export class ProtocolMismatchError extends Data.TaggedError('ProtocolMismatchError')<{
   storedVersion: number;
   serverVersion: number;
 }> {}

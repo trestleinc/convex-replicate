@@ -5,10 +5,18 @@
  * This should be called once when your application starts.
  */
 
+import { Effect, Layer } from 'effect';
 import type { ConvexClient } from 'convex/browser';
 import type { FunctionReference } from 'convex/server';
-import { getStoredProtocolVersion, migrateLocalStorage, storeProtocolVersion } from './protocol.js';
+import {
+  getStoredProtocolVersion,
+  migrateLocalStorage,
+  storeProtocolVersion,
+  ensureProtocolVersion,
+} from './protocol.js';
 import { getLogger } from './logger.js';
+import { ProtocolService, ProtocolServiceLive } from './services/ProtocolService.js';
+import { IDBServiceLive } from './services/IDBService.js';
 
 const logger = getLogger(['convex-replicate', 'init']);
 
@@ -226,3 +234,85 @@ export async function resetProtocolStorage(): Promise<void> {
   await clearProtocolStorage();
   logger.info('Protocol storage reset');
 }
+
+// ============================================================================
+// Effect → Promise Boundary (Phase 4)
+// ============================================================================
+
+/**
+ * Global Protocol Initialization State
+ * @internal
+ */
+let protocolInitPromise: Promise<number> | null = null;
+
+/**
+ * Initialize protocol version check and migration (Effect-based).
+ *
+ * This is a Promise boundary - Effect is hidden from users.
+ * Called automatically by createConvexCollection before subscription setup.
+ *
+ * @returns Promise<number> - The current protocol version
+ */
+export const initializeProtocol = (
+  convexClient: ConvexClient,
+  api: { getProtocolVersion: any }
+): Promise<number> => {
+  if (protocolInitPromise !== null) {
+    return protocolInitPromise;
+  }
+
+  protocolInitPromise = Effect.runPromise(
+    ensureProtocolVersion(convexClient, api).pipe(
+      Effect.timeout('10 seconds'),
+      Effect.catchTag('TimeoutException', () => {
+        // Reset promise so next call retries
+        protocolInitPromise = null;
+        return Effect.logError('Protocol initialization timed out').pipe(
+          Effect.flatMap(() =>
+            Effect.fail(new Error('Protocol initialization timed out after 10 seconds'))
+          )
+        );
+      }),
+      Effect.catchAll((error) => {
+        // Reset promise so next call retries
+        protocolInitPromise = null;
+        return Effect.logError('Protocol initialization failed', error).pipe(
+          Effect.flatMap(() => Effect.fail(error))
+        );
+      })
+    )
+  );
+
+  return protocolInitPromise;
+};
+
+/**
+ * Verifies client and server protocol versions match (Effect-based).
+ * Called before establishing real-time subscription.
+ *
+ * @throws ProtocolMismatchError if versions incompatible
+ */
+export const checkProtocolCompatibility = async (
+  convexClient: ConvexClient,
+  api: { getProtocolVersion: any }
+): Promise<void> => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const protocol = yield* ProtocolService;
+
+      // Run migration if needed
+      yield* protocol.runMigration();
+
+      yield* Effect.logInfo('Protocol compatibility verified');
+    }).pipe(
+      Effect.provide(Layer.provide(ProtocolServiceLive(convexClient, api), IDBServiceLive)),
+      Effect.timeout('10 seconds'),
+      Effect.catchTag('ProtocolMismatchError', (error) => {
+        // Re-throw as regular error for user-facing API
+        return Effect.fail(
+          new Error(`Protocol version mismatch: ${error.message}. Please refresh the page.`)
+        );
+      })
+    )
+  );
+};

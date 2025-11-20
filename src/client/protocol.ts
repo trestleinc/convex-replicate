@@ -7,8 +7,23 @@
  * Philosophy: Minimal code - leverage IndexedDB primitives
  */
 
+import { Effect, Layer } from 'effect';
+import { Schema } from '@effect/schema';
 import { createStore, get, set, clear } from 'idb-keyval';
 import { getLogger } from './logger.js';
+import {
+  ProtocolService,
+  ProtocolServiceLive,
+  type ProtocolMismatchError,
+} from './services/ProtocolService.js';
+import { IDBServiceLive } from './services/IDBService.js';
+import {
+  ProtocolVersionError,
+  type NetworkError,
+  type IDBError,
+  type IDBWriteError,
+} from './errors/index.js';
+import type { ConvexClient } from 'convex/browser';
 
 const logger = getLogger(['convex-replicate', 'protocol']);
 
@@ -130,3 +145,71 @@ export async function getProtocolMetadata(): Promise<Record<string, any>> {
     return { version: 1 };
   }
 }
+
+// ============================================================================
+// Effect-Based Protocol Validation (Phase 4)
+// ============================================================================
+
+/**
+ * Protocol version schema validator.
+ * Validates that version is an integer between 1 and 99.
+ */
+export const ProtocolVersion = Schema.Number.pipe(
+  Schema.int(),
+  Schema.greaterThanOrEqualTo(1),
+  Schema.lessThanOrEqualTo(99),
+  Schema.annotations({
+    description: 'Valid protocol version (1-99)',
+  })
+);
+
+export type ProtocolVersion = Schema.Schema.Type<typeof ProtocolVersion>;
+
+/**
+ * Schema validation for protocol versions.
+ * Used internally by ProtocolService to validate stored/server versions.
+ */
+export const validateProtocolVersion = (version: unknown) =>
+  Schema.decodeUnknown(ProtocolVersion)(version).pipe(
+    Effect.mapError(
+      (_error) =>
+        new ProtocolVersionError({
+          expected: 1,
+          actual: typeof version === 'number' ? version : 0,
+          canMigrate: false,
+        })
+    )
+  );
+
+/**
+ * Main protocol initialization entry point using Effect.
+ *
+ * Flow:
+ * 1. Get stored version from IndexedDB via ProtocolService
+ * 2. Get server version from Convex via ProtocolService
+ * 3. If versions differ, run migration via ProtocolService
+ * 4. Store new version in IndexedDB
+ *
+ * This wraps ProtocolService.runMigration() for backward compatibility
+ * with existing code that calls ensureProtocolVersion directly.
+ */
+export const ensureProtocolVersion = (
+  convexClient: ConvexClient,
+  api: { getProtocolVersion: any }
+): Effect.Effect<number, NetworkError | IDBError | IDBWriteError | ProtocolMismatchError, never> =>
+  Effect.gen(function* () {
+    const protocol = yield* ProtocolService;
+
+    // Check and run migration if needed
+    yield* protocol.runMigration();
+
+    // Get final version
+    const version = yield* protocol.getStoredVersion();
+
+    yield* Effect.logInfo('Protocol version ensured', { version });
+
+    return version;
+  }).pipe(
+    Effect.provide(Layer.provide(ProtocolServiceLive(convexClient, api), IDBServiceLive)),
+    Effect.withSpan('protocol.ensure')
+  );
