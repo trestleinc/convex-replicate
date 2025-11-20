@@ -24,3 +24,17 @@ export { Replicate } from './storage.js';
 
 // Schema utilities
 export { replicatedTable, type ReplicationFields } from './schema.js';
+
+// Error types for server-side operations
+export {
+  ComponentWriteError,
+  MainTableWriteError,
+  VersionConflictError,
+  DualStorageError,
+  CRDTEncodingError,
+} from './errors.js';
+
+// Effect-based mutation functions
+export { insertDocumentEffect } from './mutations/insert.js';
+export { updateDocumentEffect } from './mutations/update.js';
+export { deleteDocumentEffect } from './mutations/delete.js';
