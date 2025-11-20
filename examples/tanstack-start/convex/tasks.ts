@@ -1,91 +1,36 @@
-import { Replicate } from '@trestleinc/replicate/server';
+import { defineReplicate } from '@trestleinc/replicate/server';
 import { components } from './_generated/api';
 import type { Task } from '../src/useTasks';
 
 /**
  * TanStack Start Example - Tasks Collection
  *
- * This demonstrates the Replicate pattern for ConvexReplicate.
- * Create one storage instance per collection, then use factory methods to
- * generate all needed queries and mutations.
+ * This demonstrates the defineReplicate builder for ConvexReplicate.
+ * One-step API generation for a complete replicated collection.
+ *
+ * Generated exports:
+ * - stream: CRDT stream query (for real-time sync with gap detection)
+ * - getTasks: SSR query (materialized docs + CRDT state for initial load)
+ * - insertDocument: Insert mutation (dual-storage)
+ * - updateDocument: Update mutation (dual-storage)
+ * - deleteDocument: Delete mutation (dual-storage with hard delete)
+ * - getProtocolVersion: Protocol version query (for client compatibility)
+ * - compact: Compaction mutation (for cron jobs, 90 day retention)
+ * - prune: Snapshot cleanup mutation (for cron jobs, 180 day retention)
  */
 
-// Create storage instance for 'tasks' collection
-const tasksStorage = new Replicate<Task>(components.replicate, 'tasks');
-
-/**
- * CRDT Stream Query (for real-time sync with gap detection)
- *
- * This query is used by the client for ongoing synchronization.
- * It returns CRDT bytes from the component, supporting:
- * - State vectors for efficient diffing
- * - Checkpoints for incremental sync
- * - Gap detection when deltas are compacted
- */
-export const stream = tasksStorage.createStreamQuery();
-
-/**
- * SSR Query (for server-side rendering with CRDT state)
- *
- * This query returns:
- * - Materialized JSON documents from the main table (for immediate UI)
- * - CRDT bytes from component (for correct Yjs initialization with Item IDs)
- * - Checkpoint for efficient incremental sync
- *
- * The CRDT bytes ensure late-joining clients get the exact same Yjs structure
- * as existing clients, preserving CRDT Item IDs for proper conflict resolution.
- *
- * Returns: { documents: Task[], crdtBytes?: ArrayBuffer, checkpoint?: { lastModified: number }, count: number }
- */
-export const getTasks = tasksStorage.createSSRQuery();
-
-/**
- * Insert Mutation (dual-storage)
- *
- * Writes to BOTH:
- * 1. Component (CRDT bytes for conflict resolution)
- * 2. Main table (materialized doc for efficient queries)
- */
-export const insertDocument = tasksStorage.createInsertMutation();
-
-/**
- * Update Mutation (dual-storage)
- *
- * Updates BOTH:
- * 1. Component (appends new CRDT delta)
- * 2. Main table (patches materialized doc)
- */
-export const updateDocument = tasksStorage.createUpdateMutation();
-
-/**
- * Delete Mutation (dual-storage with hard delete)
- *
- * Deletes from BOTH:
- * 1. Component (appends delete delta to event log - history preserved)
- * 2. Main table (hard delete - physically removes document)
- */
-export const deleteDocument = tasksStorage.createDeleteMutation();
-
-/**
- * Protocol Version Query
- *
- * Returns the current protocol version from the replicate component.
- * Used by clients to check compatibility and trigger protocol migrations.
- */
-export const getProtocolVersion = tasksStorage.createProtocolVersionQuery();
-
-/**
- * Compaction Mutation (for cron jobs)
- *
- * Compacts CRDT deltas older than 90 days into efficient snapshots.
- * Call this from a cron job (see convex/crons.ts).
- */
-export const compact = tasksStorage.createCompactMutation({ retentionDays: 90 });
-
-/**
- * Prune Mutation (for cron jobs)
- *
- * Deletes snapshots older than 180 days (keeps 2 most recent per collection).
- * Call this from a cron job (see convex/crons.ts).
- */
-export const prune = tasksStorage.createPruneMutation({ retentionDays: 180 });
+export const {
+  stream,
+  getTasks,
+  insertDocument,
+  updateDocument,
+  deleteDocument,
+  getProtocolVersion,
+  compact,
+  prune,
+} = defineReplicate<Task>({
+  component: components.replicate,
+  collection: 'tasks',
+  compaction: { retentionDays: 90 },
+  pruning: { retentionDays: 180 },
+});

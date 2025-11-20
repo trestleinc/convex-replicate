@@ -35,11 +35,10 @@ This is a **single package** that provides:
 │   ├── client/          # Client-side utilities (browser/React/Svelte)
 │   │   ├── index.ts     # Main exports (convexCollectionOptions, createConvexCollection)
 │   │   ├── collection.ts # TanStack DB + Yjs integration
-│   │   ├── storage.ts   # Replicate class (direct component access)
 │   │   └── logger.ts    # LogTape logger
 │   ├── server/          # Server-side utilities (Convex functions)
 │   │   ├── index.ts     # Main exports (replication helpers, schema utilities)
-│   │   ├── replication.ts # Dual-storage helpers
+│   │   ├── builder.ts   # defineReplicate() builder
 │   │   ├── schema.ts    # replicatedTable() helper
 │   │   └── ssr.ts       # SSR data loading (loadCollection)
 │   └── component/       # Internal Convex component (event-sourced CRDT storage)
@@ -213,42 +212,47 @@ export default defineSchema({
 - Users only define business logic fields
 - Enables dual-storage architecture
 
-### 3. Use Replicate Wrapper Class
+### 3. Define Convex Functions with defineReplicate Builder
 
 ```typescript
 // convex/tasks.ts
-import { Replicate } from '@trestleinc/replicate/server';  // IMPORTANT: Use /server!
+import { defineReplicate } from '@trestleinc/replicate/server';
 import { components } from './_generated/api';
 import type { Task } from '../src/useTasks';
 
-// Create storage instance for 'tasks' collection
-const tasksStorage = new Replicate<Task>(components.replicate, 'tasks');
-
-// Generate queries and mutations using factory methods
-export const stream = tasksStorage.createStreamQuery();
-export const getTasks = tasksStorage.createSSRQuery();
-export const insertDocument = tasksStorage.createInsertMutation();
-export const updateDocument = tasksStorage.createUpdateMutation();
-export const deleteDocument = tasksStorage.createDeleteMutation();
-export const getProtocolVersion = tasksStorage.createProtocolVersionQuery();
-
-// Export compact and prune functions for cron jobs
-export const compact = tasksStorage.createCompactMutation({ retentionDays: 90 });
-export const prune = tasksStorage.createPruneMutation({ retentionDays: 180 });
+// Define all queries and mutations using the builder
+export const {
+  stream,
+  getTasks,
+  insertDocument,
+  updateDocument,
+  deleteDocument,
+  getProtocolVersion,
+  compact,
+  prune
+} = defineReplicate<Task>({
+  component: components.replicate,
+  collection: 'tasks',
+  // Optional: customize compaction and pruning
+  compactionRetentionDays: 90,
+  pruneRetentionDays: 180,
+  // Optional: add hooks for permissions and lifecycle events
+  // hooks: { ... }
+});
 ```
 
-**What `Replicate` provides:**
+**What `defineReplicate` provides:**
 
-- `createStreamQuery()` - CRDT stream with gap detection support (for real-time sync)
-- `createSSRQuery()` - Materialized docs query (for server-side rendering)
-- `createInsertMutation()` - Dual-storage insert (component + main table)
-- `createUpdateMutation()` - Dual-storage update (component + main table)
-- `createDeleteMutation()` - Dual-storage delete (component + main table)
-- `createProtocolVersionQuery()` - Protocol version wrapper (required for client)
-- `createCompactMutation()` - Compaction function for cron jobs
-- `createPruneMutation()` - Snapshot cleanup function for cron jobs
+- `stream` - CRDT stream with gap detection support (for real-time sync)
+- `getTasks` - Materialized docs query (for server-side rendering)
+- `insertDocument` - Dual-storage insert (component + main table)
+- `updateDocument` - Dual-storage update (component + main table)
+- `deleteDocument` - Dual-storage delete (component + main table)
+- `getProtocolVersion` - Protocol version wrapper (required for client)
+- `compact` - Compaction function for cron jobs
+- `prune` - Snapshot cleanup function for cron jobs
 
-All factory methods support optional hooks for permissions and lifecycle events.
+All functions support optional hooks for permissions and lifecycle events via the `hooks` parameter.
 
 ### 4. Client-Side Integration (TanStack DB)
 
@@ -362,23 +366,26 @@ ConvexReplicate uses **Convex's built-in cron system** to automatically clean up
 
 ```typescript
 // convex/tasks.ts
-import { Replicate } from '@trestleinc/replicate/server';
+import { defineReplicate } from '@trestleinc/replicate/server';
 import { components } from './_generated/api';
 import type { Task } from '../src/useTasks';
 
-// Create storage instance
-const tasksStorage = new Replicate<Task>(components.replicate, 'tasks');
-
-export const stream = tasksStorage.createStreamQuery();
-export const getTasks = tasksStorage.createSSRQuery();
-export const insertDocument = tasksStorage.createInsertMutation();
-export const updateDocument = tasksStorage.createUpdateMutation();
-export const deleteDocument = tasksStorage.createDeleteMutation();
-export const getProtocolVersion = tasksStorage.createProtocolVersionQuery();
-
-// Export compact and prune for cron jobs
-export const compact = tasksStorage.createCompactMutation({ retentionDays: 90 });
-export const prune = tasksStorage.createPruneMutation({ retentionDays: 180 });
+// Define all functions including compact and prune
+export const {
+  stream,
+  getTasks,
+  insertDocument,
+  updateDocument,
+  deleteDocument,
+  getProtocolVersion,
+  compact,  // For cron jobs
+  prune     // For cron jobs
+} = defineReplicate<Task>({
+  component: components.replicate,
+  collection: 'tasks',
+  compactionRetentionDays: 90,
+  pruneRetentionDays: 180,
+});
 ```
 
 **Step 2: Create cron schedule file**
@@ -411,12 +418,26 @@ export default crons;
 
 ```typescript
 // convex/tasks.ts - Frequent compaction, short retention
-export const compact = tasksStorage.createCompactMutation({ retentionDays: 30 });
-export const prune = tasksStorage.createPruneMutation({ retentionDays: 90 });
+export const {
+  stream, getTasks, insertDocument, updateDocument, deleteDocument,
+  getProtocolVersion, compact, prune
+} = defineReplicate<Task>({
+  component: components.replicate,
+  collection: 'tasks',
+  compactionRetentionDays: 30,
+  pruneRetentionDays: 90,
+});
 
 // convex/users.ts - Infrequent compaction, long retention
-export const compact = usersStorage.createCompactMutation({ retentionDays: 365 });
-export const prune = usersStorage.createPruneMutation({ retentionDays: 730 });
+export const {
+  stream, getTasks, insertDocument, updateDocument, deleteDocument,
+  getProtocolVersion, compact, prune
+} = defineReplicate<User>({
+  component: components.replicate,
+  collection: 'users',
+  compactionRetentionDays: 365,
+  pruneRetentionDays: 730,
+});
 ```
 
 ```typescript
@@ -441,27 +462,53 @@ export default crons;
 
 ## Key API Concepts
 
-### Server-Side: Replicate Wrapper Class
+### Server-Side: defineReplicate Builder
 
 **IMPORTANT**: Import from `@trestleinc/replicate/server` for server-safe imports!
 
-The `Replicate<T>` class provides a type-safe wrapper for component operations. Instantiate once per collection:
+The `defineReplicate<T>()` builder provides a declarative API for creating all replication functions at once:
 
 ```typescript
-const storage = new Replicate<Task>(components.replicate, 'tasks');
+export const {
+  stream,
+  getTasks,
+  insertDocument,
+  updateDocument,
+  deleteDocument,
+  getProtocolVersion,
+  compact,
+  prune
+} = defineReplicate<Task>({
+  component: components.replicate,
+  collection: 'tasks',
+  compactionRetentionDays: 90,   // Optional, default: 90
+  pruneRetentionDays: 180,       // Optional, default: 180
+  hooks: {                        // Optional hooks for all operations
+    checkRead: (ctx) => { /* ... */ },
+    checkWrite: (ctx) => { /* ... */ },
+    checkDelete: (ctx) => { /* ... */ },
+    onInsert: (ctx, doc) => { /* ... */ },
+    onUpdate: (ctx, doc) => { /* ... */ },
+    onDelete: (ctx, id) => { /* ... */ },
+    transform: (doc) => { /* ... */ },  // Transform docs before returning (getTasks only)
+  }
+});
 ```
 
-**Factory Methods:**
-- **`createStreamQuery(opts?)`** - CRDT stream with gap detection (for real-time sync)
-- **`createSSRQuery(opts?)`** - Materialized docs query (for server-side rendering)
-- **`createInsertMutation(opts?)`** - Dual-storage insert (component + main table)
-- **`createUpdateMutation(opts?)`** - Dual-storage update (component + main table)
-- **`createDeleteMutation(opts?)`** - Dual-storage delete (component + main table)
+**Generated Functions:**
+- **`stream`** - CRDT stream with gap detection (for real-time sync)
+- **`getTasks`** - Materialized docs query (for server-side rendering)
+- **`insertDocument`** - Dual-storage insert (component + main table)
+- **`updateDocument`** - Dual-storage update (component + main table)
+- **`deleteDocument`** - Dual-storage delete (component + main table)
+- **`getProtocolVersion`** - Protocol version wrapper (required for client)
+- **`compact`** - Compaction function for cron jobs
+- **`prune`** - Snapshot cleanup function for cron jobs
 
-**Optional Hooks (all factory methods):**
+**Optional Hooks:**
 - `checkRead` / `checkWrite` / `checkDelete` - Permission guards
-- `onStream` / `onInsert` / `onUpdate` / `onDelete` - Lifecycle callbacks
-- `transform` - Transform docs before returning (SSR query only)
+- `onInsert` / `onUpdate` / `onDelete` - Lifecycle callbacks
+- `transform` - Transform docs before returning (getTasks only)
 
 ### Client-Side Collection Options
 
@@ -551,6 +598,17 @@ pnpm run dev  # Starts both Vite and Convex
 
 ### SSR Data Loading
 
+The `getTasks` query returns an enhanced SSR response with format:
+```typescript
+{
+  documents: T[];           // Array of documents
+  checkpoint?: string;      // Optional snapshot checkpoint
+  count?: number;          // Optional total count
+  crdtBytes?: ArrayBuffer; // Optional CRDT snapshot bytes
+}
+```
+
+**Usage in TanStack Start:**
 ```typescript
 // TanStack Start loader
 import { ConvexHttpClient } from 'convex/browser';
@@ -559,15 +617,15 @@ import { api } from '../convex/_generated/api';
 export const Route = createFileRoute('/tasks')({
   loader: async () => {
     const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
-    const tasks = await httpClient.query(api.tasks.getTasks); // SSR query
-    return { initialTasks: tasks };
+    const ssrData = await httpClient.query(api.tasks.getTasks);
+    return { initialTasks: ssrData.documents };  // Extract documents array
   },
 });
 
 // In component
 function TasksPage() {
   const { initialTasks } = Route.useLoaderData();
-  const collection = useTasks(initialTasks); // Pass to hook
+  const collection = useTasks(initialTasks); // Pass documents to hook
   // ...
 }
 ```

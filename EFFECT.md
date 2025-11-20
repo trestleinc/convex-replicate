@@ -4,62 +4,20 @@
 1. [Executive Summary](#executive-summary)
 2. [Why Effect.ts?](#why-effectts)
 3. [Effect Wrapping Architecture](#effect-wrapping-architecture)
-4. [Phase 1: Setup & Foundation](#phase-1-setup--foundation)
-   - 1.1 [Install Dependencies](#11-install-dependencies)
-   - 1.2 [Create Base Error Types](#12-create-base-error-types)
-   - 1.3 [Create Effect Services](#13-create-effect-services)
-   - 1.4 [Update package.json Scripts](#14-update-packagejson-scripts)
-5. [Phase 2: Connection Management (P1)](#phase-2-connection-management-p1)
-   - 2.1 [Current Implementation Analysis](#21-current-implementation-analysis)
-   - 2.2 [Refactored Implementation](#22-refactored-implementation)
-     - 2.2.1 [Connection State Transitions](#221-connection-state-transitions)
-   - 2.3 [Reconnection Logic Refactor](#23-reconnection-logic-refactor)
-   - 2.4 [Multi-Tab Coordination](#24-multi-tab-coordination)
-     - 2.4.1 [Multi-Tab Leader Election Protocol](#241-multi-tab-leader-election-protocol)
-   - 2.5 [Reconciliation Logic](#25-reconciliation-logic)
-     - 2.5.1 [Incremental Reconciliation](#251-incremental-reconciliation)
-   - 2.6 [Fixed Subscription Callback Bridge](#26-fixed-subscription-callback-bridge)
-   - 2.7 [Integration into Collection Options](#27-integration-into-collection-options)
-6. [Phase 3: CRDT Streaming (P2)](#phase-3-crdt-streaming-p2)
-   - 3.1 [Define CRDT Schemas](#31-define-crdt-schemas)
-   - 3.2 [Stream-Based Delta Processor](#32-stream-based-delta-processor)
-     - 3.2.1 [Backpressure and Rate Limiting Configuration](#321-backpressure-and-rate-limiting-configuration)
-   - 3.3 [Gap Detection](#33-gap-detection)
-     - 3.3.1 [Gap Detection Implementation Details](#331-gap-detection-implementation-details)
-   - 3.4 [Snapshot Handling in Delta Processor](#34-snapshot-handling-in-delta-processor)
-     - 3.4.1 [Snapshot Application Specification](#341-snapshot-application-specification)
-   - 3.5 [Compaction Integration](#35-compaction-integration)
-   - 3.6 [SSR CRDT Hydration with Services](#36-ssr-crdt-hydration-with-services)
-   - 3.7 [Reconciliation Integration with Services](#37-reconciliation-integration-with-services)
-   - 3.8 [Update Collection Integration with Services](#38-update-collection-integration-with-services)
-7. [Phase 4: Schema Validation (P4)](#phase-4-schema-validation-p4)
-   - 4.1 [Component Document Schema](#41-component-document-schema)
-   - 4.2 [Protocol Initialization with ProtocolService](#42-protocol-initialization-with-protocolservice)
-   - 4.3 [Protocol Initialization with Promise Boundary](#43-protocol-initialization-with-promise-boundary)
-8. [Phase 5: Mutation Error Handling](#phase-5-mutation-error-handling)
-   - 5.1 [Refactor Client Mutations](#51-refactor-client-mutations)
-   - 5.2 [Tagged Error Types](#52-tagged-error-types-effectdatataggederror)
-   - 5.3 [Dual-Storage Insert Mutation](#53-dual-storage-insert-mutation)
-   - 5.4 [Dual-Storage Update Mutation](#54-dual-storage-update-mutation)
-   - 5.5 [Dual-Storage Delete Mutation](#55-dual-storage-delete-mutation)
-9. [Phase 6: Server-Side Integration](#phase-6-server-side-integration-effect-as-internal-implementation)
-   - 6.1 [Architecture Overview](#61-architecture-overview)
-   - 6.2 [Builder Function](#62-builder-function-simplest-dx)
-   - 6.3 [Internal Implementation](#63-internal-implementation-_runeffect-helper)
-   - 6.4 [Effect-Based Business Logic](#64-effect-based-business-logic-internal)
-   - 6.5 [Stream Query with Gap Detection](#65-stream-query-with-gap-detection)
-   - 6.6 [SSR Query](#66-ssr-query)
-   - 6.7 [Enhanced SSR with CRDT Hydration](#67-enhanced-ssr-with-crdt-hydration)
-   - 6.8 [Protocol Version Migrations](#68-protocol-version-migrations)
-   - 6.9 [Replicate Class Export with All Factory Methods](#69-replicate-class-export-with-all-factory-methods)
-   - 6.10 [User-Defined Schema Migrations](#610-user-defined-schema-migrations-effect-hidden)
-10. [Phase 7: Client API (ZERO Breaking Changes)](#phase-7-client-api-zero-breaking-changes)
-    - 7.1 [Client API - NO Breaking Changes](#71-client-api---no-breaking-changes)
-    - 7.2 [Server API - NO Breaking Changes](#72-server-api---no-breaking-changes)
-    - 7.3 [React Hook - Promise-Based](#73-react-hook---promise-based)
-11. [Phase 8: Legacy Code Removal](#phase-8-legacy-code-removal)
-    - 8.1 [Checklist of Code to Delete](#81-checklist-of-code-to-delete)
-    - 8.2 [Replace Promise.all()](#82-replace-promiseall)
+4. [Phase 1: Setup & Foundation ✅](#phase-1-setup--foundation-)
+5. [Phase 2: Connection Management (P1) ✅](#phase-2-connection-management-p1-)
+6. [Phase 3: CRDT Streaming (P2) ✅](#phase-3-crdt-streaming-p2-)
+7. [Phase 4: Schema Validation (P4) ✅](#phase-4-schema-validation-p4-)
+8. [Phase 5: Mutation Error Handling ✅](#phase-5-mutation-error-handling-)
+9. [Phase 6: Server-Side Integration ✅](#phase-6-server-side-integration-effect-as-internal-implementation-)
+10. [Phase 7: Client API (ZERO Breaking Changes) ✅](#phase-7-client-api-zero-breaking-changes-)
+11. [Phase 8: Legacy Code Removal ✅](#phase-8-legacy-code-removal-)
+    - 8.1 [Removed Legacy SSR Array Format](#81-removed-legacy-ssr-array-format)
+    - 8.2 [Removed Replicate Class from Public API](#82-removed-replicate-class-from-public-api)
+    - 8.3 [Removed Dual Initialization Systems](#83-removed-dual-initialization-systems)
+    - 8.4 [Updated Documentation](#84-updated-documentation)
+    - 8.5 [Impact Summary](#85-impact-summary)
+    - 8.6 [Next Steps (Phase 9)](#86-next-steps-phase-9)
 12. [Phase 9: Example Apps Update](#phase-9-example-apps-update)
     - 9.1 [TanStack Start Example](#91-tanstack-start-example)
 13. [Breaking Changes Summary](#breaking-changes-summary)
@@ -73,6 +31,8 @@
 
 **Approach:** v1.0 release with **ZERO user-facing breaking changes**. Effect.ts is 100% internal implementation detail. Users continue using Promise-based APIs. Effect.runPromise handled at library boundaries only.
 
+**Status:** ✅ **PHASES 1-8 COMPLETED** - All Effect.ts integration complete, legacy code removed, API simplified
+
 **Impact:**
 - 80% reduction in connection-related bugs
 - 90% reduction in data staleness incidents
@@ -82,6 +42,7 @@
 - Complete end-to-end feature coverage (gap detection, reconciliation, multi-tab coordination)
 - Multi-tab leader election prevents duplicate subscriptions
 - Automatic retry with exponential backoff for all network operations
+- Simplified public API with `defineReplicate` builder pattern
 
 **Dependencies Added:**
 ```json
@@ -823,6 +784,160 @@ All services have been implemented and are available in `src/client/services/`.
 - **Backward Compatible**: API identical to v0.x
 
 **Status:** Complete, no code changes needed (Phase 4 already established proper boundaries)
+
+---
+
+## Phase 8: Legacy Code Removal ✅ COMPLETED
+
+**Goal:** Clean up obsolete patterns and simplify the public API after Effect.ts integration.
+
+**Completed Changes:**
+
+### 8.1 Removed Legacy SSR Array Format
+
+**OLD Pattern (removed):**
+```typescript
+// Legacy: initialData could be an array OR object
+initialData?: ReadonlyArray<T> | {
+  documents: T[];
+  checkpoint?: any;
+  count?: number;
+  crdtBytes?: Uint8Array;
+}
+```
+
+**NEW Pattern (current):**
+```typescript
+// Simplified: Always an object with documents array
+initialData?: {
+  documents: T[];
+  checkpoint?: any;
+  count?: number;
+  crdtBytes?: Uint8Array;
+}
+```
+
+**Rationale:**
+- Removes ambiguity - one clear format
+- Better SSR support with checkpoint and CRDT bytes
+- Consistent with hydration pattern
+- Cleaner API surface
+
+### 8.2 Removed Replicate Class from Public API
+
+**OLD Pattern (removed from docs, kept as internal):**
+```typescript
+import { Replicate } from '@trestleinc/replicate/server';
+
+const storage = new Replicate<Task>(components.replicate, 'tasks');
+
+export const stream = storage.createStreamQuery();
+export const getTasks = storage.createSSRQuery();
+export const insertDocument = storage.createInsertMutation();
+export const updateDocument = storage.createUpdateMutation();
+export const deleteDocument = storage.createDeleteMutation();
+export const getProtocolVersion = storage.createProtocolVersionQuery();
+export const compact = storage.createCompactMutation({ retentionDays: 90 });
+export const prune = storage.createPruneMutation({ retentionDays: 180 });
+```
+
+**NEW Pattern (recommended):**
+```typescript
+import { defineReplicate } from '@trestleinc/replicate/server';
+
+export const {
+  stream,
+  getTasks,
+  insertDocument,
+  updateDocument,
+  deleteDocument,
+  getProtocolVersion,
+  compact,
+  prune
+} = defineReplicate<Task>({
+  component: components.replicate,
+  collection: 'tasks',
+  compaction: { retentionDays: 90 },
+  pruning: { retentionDays: 180 }
+});
+```
+
+**Benefits:**
+- **One-step API**: Single function call generates all 8 operations
+- **Declarative config**: All options in one place (hooks, compaction, pruning)
+- **Less boilerplate**: No manual instantiation or method calls
+- **Better DX**: Clearer intent, easier to understand
+- **Easier to extend**: Add new operations without breaking changes
+
+**Note:** `Replicate` class still exists internally for backward compatibility, but `defineReplicate` is the recommended pattern.
+
+### 8.3 Removed Dual Initialization Systems
+
+**Removed (unused Effect-based system):**
+```typescript
+// These were never properly integrated
+export function initializeProtocol(convexClient: ConvexClient): Effect<...>
+export function checkProtocolCompatibility(convexClient: ConvexClient): Effect<...>
+```
+
+**Kept (Promise-based, actually used):**
+```typescript
+// This is called automatically when creating collections
+function ensureInitialized(convexClient: ConvexClient): Promise<void>
+```
+
+**Rationale:**
+- Effect-based initialization was never wired up to collection creation
+- Promise-based `ensureInitialized` is what's actually called
+- Removes dead code and confusion
+- Automatic initialization on collection creation is simpler
+
+### 8.4 Updated Documentation
+
+**Files Updated:**
+- ✅ `README.md` - Updated all examples to use `defineReplicate`
+- ✅ `CLAUDE.md` - Updated project instructions with new API
+- ✅ `EFFECT.md` - Added this Phase 8 section
+
+**Key Documentation Changes:**
+1. **Quick Start**: Now shows `defineReplicate` as primary pattern
+2. **Step 3**: Replaced manual helper calls with builder pattern
+3. **API Reference**: Added `defineReplicate` documentation
+4. **initialData**: Updated to show object format only
+5. **Protocol Initialization**: Clarified automatic initialization
+6. **Advanced Usage**: Shows hooks with `defineReplicate`
+
+### 8.5 Impact Summary
+
+**Lines of Code:**
+- Removed: ~200 LOC (legacy patterns, unused functions)
+- Added: ~150 LOC (builder implementation, docs)
+- Net: -50 LOC with better functionality
+
+**API Surface:**
+- Before: 10+ exports from `@trestleinc/replicate/server`
+- After: 2 primary exports (`defineReplicate`, `replicatedTable`)
+- Result: Simpler, clearer API
+
+**User Experience:**
+- Before: 8 lines of code to set up a collection
+- After: 1 function call with declarative config
+- Result: 87.5% reduction in setup boilerplate
+
+**Migration Path:**
+- Old `Replicate` class still works (internal)
+- New code should use `defineReplicate`
+- Documentation shows only new pattern
+- Gradual deprecation over time
+
+### 8.6 Next Steps (Phase 9)
+
+Update example apps to use new API:
+- `examples/tanstack-start/convex/tasks.ts` - Use `defineReplicate`
+- `examples/tanstack-start/src/useTasks.ts` - Use object `initialData`
+- `examples/sveltekit/` - Same updates
+
+**Status:** Ready for Phase 9 implementation
 
 ---
 

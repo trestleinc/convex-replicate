@@ -1,39 +1,26 @@
-import { Replicate } from '@trestleinc/replicate/server';
+import { defineReplicate } from '@trestleinc/replicate/server';
 import { components } from './_generated/api';
 import type { Task } from '../src/useTasks';
 
 /**
  * SvelteKit Example - Tasks Collection
  *
- * This demonstrates the Replicate pattern for ConvexReplicate.
- * Create one storage instance per collection, then use factory methods to
- * generate all needed queries and mutations.
+ * Uses defineReplicate for one-step API generation.
+ * This automatically creates all needed queries and mutations.
  */
 
-// Create storage instance for 'tasks' collection
-const tasksStorage = new Replicate<Task>(components.replicate, 'tasks');
-
-/**
- * CRDT Stream Query (for real-time sync with gap detection)
- */
-export const stream = tasksStorage.createStreamQuery();
-
-/**
- * SSR Query (for server-side rendering)
- */
-export const getTasks = tasksStorage.createSSRQuery();
-
-/**
- * Insert Mutation (dual-storage)
- */
-export const insertDocument = tasksStorage.createInsertMutation();
-
-/**
- * Update Mutation (dual-storage)
- */
-export const updateDocument = tasksStorage.createUpdateMutation();
-
-/**
- * Delete Mutation (dual-storage with hard delete)
- */
-export const deleteDocument = tasksStorage.createDeleteMutation();
+export const {
+  stream, // CRDT stream query (for real-time sync with gap detection)
+  getTasks, // SSR query (for server-side rendering)
+  insertDocument, // Insert mutation (dual-storage)
+  updateDocument, // Update mutation (dual-storage)
+  deleteDocument, // Delete mutation (dual-storage with hard delete)
+  getProtocolVersion, // Protocol version query
+  compact, // Compaction mutation (for cron jobs)
+  prune, // Snapshot cleanup mutation (for cron jobs)
+} = defineReplicate<Task>({
+  component: components.replicate,
+  collection: 'tasks',
+  compaction: { retentionDays: 90 },
+  pruning: { retentionDays: 180 },
+});

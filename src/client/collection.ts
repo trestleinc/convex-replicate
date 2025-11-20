@@ -33,29 +33,14 @@ export enum YjsOrigin {
 }
 
 /**
- * SSR data format - supports both legacy (array) and enhanced (object with metadata)
+ * SSR data format - enhanced format with documents + metadata + optional CRDT state
  */
-export type SSRData<T> =
-  | ReadonlyArray<T> // Legacy format: just array of documents
-  | {
-      // Enhanced format: documents + metadata + optional CRDT state
-      documents: ReadonlyArray<T>;
-      checkpoint?: { lastModified: number };
-      count?: number;
-      crdtBytes?: ArrayBuffer; // CRDT state for Yjs initialization
-    };
-
-/**
- * Type predicate to distinguish enhanced SSR format from legacy array format
- */
-function isEnhancedSSRFormat<T>(data: SSRData<T>): data is {
+export type SSRData<T> = {
   documents: ReadonlyArray<T>;
   checkpoint?: { lastModified: number };
   count?: number;
-  crdtBytes?: ArrayBuffer;
-} {
-  return !Array.isArray(data) && 'documents' in data;
-}
+  crdtBytes?: ArrayBuffer; // CRDT state for Yjs initialization
+};
 
 /**
  * Configuration for convexCollectionOptions (Step 1)
@@ -65,7 +50,7 @@ export interface ConvexCollectionOptionsConfig<T extends object> {
   /** Function to extract unique key from items */
   getKey: (item: T) => string | number;
 
-  /** Optional initial data to populate collection (supports both legacy array and enhanced object formats) */
+  /** Optional initial data to populate collection (enhanced format with documents + metadata) */
   initialData?: SSRData<T>;
 
   /** Convex client instance */
@@ -486,15 +471,9 @@ export function convexCollectionOptions<T extends object>({
 
         // Parse initialData if provided
         if (initialData) {
-          if (isEnhancedSSRFormat(initialData)) {
-            // Enhanced format: object with documents + metadata + optional CRDT
-            ssrDocuments = initialData.documents;
-            ssrCheckpoint = initialData.checkpoint;
-            ssrCRDTBytes = initialData.crdtBytes;
-          } else {
-            // Legacy format: just array of documents
-            ssrDocuments = initialData;
-          }
+          ssrDocuments = initialData.documents;
+          ssrCheckpoint = initialData.checkpoint;
+          ssrCRDTBytes = initialData.crdtBytes;
         }
 
         // NEW: Collect items for TanStack DB - defined in sync function scope

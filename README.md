@@ -376,145 +376,44 @@ export default defineSchema({
 
 ### Step 3: Create Replication Functions
 
-Create functions that use replication helpers for dual-storage pattern:
+Create functions using the `defineReplicate` builder for a simple one-step API:
 
 ```typescript
 // convex/tasks.ts
-import { mutation, query } from './_generated/server';
+import { defineReplicate } from '@trestleinc/replicate/server';
 import { components } from './_generated/api';
-import { v } from 'convex/values';
-import {
-  insertDocumentHelper,
-  updateDocumentHelper,
-  deleteDocumentHelper,
-} from '@trestleinc/replicate/server'; // IMPORTANT: Use /server for Convex functions!
+import type { Task } from '../src/useTasks';
 
-/**
- * TanStack DB endpoints - called by convexCollectionOptions
- * These receive Yjs CRDT deltas from client and write to both:
- * 1. Component storage (Yjs CRDT deltas in event log)
- * 2. Main table (materialized docs for efficient queries)
- */
-
-export const insertDocument = mutation({
-  args: {
-    collection: v.string(),
-    documentId: v.string(),
-    crdtBytes: v.bytes(),
-    materializedDoc: v.any(),
-    version: v.number(),
-  },
-  handler: async (ctx, args) => {
-    return await insertDocumentHelper(ctx, components, 'tasks', {
-      id: args.documentId,
-      crdtBytes: args.crdtBytes,
-      materializedDoc: args.materializedDoc,
-      version: args.version,
-    });
-  },
-});
-
-export const updateDocument = mutation({
-  args: {
-    collection: v.string(),
-    documentId: v.string(),
-    crdtBytes: v.bytes(),
-    materializedDoc: v.any(),
-    version: v.number(),
-  },
-  handler: async (ctx, args) => {
-    return await updateDocumentHelper(ctx, components, 'tasks', {
-      id: args.documentId,
-      crdtBytes: args.crdtBytes,
-      materializedDoc: args.materializedDoc,
-      version: args.version,
-    });
-  },
-});
-
-export const deleteDocument = mutation({
-  args: {
-    collection: v.string(),
-    documentId: v.string(),
-    crdtBytes: v.bytes(),
-    version: v.number(),
-  },
-  handler: async (ctx, args) => {
-    return await deleteDocumentHelper(ctx, components, 'tasks', {
-      id: args.documentId,
-      crdtBytes: args.crdtBytes,
-      version: args.version,
-    });
-  },
-});
-
-/**
- * Stream endpoint for real-time subscriptions
- * Returns all active items (hard deletes are physically removed from table)
- */
-export const stream = query({
-  handler: async (ctx) => {
-    return await ctx.db.query('tasks').collect();
-  },
+// One function call generates all 8 operations
+export const {
+  stream,
+  getTasks,
+  insertDocument,
+  updateDocument,
+  deleteDocument,
+  getProtocolVersion,
+  compact,
+  prune
+} = defineReplicate<Task>({
+  component: components.replicate,
+  collection: 'tasks',
+  compaction: { retentionDays: 90 },    // Optional: customize compaction
+  pruning: { retentionDays: 180 }       // Optional: customize pruning
 });
 ```
 
-### Step 4: Initialize ConvexReplicate
+**What `defineReplicate` generates:**
 
-Initialize ConvexReplicate once when your application starts. This checks protocol versions and runs migrations if needed:
+- `stream` - Real-time CRDT stream query (for client subscriptions)
+- `getTasks` - SSR-friendly query (for server-side rendering)
+- `insertDocument` - Dual-storage insert mutation
+- `updateDocument` - Dual-storage update mutation
+- `deleteDocument` - Dual-storage delete mutation
+- `getProtocolVersion` - Protocol version query (for client initialization)
+- `compact` - Compaction function (for cron jobs)
+- `prune` - Snapshot cleanup function (for cron jobs)
 
-```typescript
-// src/main.tsx (or app entry point)
-import { ConvexHttpClient } from 'convex/browser';
-import { initConvexReplicate } from '@trestleinc/replicate/client';
-import { convexClient } from './router'; // Your ConvexClient instance
-
-// Initialize ConvexReplicate before creating collections
-await initConvexReplicate({ convexClient });
-
-// Now you can safely create collections and use them in your app
-```
-
-**For React apps, you might want to wrap this in a provider:**
-
-```typescript
-// src/ConvexReplicateProvider.tsx
-import { createContext, useContext, useEffect, useState } from 'react';
-import { ConvexClient } from 'convex/browser';
-import { initConvexReplicate } from '@trestleinc/replicate/client';
-
-const ConvexReplicateContext = createContext<{ initialized: boolean }>({ initialized: false });
-
-export function ConvexReplicateProvider({ 
-  children, 
-  convexClient 
-}: { 
-  children: React.ReactNode;
-  convexClient: ConvexClient;
-}) {
-  const [initialized, setInitialized] = useState(false);
-
-  useEffect(() => {
-    initConvexReplicate({ convexClient })
-      .then(() => setInitialized(true))
-      .catch(error => {
-        console.error('Failed to initialize ConvexReplicate:', error);
-      });
-  }, [convexClient]);
-
-  return (
-    <ConvexReplicateContext.Provider value={{ initialized }}>
-      {initialized ? children : <div>Loading...</div>}
-    </ConvexReplicateContext.Provider>
-  );
-}
-
-export function useConvexReplicate() {
-  return useContext(ConvexReplicateContext);
-}
-```
-
-### Step 5: Create a Custom Hook
+### Step 4: Create a Custom Hook
 
 Create a hook that wraps TanStack DB with Convex collection options:
 
@@ -540,7 +439,9 @@ export interface Task {
 // This ensures only one sync process runs, even across component remounts
 let tasksCollection: ConvexCollection<Task>;
 
-export function useTasks(initialData?: ReadonlyArray<Task>) {
+export function useTasks(
+  initialData?: { documents: Task[], checkpoint?: any, count?: number, crdtBytes?: Uint8Array }
+) {
   return useMemo(() => {
     if (!tasksCollection) {
       // Step 1: Create raw TanStack DB collection with ALL config
@@ -552,6 +453,7 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
             insertDocument: api.tasks.insertDocument,
             updateDocument: api.tasks.updateDocument,
             deleteDocument: api.tasks.deleteDocument,
+            getProtocolVersion: api.tasks.getProtocolVersion,
           },
           collection: 'tasks',
           getKey: (task) => task.id,
@@ -568,7 +470,7 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
 }
 ```
 
-### Step 6: Use in Components
+### Step 5: Use in Components
 
 ```typescript
 // src/routes/index.tsx
@@ -651,7 +553,7 @@ const { data: tasks } = useLiveQuery(collection);
 // SSR loader - no filtering needed!
 export const Route = createFileRoute('/')({
   loader: async () => {
-    const tasks = await httpClient.query(api.tasks.stream);
+    const tasks = await httpClient.query(api.tasks.getTasks);
     return { tasks };
   },
 });
@@ -667,11 +569,10 @@ export const Route = createFileRoute('/')({
 **Server-side:** Returns only active items (deleted items are physically removed):
 
 ```typescript
-// convex/tasks.ts
-export const stream = query({
-  handler: async (ctx) => {
-    return await ctx.db.query('tasks').collect();
-  },
+// convex/tasks.ts (using defineReplicate)
+export const { stream, getTasks, deleteDocument } = defineReplicate<Task>({
+  component: components.replicate,
+  collection: 'tasks'
 });
 ```
 
@@ -685,39 +586,11 @@ ConvexReplicate includes automatic protocol migration to handle package updates 
 
 ### How It Works
 
-1. **Initialization Check**: When `initConvexReplicate()` runs, it compares the server's protocol version with the locally stored version
+1. **Automatic Check**: When you create your first collection, the library automatically checks protocol compatibility
 2. **Automatic Migration**: If versions differ, it runs sequential migrations (v1 → v2 → v3)
 3. **Local Storage Update**: The new version is stored locally for future checks
 
-### Initialization
-
-Always call `initConvexReplicate()` once when your app starts:
-
-```typescript
-import { ConvexClient } from 'convex/browser';
-import { initConvexReplicate } from '@trestleinc/replicate/client';
-
-const convexClient = new ConvexClient(process.env.VITE_CONVEX_URL!);
-
-// Initialize before creating collections
-await initConvexReplicate({ convexClient });
-```
-
-### Custom API Endpoints
-
-If you have custom authentication or API endpoints:
-
-```typescript
-await initConvexReplicate({
-  convexClient,
-  api: {
-    getProtocolVersion: async (client) => {
-      // Custom implementation
-      return { protocolVersion: 2 };
-    },
-  },
-});
-```
+**Note:** Protocol initialization happens automatically when you create your first collection - no manual setup required! The library handles version checking and migrations transparently.
 
 ### Debugging Protocol Issues
 
@@ -732,20 +605,9 @@ console.log('Local version:', info.localVersion);
 console.log('Needs migration:', info.needsMigration);
 ```
 
-### Reset Protocol Storage
-
-For testing or troubleshooting:
-
-```typescript
-import { resetProtocolStorage } from '@trestleinc/replicate/client';
-
-// ⚠️ Warning: This clears all protocol metadata
-await resetProtocolStorage();
-```
-
 ### Migration Best Practices
 
-- **Always initialize** before creating collections
+- **Protocol checks are automatic** - happens when creating collections
 - **Handle initialization errors** gracefully in your app
 - **Test migrations** by simulating version upgrades
 - **Monitor protocol versions** in production for debugging
@@ -797,72 +659,54 @@ function TasksPage() {
 }
 ```
 
-### Direct Component Usage (Advanced)
+### Custom Hooks and Lifecycle Events (Advanced)
 
-> **WARNING:** Using `ReplicateStorage` directly only writes to the component CRDT storage layer. It does NOT implement the dual-storage pattern (no writes to main table), which means:
-> - You cannot query this data efficiently in Convex
-> - You lose the benefits of reactive subscriptions on materialized docs
-> - You'll need to manually handle materialization
-> 
-> **Recommended:** Use the replication helpers (`insertDocumentHelper`, etc.) shown in Step 3 for the full dual-storage pattern.
-
-For advanced use cases where you need direct component access:
+You can customize the behavior of generated functions using optional hooks:
 
 ```typescript
 // convex/tasks.ts
-import { ReplicateStorage } from '@trestleinc/replicate/client';
-import { mutation, query } from './_generated/server';
+import { defineReplicate } from '@trestleinc/replicate/server';
 import { components } from './_generated/api';
-import { v } from 'convex/values';
+import type { Task } from '../src/useTasks';
 
-interface Task {
-  id: string;
-  text: string;
-  isCompleted: boolean;
-}
+export const {
+  stream,
+  getTasks,
+  insertDocument,
+  updateDocument,
+  deleteDocument,
+  getProtocolVersion
+} = defineReplicate<Task>({
+  component: components.replicate,
+  collection: 'tasks',
 
-const tasksStorage = new ReplicateStorage<Task>(components.replicate, 'tasks');
+  // Optional: Permission checks
+  hooks: {
+    checkRead: async (ctx, collection) => {
+      const userId = await ctx.auth.getUserIdentity();
+      if (!userId) throw new Error('Unauthorized');
+    },
+    checkWrite: async (ctx, doc) => {
+      const userId = await ctx.auth.getUserIdentity();
+      if (!userId) throw new Error('Unauthorized');
+      if (doc.ownerId !== userId.subject) throw new Error('Unauthorized');
+    },
+    checkDelete: async (ctx, documentId) => {
+      const userId = await ctx.auth.getUserIdentity();
+      if (!userId) throw new Error('Unauthorized');
+    },
 
-export const insertTask = mutation({
-  args: {
-    id: v.string(),
-    crdtBytes: v.bytes(),
-    version: v.number(),
-  },
-  handler: async (ctx, args) => {
-    return await tasksStorage.insertDocument(
-      ctx,
-      args.id,
-      args.crdtBytes,
-      args.version
-    );
-  },
-});
-
-export const updateTask = mutation({
-  args: {
-    id: v.string(),
-    crdtBytes: v.bytes(),
-    version: v.number(),
-  },
-  handler: async (ctx, args) => {
-    return await tasksStorage.updateDocument(
-      ctx,
-      args.id,
-      args.crdtBytes,
-      args.version
-    );
-  },
-});
-
-export const streamChanges = query({
-  args: {
-    checkpoint: v.object({ lastModified: v.number() }),
-    limit: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    return await tasksStorage.stream(ctx, args.checkpoint, args.limit);
-  },
+    // Optional: Lifecycle callbacks
+    onInsert: async (ctx, doc) => {
+      console.log('Inserted:', doc);
+    },
+    onUpdate: async (ctx, doc) => {
+      console.log('Updated:', doc);
+    },
+    onDelete: async (ctx, documentId) => {
+      console.log('Deleted:', documentId);
+    }
+  }
 });
 ```
 
@@ -915,10 +759,16 @@ interface ConvexCollectionOptionsConfig<T> {
     insertDocument: FunctionReference;  // Insert mutation
     updateDocument: FunctionReference;  // Update mutation
     deleteDocument: FunctionReference;  // Delete mutation
+    getProtocolVersion: FunctionReference; // Protocol version query
   };
   collection: string;
   getKey: (item: T) => string | number;
-  initialData?: ReadonlyArray<T>;
+  initialData?: {
+    documents: T[];
+    checkpoint?: any;
+    count?: number;
+    crdtBytes?: Uint8Array;
+  };
 }
 ```
 
@@ -934,6 +784,7 @@ const rawCollection = createCollection(
       insertDocument: api.tasks.insertDocument,
       updateDocument: api.tasks.updateDocument,
       deleteDocument: api.tasks.deleteDocument,
+      getProtocolVersion: api.tasks.getProtocolVersion,
     },
     collection: 'tasks',
     getKey: (task) => task.id,
@@ -1048,53 +899,88 @@ logger.debug('Task created', { id: taskId });
 
 ### Server-Side (`@trestleinc/replicate/server`)
 
-#### `insertDocumentHelper(ctx, components, tableName, args)`
+#### `defineReplicate<T>(config)`
 
-Insert a document into both the CRDT component and the main application table.
+One-step builder function that generates all 8 operations for a collection.
 
-**Parameters:**
-- `ctx` - Convex mutation context
-- `components` - Generated components from Convex
-- `tableName` - Name of the main application table
-- `args` - `{ id: string; crdtBytes: ArrayBuffer; materializedDoc: any; version: number }`
+**Config:**
+```typescript
+interface DefineReplicateConfig<T> {
+  component: any;              // components.replicate
+  collection: string;          // Collection name (e.g., 'tasks')
 
-**Returns:** `Promise<{ success: boolean; metadata: {...} }>`
+  // Optional: Compaction settings
+  compaction?: {
+    retentionDays: number;     // Default: 90
+  };
 
-#### `updateDocumentHelper(ctx, components, tableName, args)`
+  // Optional: Pruning settings
+  pruning?: {
+    retentionDays: number;     // Default: 180
+  };
 
-Update a document in both the CRDT component and the main application table.
+  // Optional: Hooks for permissions and lifecycle
+  hooks?: {
+    checkRead?: (ctx, collection) => Promise<void>;
+    checkWrite?: (ctx, doc) => Promise<void>;
+    checkDelete?: (ctx, documentId) => Promise<void>;
+    onInsert?: (ctx, doc) => Promise<void>;
+    onUpdate?: (ctx, doc) => Promise<void>;
+    onDelete?: (ctx, documentId) => Promise<void>;
+  };
+}
+```
 
-**Parameters:**
-- `ctx` - Convex mutation context
-- `components` - Generated components from Convex
-- `tableName` - Name of the main application table
-- `args` - `{ id: string; crdtBytes: ArrayBuffer; materializedDoc: any; version: number }`
+**Returns:** Object with 8 generated functions:
+- `stream` - Real-time CRDT stream query
+- `getTasks` - SSR-friendly query (naming convention: `get{CollectionName}`)
+- `insertDocument` - Dual-storage insert mutation
+- `updateDocument` - Dual-storage update mutation
+- `deleteDocument` - Dual-storage delete mutation
+- `getProtocolVersion` - Protocol version query
+- `compact` - Compaction function for cron jobs
+- `prune` - Snapshot cleanup function for cron jobs
 
-**Returns:** `Promise<{ success: boolean; metadata: {...} }>`
+**Example:**
+```typescript
+// Basic usage
+export const {
+  stream,
+  getTasks,
+  insertDocument,
+  updateDocument,
+  deleteDocument,
+  getProtocolVersion,
+  compact,
+  prune
+} = defineReplicate<Task>({
+  component: components.replicate,
+  collection: 'tasks'
+});
 
-#### `deleteDocumentHelper(ctx, components, tableName, args)`
-
-Hard delete from main table, append deletion delta to component event log.
-
-**Parameters:**
-- `ctx` - Convex mutation context
-- `components` - Generated components from Convex
-- `tableName` - Name of the main application table
-- `args` - `{ id: string; crdtBytes: ArrayBuffer; version: number }`
-
-**Returns:** `Promise<{ success: boolean; metadata: {...} }>`
-
-#### `streamHelper(ctx, components, tableName, args)`
-
-Stream CRDT deltas from component storage for incremental sync.
-
-**Parameters:**
-- `ctx` - Convex query context
-- `components` - Generated components from Convex
-- `tableName` - Name of the collection
-- `args` - `{ checkpoint: { lastModified: number }; limit?: number }`
-
-**Returns:** `Promise<{ changes: Array<...>; checkpoint: {...}; hasMore: boolean }>`
+// With custom settings
+export const {
+  stream,
+  getUsers,
+  insertDocument,
+  updateDocument,
+  deleteDocument,
+  getProtocolVersion,
+  compact,
+  prune
+} = defineReplicate<User>({
+  component: components.replicate,
+  collection: 'users',
+  compaction: { retentionDays: 30 },
+  pruning: { retentionDays: 90 },
+  hooks: {
+    checkWrite: async (ctx, doc) => {
+      const userId = await ctx.auth.getUserIdentity();
+      if (!userId) throw new Error('Unauthorized');
+    }
+  }
+});
+```
 
 #### `replicatedTable(userFields, applyIndexes?)`
 
