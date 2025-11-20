@@ -194,7 +194,6 @@ export function convexCollectionOptions<T extends object>({
    */
   const reconcileWithMainTable = async (): Promise<void> => {
     if (!api.ssrQuery) {
-      logger.debug('Skipping reconciliation - no SSR query configured', { collection });
       return;
     }
 
@@ -216,12 +215,6 @@ export function convexCollectionOptions<T extends object>({
       });
 
       if (toDelete.length > 0) {
-        logger.info('Reconciliation: removing stale documents from Yjs', {
-          collection,
-          deleteCount: toDelete.length,
-          deletedKeys: toDelete,
-        });
-
         // Capture data BEFORE deleting from Yjs
         // This is necessary because Yjs garbage collects deleted content
         // and we need the full item data for TanStack DB's delete handler
@@ -245,20 +238,10 @@ export function convexCollectionOptions<T extends object>({
           const { begin, write, commit } = syncParams;
           try {
             begin();
-            for (const { key, item } of deletedItems) {
-              logger.debug('Reconciliation: deleting from TanStack DB', {
-                collection,
-                key,
-                item,
-              });
+            for (const { item } of deletedItems) {
               write({ type: 'delete', value: item });
             }
             commit();
-
-            logger.info('Reconciliation: deleted items from TanStack DB', {
-              collection,
-              deletedCount: deletedItems.length,
-            });
           } catch (error) {
             logger.error('Reconciliation: failed to delete from TanStack DB', {
               collection,
@@ -266,17 +249,6 @@ export function convexCollectionOptions<T extends object>({
             });
           }
         }
-
-        logger.info('Reconciliation complete', {
-          collection,
-          removedCount: toDelete.length,
-        });
-      } else {
-        logger.debug('Reconciliation: no stale documents found', {
-          collection,
-          yjsCount: ymap.size,
-          serverCount: serverDocs.length,
-        });
       }
     } catch (error) {
       logger.error('Reconciliation failed', {
@@ -296,19 +268,12 @@ export function convexCollectionOptions<T extends object>({
 
     // REAL onInsert handler (called automatically by TanStack DB)
     onInsert: async ({ transaction }: any) => {
-      logger.debug('onInsert handler called', {
-        collection,
-        mutationCount: transaction.mutations.length,
-      });
-
       try {
-        // Wait for BOTH initialization AND IndexedDB persistence
         await Promise.all([initPromise, persistenceReadyPromise]);
 
-        // Update Yjs in transaction (batches multiple changes into ONE 'update' event)
+        // Update Yjs in transaction
         ydoc.transact(() => {
           transaction.mutations.forEach((mut: any) => {
-            // Store as Y.Map for field-level CRDT conflict resolution
             const itemYMap = new Y.Map();
             Object.entries(mut.modified as Record<string, unknown>).forEach(([k, v]) => {
               itemYMap.set(k, v);
@@ -317,34 +282,22 @@ export function convexCollectionOptions<T extends object>({
           });
         }, YjsOrigin.Insert);
 
-        // Send DELTA to Convex (not full state)
+        // Send DELTA to Convex
         if (pendingUpdate) {
-          logger.debug('Sending insert delta to Convex', {
-            collection,
-            documentId: String(transaction.mutations[0].key),
-            deltaSize: pendingUpdate.length,
-          });
-
           const documentKey = String(transaction.mutations[0].key);
           const mutationArgs: any = {
             documentId: documentKey,
-            crdtBytes: pendingUpdate.slice().buffer, // Create clean copy to avoid byte offset issues
+            crdtBytes: pendingUpdate.slice().buffer,
             materializedDoc: transaction.mutations[0].modified,
             version: Date.now(),
           };
 
-          // Add schema version if metadata is provided
           if (metadata?.schemaVersion !== undefined) {
             mutationArgs._schemaVersion = metadata.schemaVersion;
           }
 
           await convexClient.mutation(api.insertDocument, mutationArgs);
-
           pendingUpdate = null;
-          logger.info('Insert persisted to Convex', {
-            collection,
-            documentId: documentKey,
-          });
         }
       } catch (error: any) {
         logger.error('Insert failed', {
@@ -402,46 +355,23 @@ export function convexCollectionOptions<T extends object>({
 
         // Send delta to Convex
         if (pendingUpdate) {
-          // Extract document key for clarity and reuse
           const documentKey = String(transaction.mutations[0].key);
-
-          // Retrieve full document from Yjs after applying changes
-          // (transaction.mutations[0].modified contains only changed fields, not full doc)
           const itemYMap = ymap.get(documentKey) as Y.Map<any>;
           const fullDoc = itemYMap ? itemYMap.toJSON() : transaction.mutations[0].modified;
 
-          logger.debug('Sending update delta to Convex', {
-            collection,
-            documentId: documentKey,
-            deltaSize: pendingUpdate.length,
-            fullDoc,
-          });
-
           const mutationArgs: any = {
             documentId: documentKey,
-            crdtBytes: pendingUpdate.slice().buffer, // Create clean copy to avoid byte offset issues
-            materializedDoc: fullDoc, // Send full document, not partial changes
+            crdtBytes: pendingUpdate.slice().buffer,
+            materializedDoc: fullDoc,
             version: Date.now(),
           };
 
-          // Add schema version if metadata is provided
           if (metadata?.schemaVersion !== undefined) {
             mutationArgs._schemaVersion = metadata.schemaVersion;
           }
 
           await convexClient.mutation(api.updateDocument, mutationArgs);
-
           pendingUpdate = null;
-
-          // Log complete state after mutation
-          const finalYjsState = itemYMap ? itemYMap.toJSON() : null;
-          logger.info('Update persisted to Convex', {
-            collection,
-            documentId: documentKey,
-            version: mutationArgs.version,
-            sentToConvex: fullDoc,
-            yjsStateAfterMutation: finalYjsState,
-          });
         } else {
           logger.warn('pendingUpdate is null - no delta to send', {
             collection,
@@ -468,27 +398,8 @@ export function convexCollectionOptions<T extends object>({
 
     // onDelete handler (called when user does collection.delete())
     onDelete: async ({ transaction }: any) => {
-      const documentId = String(transaction.mutations[0]?.key);
-
-      logger.warn('🗑️ DELETE START', {
-        collection,
-        documentId,
-        mutationCount: transaction.mutations.length,
-        hasSyncParams: !!syncParams,
-      });
-
       try {
-        // Wait for BOTH initialization AND IndexedDB persistence
         await Promise.all([initPromise, persistenceReadyPromise]);
-
-        // Check Yjs state BEFORE delete
-        const beforeDelete = ymap.get(documentId);
-        logger.warn('🗑️ Yjs state BEFORE delete', {
-          collection,
-          documentId,
-          existsInYjs: beforeDelete instanceof Y.Map,
-          ymapSize: ymap.size,
-        });
 
         // Remove from Yjs Y.Map - creates deletion tombstone
         ydoc.transact(() => {
@@ -497,49 +408,21 @@ export function convexCollectionOptions<T extends object>({
           });
         }, YjsOrigin.Delete);
 
-        // Check Yjs state AFTER delete
-        const afterDelete = ymap.get(documentId);
-        logger.warn('🗑️ Yjs state AFTER delete', {
-          collection,
-          documentId,
-          existsInYjs: afterDelete instanceof Y.Map,
-          ymapSize: ymap.size,
-          pendingUpdateSize: pendingUpdate?.length || 0,
-        });
-
         // Update TanStack DB data layer immediately to prevent re-appearance
         if (syncParams) {
           const { begin, write, commit } = syncParams;
           try {
-            logger.warn('🗑️ TanStack DB write DELETE (begin)', {
-              collection,
-              documentId,
-              hasOriginal: !!transaction.mutations[0]?.original,
-            });
-
             begin();
             transaction.mutations.forEach((mut: any) => {
               write({ type: 'delete', value: mut.original });
             });
             commit();
-
-            logger.warn('🗑️ TanStack DB write DELETE (committed)', {
-              collection,
-              documentId,
-              count: transaction.mutations.length,
-            });
           } catch (error) {
-            logger.error('🗑️ TanStack DB write DELETE FAILED', {
+            logger.error('TanStack DB delete failed', {
               collection,
-              documentId,
               error,
             });
           }
-        } else {
-          logger.error('🗑️ syncParams NOT AVAILABLE', {
-            collection,
-            documentId,
-          });
         }
 
         // Send deletion DELTA to Convex
@@ -555,30 +438,12 @@ export function convexCollectionOptions<T extends object>({
             mutationArgs._schemaVersion = metadata.schemaVersion;
           }
 
-          logger.warn('🗑️ Sending delete to Convex', {
-            collection,
-            documentId: documentKey,
-            deltaSize: pendingUpdate.length,
-          });
-
           await convexClient.mutation(api.deleteDocument, mutationArgs);
-
           pendingUpdate = null;
-
-          logger.warn('🗑️ DELETE COMPLETE', {
-            collection,
-            documentId: documentKey,
-          });
-        } else {
-          logger.error('🗑️ No pendingUpdate - delete NOT sent to Convex', {
-            collection,
-            documentId,
-          });
         }
       } catch (error: any) {
-        logger.error('🗑️ DELETE FAILED', {
+        logger.error('Delete operation failed', {
           collection,
-          documentId,
           error: error?.message,
           status: error?.status,
         });
@@ -604,7 +469,6 @@ export function convexCollectionOptions<T extends object>({
         // This prevents subscription leaks when collections are recreated (e.g., during HMR)
         const existingCleanup = cleanupFunctions.get(collection);
         if (existingCleanup) {
-          logger.debug('Cleaning up existing collection before recreation', { collection });
           existingCleanup();
           cleanupFunctions.delete(collection);
         }
@@ -666,35 +530,17 @@ export function convexCollectionOptions<T extends object>({
             // ═══════════════════════════════════════════════════════
             await Promise.all([initPromise, persistenceReadyPromise]);
 
-            logger.info('Initialization complete - IndexedDB loaded', {
-              collection,
-              yjsDocumentCount: ymap.size,
-              hasSSRData: !!ssrDocuments && ssrDocuments.length > 0,
-              hasSSRCRDT: !!ssrCRDTBytes,
-            });
-
             // ═══════════════════════════════════════════════════════
             // CRITICAL: If SSR includes CRDT bytes, apply to Yjs FIRST
             // This ensures late-joining clients get correct Item IDs
             // ═══════════════════════════════════════════════════════
             if (ssrCRDTBytes) {
-              logger.info('Applying SSR CRDT state to Yjs (preserves Item IDs)', {
-                collection,
-                crdtSize: ssrCRDTBytes.byteLength,
-                cachedCount: ymap.size,
-              });
-
               // Apply CRDT bytes to Yjs (preserves original Item IDs)
               Y.applyUpdateV2(ydoc, new Uint8Array(ssrCRDTBytes), YjsOrigin.SSRInit);
 
               // Save checkpoint so subscription starts from correct point
               if (ssrCheckpoint) {
                 saveCheckpoint(ssrCheckpoint);
-                logger.info('SSR CRDT applied - checkpoint saved', {
-                  collection,
-                  checkpoint: ssrCheckpoint.lastModified,
-                  yjsDocumentCount: ymap.size,
-                });
               }
             }
 
@@ -706,28 +552,11 @@ export function convexCollectionOptions<T extends object>({
             await reconcileWithMainTable();
 
             // ═══════════════════════════════════════════════════════
-            // STEP 5: TanStack DB is now synced
-            // Final merged state from IndexedDB + SSR is now in TanStack DB
-            // ═══════════════════════════════════════════════════════
-
-            logger.debug('TanStack DB synced from Yjs', {
-              collection,
-              yjsCount: ymap.size,
-            });
-
-            // ═══════════════════════════════════════════════════════
             // STEP 5: Set up Convex subscription for real-time sync
             // ═══════════════════════════════════════════════════════
 
             // Set up subscription with checkpoint-based incremental sync
             try {
-              logger.debug('Setting up Convex subscription', {
-                collection,
-                checkpoint:
-                  initialItemsForTanStack.length > 0 ? { lastModified: 0 } : loadCheckpoint(),
-                limit: 100,
-              });
-
               subscription = convexClient.onUpdate(
                 api.stream,
                 {
@@ -738,21 +567,11 @@ export function convexCollectionOptions<T extends object>({
                 async (response) => {
                   const { changes, checkpoint: newCheckpoint } = response;
 
-                  logger.debug('Received subscription update', {
-                    collection,
-                    changeCount: changes.length,
-                  });
-
                   for (const change of changes) {
                     const { operationType, crdtBytes, documentId } = change;
 
                     switch (operationType) {
                       case 'snapshot': {
-                        logger.info('Applying snapshot from server', {
-                          collection,
-                          snapshotSize: crdtBytes.byteLength,
-                        });
-
                         // Apply snapshot to Yjs
                         Y.applyUpdateV2(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Snapshot);
 
@@ -786,33 +605,12 @@ export function convexCollectionOptions<T extends object>({
                           }
                         }
 
-                        logger.warn('📥 SUBSCRIPTION delta received', {
-                          collection,
-                          documentId,
-                          deltaSize: crdtBytes.byteLength,
-                          existsBeforeDelta: !!itemBeforeDelta,
-                          ymapSizeBefore: ymap.size,
-                        });
-
                         // Apply delta to Yjs
                         Y.applyUpdateV2(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Subscription);
 
-                        // Check state after delta
-                        const itemYMap = ymap.get(documentId);
-                        const existsAfterDelta = itemYMap instanceof Y.Map;
-
-                        logger.warn('📥 SUBSCRIPTION delta applied', {
-                          collection,
-                          documentId,
-                          existsAfterDelta,
-                          ymapSizeAfter: ymap.size,
-                          willUpdate: existsAfterDelta,
-                          willDelete: !existsAfterDelta && !!itemBeforeDelta,
-                          willSkip: !existsAfterDelta && !itemBeforeDelta,
-                        });
-
                         // Sync affected document to TanStack DB
                         if (documentId) {
+                          const itemYMap = ymap.get(documentId);
                           if (itemYMap instanceof Y.Map) {
                             // Item EXISTS after delta - UPDATE or INSERT
                             const { begin, write, commit } = syncParams;
@@ -822,17 +620,9 @@ export function convexCollectionOptions<T extends object>({
                             try {
                               write({ type: 'update', value: item });
                               commit();
-                              logger.warn('📥 SUBSCRIPTION → TanStack UPDATE', {
-                                collection,
-                                documentId,
-                              });
                             } catch {
                               write({ type: 'insert', value: item });
                               commit();
-                              logger.warn('📥 SUBSCRIPTION → TanStack INSERT', {
-                                collection,
-                                documentId,
-                              });
                             }
                           } else if (itemBeforeDelta) {
                             // Item DELETED by delta
@@ -841,23 +631,13 @@ export function convexCollectionOptions<T extends object>({
                               begin();
                               write({ type: 'delete', value: itemBeforeDelta });
                               commit();
-                              logger.warn('📥 SUBSCRIPTION → TanStack DELETE', {
-                                collection,
-                                documentId,
-                              });
                             } catch (error) {
-                              logger.error('📥 SUBSCRIPTION DELETE FAILED', {
+                              logger.error('Subscription delete failed', {
                                 collection,
                                 documentId,
                                 error,
                               });
                             }
-                          } else {
-                            // Item didn't exist before or after - echo of local delete
-                            logger.warn('📥 SUBSCRIPTION → SKIP (echo of local delete)', {
-                              collection,
-                              documentId,
-                            });
                           }
                         }
                         break;
@@ -867,15 +647,8 @@ export function convexCollectionOptions<T extends object>({
 
                   // Save checkpoint
                   saveCheckpoint(newCheckpoint);
-
-                  logger.debug('Subscription update processed', {
-                    collection,
-                    newCheckpoint,
-                  });
                 }
               );
-
-              logger.info('Convex subscription established', { collection });
             } catch (subscriptionError) {
               logger.error('Failed to setup subscription', {
                 collection,
@@ -886,7 +659,6 @@ export function convexCollectionOptions<T extends object>({
 
             // Mark collection as ready
             markReady();
-            logger.info('Collection initialized and ready', { collection });
           } catch (error) {
             logger.error('Failed to initialize collection', { error, collection });
             markReady(); // Mark ready anyway to avoid blocking
@@ -897,8 +669,6 @@ export function convexCollectionOptions<T extends object>({
         return {
           initialData: initialItemsForTanStack,
           cleanup: () => {
-            logger.debug('Cleaning up Convex subscription and persistence', { collection });
-
             // Cleanup subscription
             if (subscription) {
               subscription();
@@ -981,8 +751,6 @@ export function handleReconnect<T extends object>(
     );
   }
 
-  logger.info('Creating Convex collection with offline reconnect support', { collection });
-
   // Create offline executor (wraps collection ONCE)
   const offline: OfflineExecutor = startOfflineExecutor({
     collections: { [collection]: rawCollection as any },
@@ -1010,10 +778,8 @@ export function handleReconnect<T extends object>(
       return filtered;
     },
 
-    onLeadershipChange: (isLeader) => {
-      logger.info(isLeader ? 'Offline mode active' : 'Online-only mode', {
-        collection,
-      });
+    onLeadershipChange: (_isLeader) => {
+      // Leadership changed
     },
 
     onStorageFailure: (diagnostic) => {
@@ -1025,27 +791,12 @@ export function handleReconnect<T extends object>(
     },
   });
 
-  // Subscribe to Convex connection state for automatic retry trigger
-  if (convexClient.connectionState) {
-    const connectionState = convexClient.connectionState();
-    logger.debug('Initial connection state', {
-      collection,
-      isConnected: connectionState.isWebSocketConnected,
-    });
-  }
-
   // Trigger retry when connection is restored
   if (typeof window !== 'undefined') {
     window.addEventListener('online', () => {
-      logger.info('Network online - notifying offline executor', { collection });
       offline.notifyOnline();
     });
   }
-
-  logger.info('Offline support initialized', {
-    collection,
-    mode: offline.mode,
-  });
 
   // Return collection directly - NO WRAPPER!
   // Users call collection.insert/update/delete as normal
