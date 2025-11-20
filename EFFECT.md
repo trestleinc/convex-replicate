@@ -95,8 +95,8 @@
 **Key Architectural Pattern:**
 - **Client**: Effect.ts for all business logic
 - **Server**: Effect.runPromise at Convex handler boundary, Effect.gen for internal logic
-- **Convex Context**: Passed through Effect services (ConvexCtxService)
-- **Error Handling**: Effect errors thrown directly at boundaries (full stack traces)
+- **Convex Context**: ⚠️ **CRITICAL**: Passed explicitly as parameters to Effect functions (NOT as Effect services to preserve transaction boundaries)
+- **Error Handling**: Effect errors thrown directly at boundaries (full stack traces preserved)
 - **User API**: 100% Promise-based, no Effect types exposed
 
 ---
@@ -387,46 +387,50 @@ try {
 
 ### Server-Side Pattern (Convex Integration)
 
-**ConvexCtx as Per-Request Service:**
+**⚠️ CRITICAL: Pass Convex Context Explicitly (NOT as Effect Service)**
+
+Convex contexts are per-request and run within transactions. Wrapping them as Effect services can violate transaction boundaries. Instead, pass `ctx` explicitly to Effect functions:
 
 ```typescript
-// NOT a Layer - provided per-request
-export const provideConvexCtx = <A, E, R>(
-  ctx: GenericMutationCtx<any>
-) => (effect: Effect.Effect<A, E, R>) =>
-  Effect.provideService(effect, ConvexCtx, {
-    raw: ctx,
-    db: ctx.db,
-    auth: ctx.auth,
-    storage: ctx.storage
-  })
+// ✅ CORRECT: Pass ctx explicitly as a parameter
+const insertDocumentEffect = <T>(
+  ctx: MutationCtx,  // Pass explicitly
+  component: any,
+  tableName: string,
+  args: InsertArgs
+) => Effect.gen(function*(_) {
+  // Use ctx directly - stays within transaction scope
+  const componentResult = yield* _(Effect.tryPromise(() =>
+    component.insertDocument({ collection: tableName, ...args })
+  ))
+
+  const mainTableResult = yield* _(Effect.tryPromise(() =>
+    ctx.db.insert(tableName, args.document)
+  ))
+
+  return { componentResult, mainTableResult }
+})
 
 // In Replicate class:
 export class Replicate<T> {
-  private runtime: ManagedRuntime<...>
-
-  private async _runEffect<A, E>(
-    effect: Effect.Effect<A, E, ConvexCtx>,
-    ctx: any
-  ): Promise<A> {
-    return await this.runtime.runPromise(
-      effect.pipe(provideConvexCtx(ctx))
-    )
-  }
-
   public createInsertMutation() {
     return mutation({
       handler: async (ctx, args) => {
-        // Effect.runPromise hidden inside _runEffect
-        return await this._runEffect(
-          insertDocumentEffect(this.tableName, args),
-          ctx
+        // Pass ctx explicitly to the Effect function
+        return await Effect.runPromise(
+          insertDocumentEffect(ctx, this.component, this.tableName, args)
         )
       }
     })
   }
 }
 ```
+
+**Why this pattern?**
+- ✅ Preserves Convex transaction boundaries
+- ✅ Clear data flow (ctx passed explicitly)
+- ✅ No lifecycle mismatch (Effect services are long-lived, Convex contexts are per-request)
+- ✅ Works with all Convex context types (MutationCtx, QueryCtx, ActionCtx)
 
 **User sees standard Convex mutation:**
 ```typescript
@@ -488,10 +492,10 @@ return <div>{/* Use collection */}</div>
 ### Key Architectural Principles
 
 1. **Effect.runPromise ONLY at boundaries** - Never in business logic
-2. **Services for external resources** - IDB, Yjs, Convex, BroadcastChannel
+2. **Services for external resources** - IDB, Yjs, BroadcastChannel (NOT Convex ctx)
 3. **ManagedRuntime for lifecycle** - Automatic cleanup, no memory leaks
 4. **Scope.close on disposal** - Clean up all services at once
-5. **ConvexCtx per-request** - Not a layer, provided dynamically
+5. **⚠️ Convex Context passed explicitly** - Never wrapped as Effect service (preserves transaction boundaries)
 6. **Errors thrown directly** - Full stack traces, no conversion
 7. **Promise-based public API** - Users never import Effect
 8. **Type safety internal** - Compile-time error tracking for developers
@@ -546,7 +550,7 @@ return <div>{/* Use collection */}</div>
 | **NEW** `src/client/reconciliation.ts` | 0 | New file | ~150 |
 | **NEW** `src/client/gap-detection.ts` | 0 | New file | ~100 |
 | **NEW** `src/client/streaming/DeltaProcessor.ts` | 0 | New file | ~200 |
-| **NEW** `src/server/services/ConvexCtx.ts` | 0 | New file | ~100 |
+| ~~**NEW** `src/server/services/ConvexCtx.ts`~~ | 0 | ⚠️ **DO NOT CREATE** | ~~100~~ |
 | **NEW** `src/server/services/ReplicateComponent.ts` | 0 | New file | ~150 |
 | **NEW** `src/schemas/CRDTDelta.ts` | 0 | New file | ~150 |
 | **NEW** `src/schemas/Document.ts` | 0 | New file | ~150 |
@@ -573,7 +577,7 @@ pnpm list effect @effect/schema @effect/platform
 
 ### 1.2 Create Base Error Types
 
-**File:** `src/client/errors.ts` (NEW)
+**File:** `src/client/errors/index.ts` (NEW)
 
 ```typescript
 import { Data } from "effect"
@@ -786,6 +790,16 @@ export const IDBServiceLive = Layer.succeed(
           schedule: Schedule.exponential("100 millis")
         }),
         Effect.timeout("5 seconds"),
+        Effect.catchTag('TimeoutException', () =>
+          Effect.fail(
+            new IDBError({
+              operation: 'get',
+              key,
+              store: store?.toString(),
+              cause: new Error('Operation timed out after 5 seconds'),
+            })
+          )
+        ),
         Effect.withSpan("idb.get", { attributes: { key } })
       ),
 
@@ -799,6 +813,15 @@ export const IDBServiceLive = Layer.succeed(
           schedule: Schedule.exponential("200 millis")
         }),
         Effect.timeout("10 seconds"),
+        Effect.catchTag('TimeoutException', () =>
+          Effect.fail(
+            new IDBWriteError({
+              key,
+              value,
+              cause: new Error('Operation timed out after 10 seconds'),
+            })
+          )
+        ),
         Effect.withSpan("idb.set", { attributes: { key } })
       ),
 
@@ -808,7 +831,17 @@ export const IDBServiceLive = Layer.succeed(
         catch: (cause) => new IDBError({ operation: "delete", key, store: store?.toString(), cause })
       }).pipe(
         Effect.retry({ times: 3 }),
-        Effect.timeout("5 seconds")
+        Effect.timeout("5 seconds"),
+        Effect.catchTag('TimeoutException', () =>
+          Effect.fail(
+            new IDBError({
+              operation: 'delete',
+              key,
+              store: store?.toString(),
+              cause: new Error('Operation timed out after 5 seconds'),
+            })
+          )
+        )
       ),
 
     clear: (store) =>
@@ -816,7 +849,16 @@ export const IDBServiceLive = Layer.succeed(
         try: () => (store as any).clear(), // idb-keyval doesn't export clear for UseStore
         catch: (cause) => new IDBError({ operation: "clear", store: store?.toString(), cause })
       }).pipe(
-        Effect.timeout("10 seconds")
+        Effect.timeout("10 seconds"),
+        Effect.catchTag('TimeoutException', () =>
+          Effect.fail(
+            new IDBError({
+              operation: 'clear',
+              store: store?.toString(),
+              cause: new Error('Operation timed out after 10 seconds'),
+            })
+          )
+        )
       )
   })
 )
@@ -827,26 +869,37 @@ export const IDBServiceLive = Layer.succeed(
 **File:** `src/client/services/ConnectionService.ts` (NEW)
 
 ```typescript
-import { Effect, Context, Layer, Ref, Data } from "effect"
+import { Effect, Context, Layer, Ref } from "effect"
 
-// Connection state ADT
-export const ConnectionState = Data.taggedEnum<{
-  Disconnected: {}
-  Connecting: {}
-  Connected: { since: number }
-  Reconnecting: { attempt: number }
-  Failed: { error: unknown }
-}>()
+// Connection state ADT - using manual discriminated union
+export type ConnectionStateValue =
+  | { readonly _tag: 'Disconnected' }
+  | { readonly _tag: 'Connecting' }
+  | { readonly _tag: 'Connected'; readonly since: number }
+  | { readonly _tag: 'Reconnecting'; readonly attempt: number }
+  | { readonly _tag: 'Failed'; readonly error: unknown };
 
-export type ConnectionState = Data.TaggedEnum.Value<typeof ConnectionState>
+export const ConnectionState = {
+  Disconnected: (): ConnectionStateValue => ({ _tag: 'Disconnected' }),
+  Connecting: (): ConnectionStateValue => ({ _tag: 'Connecting' }),
+  Connected: (since: number): ConnectionStateValue => ({
+    _tag: 'Connected',
+    since,
+  }),
+  Reconnecting: (attempt: number): ConnectionStateValue => ({
+    _tag: 'Reconnecting',
+    attempt,
+  }),
+  Failed: (error: unknown): ConnectionStateValue => ({ _tag: 'Failed', error }),
+};
 
 // Service definition
 export class ConnectionService extends Context.Tag("ConnectionService")<
   ConnectionService,
   {
-    readonly state: Ref.Ref<ConnectionState>
-    readonly getState: Effect.Effect<ConnectionState>
-    readonly setState: (state: ConnectionState) => Effect.Effect<void>
+    readonly state: Ref.Ref<ConnectionStateValue>
+    readonly getState: Effect.Effect<ConnectionStateValue>
+    readonly setState: (state: ConnectionStateValue) => Effect.Effect<void>
     readonly isConnected: Effect.Effect<boolean>
   }
 >() {}
@@ -855,7 +908,7 @@ export class ConnectionService extends Context.Tag("ConnectionService")<
 export const ConnectionServiceLive = Layer.effect(
   ConnectionService,
   Effect.gen(function* (_) {
-    const stateRef = yield* _(Ref.make(ConnectionState.Disconnected({})))
+    const stateRef = yield* _(Ref.make(ConnectionState.Disconnected()))
 
     return ConnectionService.of({
       state: stateRef,
@@ -877,7 +930,7 @@ export const ConnectionServiceLive = Layer.effect(
 **Decision**: Keep LogTape as the logging solution. Effect's logging methods (`Effect.logInfo`, `Effect.logDebug`, etc.) integrate with LogTape via Effect.Logger configuration.
 
 ```typescript
-import { Effect, Logger, LogLevel } from "effect"
+import { Effect, Logger, LogLevel, List, HashMap } from "effect"
 import { getLogger } from "@logtape/logtape"
 
 // Configure Effect.Logger to forward to LogTape
@@ -886,28 +939,37 @@ export const configureEffectLogger = () => {
 
   return Logger.replace(
     Logger.defaultLogger,
-    Logger.make(({ logLevel, message, cause, context, spans }) => {
+    Logger.make(({ logLevel, message, cause, spans, annotations }) => {
+      // Convert annotations HashMap to plain object
+      const annotationsObj = Object.fromEntries(HashMap.toEntries(annotations));
+
+      // Convert spans List to array and extract labels
+      const spansArray = List.toArray(spans).map((s) => s.label);
+
       const meta = {
-        ...Object.fromEntries(context),
-        spans: spans.map(s => s.label),
+        ...annotationsObj,
+        spans: spansArray,
         ...(cause ? { cause } : {})
       }
+
+      // Convert message to string (it's of type unknown)
+      const messageStr = String(message);
 
       // Map Effect log levels to LogTape levels
       switch (logLevel._tag) {
         case "Fatal":
         case "Error":
-          logtape.error(message, meta)
+          logtape.error(messageStr, meta)
           break
         case "Warning":
-          logtape.warn(message, meta)
+          logtape.warn(messageStr, meta)
           break
         case "Info":
-          logtape.info(message, meta)
+          logtape.info(messageStr, meta)
           break
         case "Debug":
         case "Trace":
-          logtape.debug(message, meta)
+          logtape.debug(messageStr, meta)
           break
       }
     })
@@ -952,17 +1014,29 @@ Effect.gen(function* (_) {
 **File:** `src/client/services/YjsService.ts` (NEW)
 
 ```typescript
-import { Effect, Context, Layer } from "effect"
+import { Effect, Context, Layer, Data } from "effect"
 import { IDBService } from "./IDBService"
+import type { IDBError, IDBWriteError } from "../errors"
 import * as Y from "yjs"
 
-// Service definition
+class YjsError extends Data.TaggedError("YjsError")<{
+  operation: string
+  cause: unknown
+}> {}
+
+// Service definition with lifecycle management
 export class YjsService extends Context.Tag("YjsService")<
   YjsService,
   {
-    readonly getDocument: (collection: string) => Effect.Effect<Y.Doc, IDBError>
-    readonly encodeState: (doc: Y.Doc) => Effect.Effect<Uint8Array, YjsError>
-    readonly applyDelta: (doc: Y.Doc, delta: Uint8Array) => Effect.Effect<void, YjsError>
+    readonly createDocument: (collection: string) => Effect.Effect<Y.Doc, IDBError | IDBWriteError>
+    readonly destroyDocument: (doc: Y.Doc) => Effect.Effect<void, never>
+    readonly encodeStateAsUpdate: (doc: Y.Doc) => Effect.Effect<Uint8Array, YjsError>
+    readonly applyUpdate: (
+      doc: Y.Doc,
+      update: Uint8Array,
+      origin?: string,
+      transact?: boolean
+    ) => Effect.Effect<void, YjsError>
   }
 >() {}
 
@@ -973,13 +1047,14 @@ export const YjsServiceLive = Layer.effect(
     const idb = yield* _(IDBService)
 
     return YjsService.of({
-      getDocument: (collection) =>
+      createDocument: (collection) =>
         Effect.gen(function* (_) {
-          // Load or generate stable clientID
+          // Load or generate stable clientID (stored per collection)
           const clientIdKey = `yjsClientId:${collection}`
           let clientId = yield* _(idb.get<number>(clientIdKey))
 
           if (!clientId) {
+            // Generate deterministic clientID (not random for better CRDT convergence)
             clientId = Math.floor(Math.random() * 2147483647)
             yield* _(idb.set(clientIdKey, clientId))
             yield* _(Effect.logInfo("Generated new Yjs clientID", { collection, clientId }))
@@ -991,29 +1066,78 @@ export const YjsServiceLive = Layer.effect(
           return ydoc
         }),
 
-      encodeState: (doc) =>
+      destroyDocument: (doc) =>
+        Effect.sync(() => {
+          // Critical: Free memory by destroying Y.Doc
+          doc.destroy()
+        }),
+
+      encodeStateAsUpdate: (doc) =>
         Effect.try({
           try: () => Y.encodeStateAsUpdateV2(doc),
-          catch: (cause) => new YjsError({ operation: "encode", cause })
+          catch: (cause) => new YjsError({ operation: "encodeStateAsUpdate", cause })
         }).pipe(
-          Effect.timeout("2 seconds")
+          Effect.timeout("2 seconds"),
+          Effect.catchTag('TimeoutException', () =>
+            Effect.fail(
+              new YjsError({
+                operation: 'encodeStateAsUpdate',
+                cause: new Error('Operation timed out after 2 seconds'),
+              })
+            )
+          )
         ),
 
-      applyDelta: (doc, delta) =>
+      applyUpdate: (doc, update, origin, transact = true) =>
         Effect.try({
-          try: () => Y.applyUpdateV2(doc, delta),
-          catch: (cause) => new YjsError({ operation: "apply", cause })
+          try: () => {
+            if (transact) {
+              // Use doc.transact for proper batching and event handling
+              doc.transact(() => {
+                Y.applyUpdateV2(doc, update, origin)
+              }, origin)
+            } else {
+              Y.applyUpdateV2(doc, update, origin)
+            }
+          },
+          catch: (cause) => new YjsError({ operation: "applyUpdate", cause })
         }).pipe(
-          Effect.timeout("2 seconds")
+          Effect.timeout("2 seconds"),
+          Effect.catchTag('TimeoutException', () =>
+            Effect.fail(
+              new YjsError({
+                operation: 'applyUpdate',
+                cause: new Error('Operation timed out after 2 seconds'),
+              })
+            )
+          )
         )
     })
   })
 )
 
-class YjsError extends Data.TaggedError("YjsError")<{
-  operation: string
-  cause: unknown
-}> {}
+// ✅ Helper: Acquire-Release pattern for Y.Doc lifecycle management
+export const withYDoc = <A, E>(
+  collection: string,
+  f: (doc: Y.Doc) => Effect.Effect<A, E>
+) => Effect.gen(function*(_) {
+  const yjs = yield* _(YjsService)
+
+  return yield* _(Effect.acquireUseRelease(
+    yjs.createDocument(collection),
+    f,
+    (doc) => yjs.destroyDocument(doc)
+  ))
+})
+
+// Example usage:
+// const result = yield* _(withYDoc("tasks", (doc) =>
+//   Effect.gen(function*(_) {
+//     const yjs = yield* _(YjsService)
+//     const state = yield* _(yjs.encodeStateAsUpdate(doc))
+//     return state
+//   })
+// ))
 ```
 
 #### 1.3.5 ProtocolService
@@ -1021,19 +1145,24 @@ class YjsError extends Data.TaggedError("YjsError")<{
 **File:** `src/client/services/ProtocolService.ts` (NEW)
 
 ```typescript
-import { Effect, Context, Layer } from "effect"
+import { Effect, Context, Layer, Data } from "effect"
 import { IDBService } from "./IDBService"
 import { ConvexClient } from "convex/browser"
-import { ProtocolMismatchError } from "../errors"
+import { type IDBError, type IDBWriteError, NetworkError } from "../errors"
+
+class ProtocolMismatchError extends Data.TaggedError("ProtocolMismatchError")<{
+  storedVersion: number
+  serverVersion: number
+}> {}
 
 // Service definition
 export class ProtocolService extends Context.Tag("ProtocolService")<
   ProtocolService,
   {
     readonly getStoredVersion: () => Effect.Effect<number, IDBError>
-    readonly setStoredVersion: (version: number) => Effect.Effect<void, IDBError>
+    readonly setStoredVersion: (version: number) => Effect.Effect<void, IDBWriteError>
     readonly getServerVersion: () => Effect.Effect<number, NetworkError>
-    readonly runMigration: () => Effect.Effect<void, ProtocolMismatchError | IDBError>
+    readonly runMigration: () => Effect.Effect<void, ProtocolMismatchError | IDBError | IDBWriteError | NetworkError>
   }
 >() {}
 
@@ -1056,29 +1185,58 @@ export const ProtocolServiceLive = (convexClient: ConvexClient, api: any) =>
 
         getServerVersion: () =>
           Effect.tryPromise({
-            try: () => convexClient.query(api.getProtocolVersion),
+            try: () => convexClient.query(api.getProtocolVersion, {}),
             catch: (cause) => new NetworkError({
               operation: "getProtocolVersion",
+              retryable: true,
               cause
             })
           }).pipe(
             Effect.map((response: any) => response.protocolVersion),
-            Effect.timeout("5 seconds")
+            Effect.timeout("5 seconds"),
+            Effect.catchTag("TimeoutException", () =>
+              Effect.fail(new NetworkError({
+                operation: "getProtocolVersion",
+                retryable: true,
+                cause: new Error("Operation timed out after 5 seconds")
+              }))
+            )
           ),
 
         runMigration: () =>
           Effect.gen(function* (_) {
-            const stored = yield* _(this.getStoredVersion())
-            const server = yield* _(this.getServerVersion())
+            const stored = yield* _(idb.get<number>("protocolVersion"))
+            const storedVersion = stored ?? 1 // Default to v1
 
-            if (stored < server) {
+            const serverResponse = yield* _(
+              Effect.tryPromise({
+                try: () => convexClient.query(api.getProtocolVersion, {}),
+                catch: (cause) => new NetworkError({
+                  operation: "getProtocolVersion",
+                  retryable: true,
+                  cause
+                })
+              }).pipe(
+                Effect.timeout("5 seconds"),
+                Effect.catchTag("TimeoutException", () =>
+                  Effect.fail(new NetworkError({
+                    operation: "getProtocolVersion",
+                    retryable: true,
+                    cause: new Error("Operation timed out after 5 seconds")
+                  }))
+                )
+              )
+            )
+            const serverVersion = (serverResponse as any).protocolVersion ?? 1
+
+            if (storedVersion < serverVersion) {
               yield* _(Effect.logInfo("Running protocol migration", {
-                from: stored,
-                to: server
+                from: storedVersion,
+                to: serverVersion
               }))
 
               // Sequential migrations
-              for (let version = stored + 1; version <= server; version++) {
+              for (let version = storedVersion + 1; version <= serverVersion; version++) {
                 yield* _(Effect.logInfo(`Migrating to protocol v${version}`))
 
                 // Migration logic per version
@@ -1088,13 +1246,13 @@ export const ProtocolServiceLive = (convexClient: ConvexClient, api: any) =>
                 // Future versions here
               }
 
-              yield* _(this.setStoredVersion(server))
+              yield* _(idb.set("protocolVersion", serverVersion))
               yield* _(Effect.logInfo("Protocol migration completed", {
-                newVersion: server
+                newVersion: serverVersion
               }))
             } else {
               yield* _(Effect.logDebug("Protocol version up to date", {
-                version: stored
+                version: storedVersion
               }))
             }
           })
@@ -1108,16 +1266,6 @@ const migrateV1toV2 = () =>
     yield* _(Effect.logInfo("Running v1→v2 migration"))
     // Migration logic here (placeholder for future)
   })
-
-class ProtocolMismatchError extends Data.TaggedError("ProtocolMismatchError")<{
-  storedVersion: number
-  serverVersion: number
-}> {}
-
-class NetworkError extends Data.TaggedError("NetworkError")<{
-  operation: string
-  cause: unknown
-}> {}
 ```
 
 #### 1.3.6 CheckpointService
@@ -1127,6 +1275,7 @@ class NetworkError extends Data.TaggedError("NetworkError")<{
 ```typescript
 import { Effect, Context, Layer } from "effect"
 import { IDBService } from "./IDBService"
+import type { IDBError, IDBWriteError } from "../errors"
 
 export interface Checkpoint {
   lastModified: number
@@ -1137,7 +1286,7 @@ export class CheckpointService extends Context.Tag("CheckpointService")<
   CheckpointService,
   {
     readonly loadCheckpoint: (collection: string) => Effect.Effect<Checkpoint, IDBError>
-    readonly saveCheckpoint: (collection: string, checkpoint: Checkpoint) => Effect.Effect<void, IDBError>
+    readonly saveCheckpoint: (collection: string, checkpoint: Checkpoint) => Effect.Effect<void, IDBWriteError>
     readonly clearCheckpoint: (collection: string) => Effect.Effect<void, IDBError>
   }
 >() {}
@@ -1196,8 +1345,7 @@ export const CheckpointServiceLive = Layer.effect(
 ```typescript
 import { Effect, Context, Layer } from "effect"
 import { YjsService } from "./YjsService"
-import * as Y from "yjs"
-import { ReconciliationError } from "../errors"
+import { ReconciliationError as ReconciliationErrorImport } from "../errors"
 
 // Service definition
 export class ReconciliationService extends Context.Tag("ReconciliationService")<
@@ -1208,7 +1356,7 @@ export class ReconciliationService extends Context.Tag("ReconciliationService")<
       serverDocs: readonly T[],
       getKey: (doc: T) => string,
       deleteFromTanStack: (keys: string[]) => Effect.Effect<void, never>
-    ) => Effect.Effect<void, ReconciliationError>
+    ) => Effect.Effect<void, ReconciliationErrorImport>
   }
 >() {}
 
@@ -1223,7 +1371,7 @@ export const ReconciliationServiceLive = Layer.effect(
         Effect.gen(function* (_) {
           yield* _(Effect.logInfo("Starting reconciliation", { collection }))
 
-          const ydoc = yield* _(yjs.getDocument(collection))
+          const ydoc = yield* _(yjs.createDocument(collection))
           const serverDocIds = new Set(serverDocs.map(getKey))
           const ymap = ydoc.getMap(collection)
           const toDelete: string[] = []
@@ -1262,8 +1410,9 @@ export const ReconciliationServiceLive = Layer.effect(
           }
         }).pipe(
           Effect.catchAll((cause) =>
-            Effect.fail(new ReconciliationError({
+            Effect.fail(new ReconciliationErrorImport({
               collection,
+              reason: "Reconciliation failed",
               cause
             }))
           )
@@ -1271,11 +1420,6 @@ export const ReconciliationServiceLive = Layer.effect(
     })
   })
 )
-
-class ReconciliationError extends Data.TaggedError("ReconciliationError")<{
-  collection: string
-  cause: unknown
-}> {}
 ```
 
 #### 1.3.8 SnapshotService
@@ -1283,16 +1427,26 @@ class ReconciliationError extends Data.TaggedError("ReconciliationError")<{
 **File:** `src/client/services/SnapshotService.ts` (NEW)
 
 ```typescript
-import { Effect, Context, Layer } from "effect"
+import { Effect, Context, Layer, Data } from "effect"
 import { YjsService } from "./YjsService"
 import { CheckpointService, type Checkpoint } from "./CheckpointService"
-import { SnapshotMissingError, SnapshotRecoveryError } from "../errors"
+import type { NetworkError } from "../errors"
 
 export interface SnapshotResponse {
   crdtBytes: Uint8Array
   checkpoint: Checkpoint
   documentCount: number
 }
+
+class SnapshotMissingError extends Data.TaggedError("SnapshotMissingError")<{
+  collection: string
+  message: string
+}> {}
+
+class SnapshotRecoveryError extends Data.TaggedError("SnapshotRecoveryError")<{
+  collection: string
+  cause: unknown
+}> {}
 
 // Service definition
 export class SnapshotService extends Context.Tag("SnapshotService")<
@@ -1316,26 +1470,26 @@ export const SnapshotServiceLive = Layer.effect(
 
     return SnapshotService.of({
       recoverFromSnapshot: (collection, fetchSnapshot, truncateTanStack, syncYjsToTanStack) =>
-        Effect.gen(function* (_) {
-          yield* _(Effect.logWarning("Gap detected, recovering from snapshot", {
+        Effect.gen(function* () {
+          yield* Effect.logWarning("Gap detected, recovering from snapshot", {
             collection
-          }))
+          })
 
           // Fetch snapshot from server
-          const snapshot = yield* _(fetchSnapshot())
+          const snapshot = yield* fetchSnapshot()
 
           if (!snapshot) {
-            yield* _(Effect.fail(new SnapshotMissingError({
+            return yield* Effect.fail(new SnapshotMissingError({
               collection,
               message: "Gap detected but no snapshot available - data loss scenario"
-            })))
+            }))
           }
 
           // Get existing doc (preserves clientID)
-          const ydoc = yield* _(yjs.getDocument(collection))
+          const ydoc = yield* yjs.createDocument(collection)
 
           // Clear Yjs state WITHOUT destroying doc
-          yield* _(Effect.sync(() => {
+          yield* Effect.sync(() => {
             const ymap = ydoc.getMap(collection)
             ydoc.transact(() => {
               const keys = Array.from(ymap.keys())
@@ -1343,25 +1497,25 @@ export const SnapshotServiceLive = Layer.effect(
                 ymap.delete(key)
               }
             }, "snapshot-clear")
-          }))
+          })
 
           // Apply snapshot (full state)
-          yield* _(yjs.applyDelta(ydoc, snapshot.crdtBytes))
+          yield* yjs.applyUpdate(ydoc, snapshot.crdtBytes)
 
           // Truncate TanStack DB and rebuild from Yjs
-          yield* _(truncateTanStack())
-          yield* _(syncYjsToTanStack())
+          yield* truncateTanStack()
+          yield* syncYjsToTanStack()
 
           // Save new checkpoint
-          yield* _(checkpoint.saveCheckpoint(collection, snapshot.checkpoint))
+          yield* checkpoint.saveCheckpoint(collection, snapshot.checkpoint)
 
-          yield* _(Effect.logInfo("Snapshot recovery completed", {
+          return yield* Effect.logInfo("Snapshot recovery completed", {
             collection,
             checkpoint: snapshot.checkpoint,
             documentCount: snapshot.documentCount
-          }))
+          })
         }).pipe(
-          Effect.catchAll((cause) => {
+          Effect.catchAll((cause): Effect.Effect<never, SnapshotMissingError | SnapshotRecoveryError> => {
             if (cause instanceof SnapshotMissingError) {
               return Effect.fail(cause)
             }
@@ -1369,21 +1523,12 @@ export const SnapshotServiceLive = Layer.effect(
               collection,
               cause
             }))
-          })
+          }),
+          Effect.asVoid
         )
     })
   })
 )
-
-class SnapshotMissingError extends Data.TaggedError("SnapshotMissingError")<{
-  collection: string
-  message: string
-}> {}
-
-class SnapshotRecoveryError extends Data.TaggedError("SnapshotRecoveryError")<{
-  collection: string
-  cause: unknown
-}> {}
 ```
 
 #### 1.3.9 TabLeaderService (Multi-Tab Coordination)
@@ -1391,7 +1536,7 @@ class SnapshotRecoveryError extends Data.TaggedError("SnapshotRecoveryError")<{
 **File:** `src/client/services/TabLeaderService.ts` (NEW)
 
 ```typescript
-import { Effect, Context, Layer, Ref, Stream } from "effect"
+import { Effect, Context, Layer, Ref } from "effect"
 import { TabCoordinationError } from "../errors"
 
 // Service definition
@@ -1399,8 +1544,8 @@ export class TabLeaderService extends Context.Tag("TabLeaderService")<
   TabLeaderService,
   {
     readonly isLeader: Effect.Effect<boolean>
-    readonly requestLeadership: Effect.Effect<void>
-    readonly releaseLeadership: Effect.Effect<void>
+    readonly requestLeadership: Effect.Effect<void, TabCoordinationError>
+    readonly releaseLeadership: Effect.Effect<void, TabCoordinationError>
   }
 >() {}
 
@@ -1419,53 +1564,55 @@ export const TabLeaderServiceLive = Layer.effect(
     return TabLeaderService.of({
       isLeader: Ref.get(isLeaderRef),
 
-      requestLeadership: Effect.gen(function* (_) {
-        if (!channel) {
-          // SSR or no BroadcastChannel support - assume leadership
-          yield* _(Ref.set(isLeaderRef, true))
-          return
-        }
-
-        // Leader election protocol
-        yield* _(
-          Effect.try({
-            try: () => {
-              channel.postMessage({ type: "request_leadership", tabId })
-            },
-            catch: (cause) => new TabCoordinationError({
-              operation: "leader_election",
-              cause
-            })
+      requestLeadership: !channel
+        ? // SSR or no BroadcastChannel support - assume leadership
+          Effect.gen(function* (_) {
+            yield* _(Ref.set(isLeaderRef, true))
           })
-        )
-
-        // Wait for responses
-        yield* _(Effect.sleep("100 millis"))
-
-        // If no one objected, become leader
-        yield* _(Ref.set(isLeaderRef, true))
-        yield* _(Effect.logInfo("Tab became leader", { tabId }))
-      }),
-
-      releaseLeadership: Effect.gen(function* (_) {
-        yield* _(Ref.set(isLeaderRef, false))
-
-        if (channel) {
-          yield* _(
-            Effect.try({
-              try: () => {
-                channel.postMessage({ type: "release_leadership", tabId })
-              },
-              catch: (cause) => new TabCoordinationError({
-                operation: "message_broadcast",
-                cause
+        : // Leader election protocol
+          Effect.gen(function* (_) {
+            yield* _(
+              Effect.try({
+                try: () => {
+                  channel.postMessage({ type: "request_leadership", tabId })
+                },
+                catch: (cause) => new TabCoordinationError({
+                  operation: "leader_election",
+                  cause
+                })
               })
-            })
-          )
-        }
+            )
 
-        yield* _(Effect.logInfo("Tab released leadership", { tabId }))
-      })
+            // Wait for responses
+            yield* _(Effect.sleep("100 millis"))
+
+            // If no one objected, become leader
+            yield* _(Ref.set(isLeaderRef, true))
+            yield* _(Effect.logInfo("Tab became leader", { tabId }))
+          }),
+
+      releaseLeadership: !channel
+        ? // SSR or no BroadcastChannel support
+          Effect.gen(function* (_) {
+            yield* _(Ref.set(isLeaderRef, false))
+          })
+        : Effect.gen(function* (_) {
+            yield* _(Ref.set(isLeaderRef, false))
+
+            yield* _(
+              Effect.try({
+                try: () => {
+                  channel.postMessage({ type: "release_leadership", tabId })
+                },
+                catch: (cause) => new TabCoordinationError({
+                  operation: "message_broadcast",
+                  cause
+                })
+              })
+            )
+
+            yield* _(Effect.logInfo("Tab released leadership", { tabId }))
+          })
     })
   })
 )
@@ -1473,142 +1620,65 @@ export const TabLeaderServiceLive = Layer.effect(
 
 #### 1.3.10 Server-Side Services
 
-**File:** `src/server/services/ConvexCtx.ts` (NEW)
+**File:** `src/server/services/ConvexCtx.ts` ⚠️ **DELETED - DO NOT CREATE**
+
+**⚠️ CRITICAL DESIGN DECISION:**
+
+**DO NOT** create a ConvexCtx service. Convex contexts must be passed explicitly to preserve transaction boundaries.
+
+**Why NOT a service:**
+1. **Transaction safety**: Convex mutations run in transactions. Wrapping `ctx` in an Effect service could cause operations to execute outside the transaction scope.
+2. **Lifecycle mismatch**: Effect services are typically long-lived (application lifetime), but Convex contexts are per-request.
+3. **Context type differences**: Convex has `MutationCtx`, `QueryCtx`, and `ActionCtx` with different capabilities. A single service type would be incorrect.
+
+**Instead, use this pattern:**
 
 ```typescript
-import { Context, Layer } from "effect"
-
-// Service definition for Convex context
-export class ConvexCtx extends Context.Tag("ConvexCtx")<
-  ConvexCtx,
-  {
-    readonly db: any
-    readonly auth: any
-    readonly storage: any
-    readonly runMutation: any
-    readonly runQuery: any
-    readonly runAction: any
-  }
->() {}
-
-// Layer factory - creates layer from Convex ctx
-export const ConvexCtxLive = (ctx: any) =>
-  Layer.succeed(ConvexCtx, {
-    db: ctx.db,
-    auth: ctx.auth,
-    storage: ctx.storage,
-    runMutation: ctx.runMutation,
-    runQuery: ctx.runQuery,
-    runAction: ctx.runAction
-  })
-```
-
-**File:** `src/server/services/ReplicateComponent.ts` (NEW)
-
-```typescript
-import { Effect, Context, Layer } from "effect"
-import { ComponentError } from "../../client/errors"
-
-// Service definition for component operations
-export class ReplicateComponent extends Context.Tag("ReplicateComponent")<
-  ReplicateComponent,
-  {
-    readonly insertDocument: (args: any) => Effect.Effect<any, ComponentError>
-    readonly updateDocument: (args: any) => Effect.Effect<any, ComponentError>
-    readonly deleteDocument: (args: any) => Effect.Effect<any, ComponentError>
-    readonly stream: (args: any) => Effect.Effect<any, ComponentError>
-  }
->() {}
-
-// Layer factory - wraps component operations
-export const ReplicateComponentLive = (ctx: any, component: any) =>
-  Layer.succeed(ReplicateComponent, {
-    insertDocument: (args) =>
-      Effect.tryPromise({
-        try: () => ctx.runMutation(component.public.insertDocument, args),
-        catch: (cause) => new ComponentError({
-          operation: "insertDocument",
-          cause
-        })
-      }),
-
-    updateDocument: (args) =>
-      Effect.tryPromise({
-        try: () => ctx.runMutation(component.public.updateDocument, args),
-        catch: (cause) => new ComponentError({
-          operation: "updateDocument",
-          cause
-        })
-      }),
-
-    deleteDocument: (args) =>
-      Effect.tryPromise({
-        try: () => ctx.runMutation(component.public.deleteDocument, args),
-        catch: (cause) => new ComponentError({
-          operation: "deleteDocument",
-          cause
-        })
-      }),
-
-    stream: (args) =>
-      Effect.tryPromise({
-        try: () => ctx.runQuery(component.public.stream, args),
-        catch: (cause) => new ComponentError({
-          operation: "stream",
-          cause
-        })
-      })
-  })
-```
-
-#### 1.3.11 Error Conversion Utilities
-
-**File:** `src/server/utils/errors.ts` (NEW)
-
-```typescript
+// ✅ CORRECT: Type-safe helper for Convex operations
 import { Effect } from "effect"
-import { ConvexError } from "convex/values"
-import { AuthError, ValidationError, ComponentError } from "../../client/errors"
+import type { GenericMutationCtx, GenericQueryCtx } from "convex/server"
 
-// Convert Effect errors to Convex-compatible errors
-export const convertEffectError = (error: unknown): Error => {
-  if (error instanceof AuthError) {
-    return new ConvexError({
-      code: "UNAUTHORIZED",
-      message: error.message
-    })
-  }
+// Helper to wrap Convex DB operations in Effect
+export const dbInsert = <T>(
+  ctx: GenericMutationCtx<any>,
+  table: string,
+  doc: T
+) => Effect.tryPromise({
+  try: () => ctx.db.insert(table, doc),
+  catch: (error) => new ConvexMutationError({ operation: "insert", cause: error })
+})
 
-  if (error instanceof ValidationError) {
-    return new ConvexError({
-      code: "VALIDATION_ERROR",
-      message: error.message,
-      fields: error.fields
-    })
-  }
+export const dbQuery = <T>(
+  ctx: GenericQueryCtx<any>,
+  table: string
+) => Effect.tryPromise({
+  try: () => ctx.db.query(table).collect(),
+  catch: (error) => new ConvexMutationError({ operation: "query", cause: error })
+})
 
-  if (error instanceof ComponentError) {
-    return new ConvexError({
-      code: "COMPONENT_ERROR",
-      message: `Component operation failed: ${error.operation}`
-    })
-  }
-
-  return new Error(`Unknown error: ${String(error)}`)
-}
-
-// Helper to run Effect in Convex handler
-export const runEffectInConvex = <A>(
-  effect: Effect.Effect<A, any, any>
-): Promise<A> =>
-  Effect.runPromise(
-    effect.pipe(
-      Effect.mapError(convertEffectError)
-    )
-  )
+// Use in mutation effects:
+const insertDocumentEffect = (
+  ctx: GenericMutationCtx<any>,  // Pass explicitly
+  tableName: string,
+  document: any
+) => Effect.gen(function*(_) {
+  const id = yield* _(dbInsert(ctx, tableName, document))
+  yield* _(Effect.logInfo("Document inserted", { id }))
+  return id
+})
 ```
 
-### 1.4 Update package.json Scripts
+### 1.4 Files NOT Part of Phase 1
+
+The following files are **NOT** part of Phase 1 implementation:
+
+- ❌ **`src/server/services/ConvexCtx.ts`** - Should never be created (violates transaction boundaries)
+- ❌ **`src/server/services/ReplicateComponent.ts`** - Not needed (functionality in storage.ts)
+- ❌ **`src/server/utils/errors.ts`** - Not yet implemented
+- ❌ **`src/server/ssr.ts`** - Deleted (SSR functionality moved to Phase 6)
+- ❌ **`vitest.effect.config.ts`** - Optional, not yet added
+
+### 1.5 Update package.json Scripts
 
 Add Effect test script:
 
@@ -2769,10 +2839,15 @@ const handleTabClose = (
 
 #### Edge Cases and Split-Brain Resolution
 
+**⚠️ Recovery Strategy: Split-Brain Detection**
+
+Split-brain occurs when two tabs simultaneously claim leadership (race condition during leader election).
+
 **Edge Case 1: Split Brain (two tabs claim leadership simultaneously):**
 
 ```typescript
 // Resolution: Lower tabId wins (lexicographic comparison)
+// ✅ This deterministic resolution prevents oscillation
 const resolveSplitBrain = (
   myTabId: string,
   otherTabId: string,
@@ -2781,10 +2856,11 @@ const resolveSplitBrain = (
 ) =>
   Effect.gen(function* (_) {
     if (otherTabId < myTabId) {
-      // Other tab has priority, step down
+      // Other tab has priority, step down immediately
       yield* _(Effect.logWarning("Split brain detected, stepping down", {
         myTabId,
-        winningTabId: otherTabId
+        winningTabId: otherTabId,
+        resolution: "lexicographic_comparison"
       }))
 
       yield* _(Ref.set(isLeaderRef, false))
@@ -4176,6 +4252,164 @@ const correctConcurrency = source.pipe(
 )
 ```
 
+#### Stream Observability with OpenTelemetry
+
+**⚠️ Observability Strategy: Stream Health Monitoring**
+
+Monitor Effect.Stream operations for:
+1. **Throughput** - Deltas processed per second
+2. **Backpressure events** - Buffer capacity warnings
+3. **Processing latency** - Time to apply deltas
+4. **Error rates** - Failed delta applications
+
+**OpenTelemetry Integration:**
+
+```typescript
+import { Effect, Stream, Metric, Schedule } from "effect"
+
+// Define stream metrics
+const deltaProcessedCounter = Metric.counter("crdt.delta.processed", {
+  description: "Number of CRDT deltas successfully processed"
+})
+
+const deltaErrorCounter = Metric.counter("crdt.delta.errors", {
+  description: "Number of CRDT delta processing errors"
+})
+
+const deltaProcessingDuration = Metric.histogram("crdt.delta.duration", {
+  description: "Time taken to process a delta (ms)",
+  unit: "milliseconds"
+})
+
+const bufferCapacityGauge = Metric.gauge("crdt.buffer.capacity", {
+  description: "Current buffer capacity utilization (%)"
+})
+
+// Instrument stream with metrics
+const streamWithMetrics = (source: Stream.Stream<CRDTDelta>) =>
+  source.pipe(
+    Stream.tap((delta) =>
+      Effect.gen(function*(_) {
+        const startTime = Date.now()
+
+        // Process delta
+        yield* _(applyYjsDelta(ydoc, delta))
+
+        // Record metrics
+        const duration = Date.now() - startTime
+        yield* _(Metric.increment(deltaProcessedCounter))
+        yield* _(Metric.set(deltaProcessingDuration, duration))
+
+        // Add OpenTelemetry span attributes
+        yield* _(Effect.annotateCurrentSpan({
+          "delta.documentId": delta.documentId,
+          "delta.version": delta.version,
+          "delta.size": delta.crdtBytes.byteLength,
+          "delta.operationType": delta.operationType,
+          "delta.processingDuration": duration
+        }))
+      })
+    ),
+    Stream.catchAll((error) =>
+      Effect.gen(function*(_) {
+        yield* _(Metric.increment(deltaErrorCounter))
+        yield* _(Effect.logError("Delta processing failed", {
+          error: error.message,
+          errorType: error._tag
+        }))
+        return Stream.empty
+      })
+    )
+  )
+
+// Monitor buffer capacity
+const monitorBufferHealth = (queue: Queue.Queue<CRDTDelta>, capacity: number) =>
+  Effect.gen(function*(_) {
+    yield* _(
+      Effect.gen(function*(_) {
+        const size = yield* _(Queue.size(queue))
+        const utilization = (size / capacity) * 100
+
+        yield* _(Metric.set(bufferCapacityGauge, utilization))
+
+        if (utilization > 80) {
+          yield* _(Effect.logWarning("Buffer capacity high", {
+            utilization: `${utilization.toFixed(1)}%`,
+            size,
+            capacity
+          }))
+        }
+
+        yield* _(Effect.sleep("5 seconds"))
+      }).pipe(Effect.forever)
+    )
+  }).pipe(Effect.forkDaemon)
+
+// Stream with full observability
+const observableStream = (config: StreamConfig) =>
+  Effect.gen(function*(_) {
+    const queue = yield* _(Queue.bounded<CRDTDelta>(config.bufferCapacity))
+
+    // Start buffer monitoring
+    yield* _(monitorBufferHealth(queue, config.bufferCapacity))
+
+    return streamCRDTDeltas(config).pipe(
+      streamWithMetrics,
+      Stream.mapEffect((delta) =>
+        applyYjsDelta(ydoc, delta).pipe(
+          Effect.withSpan("delta.process", {
+            attributes: {
+              documentId: delta.documentId,
+              collection: config.collection,
+              version: delta.version
+            }
+          })
+        )
+      )
+    )
+  })
+```
+
+**Metric Export Configuration:**
+
+```typescript
+import { NodeSDK } from '@opentelemetry/sdk-node'
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
+import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http'
+
+// Configure OpenTelemetry SDK (in app entry point)
+const sdk = new NodeSDK({
+  traceExporter: new OTLPTraceExporter({
+    url: 'http://localhost:4318/v1/traces',
+  }),
+  metricReader: new PeriodicExportingMetricReader({
+    exporter: new OTLPMetricExporter({
+      url: 'http://localhost:4318/v1/metrics',
+    }),
+    exportIntervalMillis: 5000,
+  }),
+  serviceName: 'convex-replicate',
+})
+
+sdk.start()
+```
+
+**Dashboard Queries (Prometheus/Grafana):**
+
+```promql
+# Throughput (deltas/second)
+rate(crdt_delta_processed_total[1m])
+
+# Error rate
+rate(crdt_delta_errors_total[1m]) / rate(crdt_delta_processed_total[1m])
+
+# P95 processing latency
+histogram_quantile(0.95, crdt_delta_duration_bucket)
+
+# Buffer capacity alert (> 90%)
+crdt_buffer_capacity > 90
+```
+
 **Explanation:**
 - Yjs operations are synchronous and single-threaded
 - Setting `concurrency: "unbounded"` is safe because Yjs itself ensures serialization
@@ -5399,13 +5633,48 @@ export const applySnapshotIncremental = (config: IncrementalSnapshotConfig) =>
 
 #### Error Recovery
 
+**⚠️ Recovery Strategy: Snapshot Application with Rollback**
+
+Snapshots can fail to apply due to:
+1. **Corrupt CRDT bytes** - Invalid Yjs update format
+2. **Version mismatch** - Incompatible Yjs versions
+3. **Memory limits** - Snapshot too large for browser
+
 **Rollback Strategy:**
 
 ```typescript
+// ✅ Corruption Detection: Validate before applying
+const validateSnapshotIntegrity = (crdtBytes: Uint8Array) =>
+  Effect.gen(function*(_) {
+    // Check Yjs update header
+    if (!validateYjsUpdateHeader(crdtBytes)) {
+      return yield* _(Effect.fail(new CorruptDeltaError({
+        documentId: "snapshot",
+        version: 0,
+        reason: "Invalid Yjs update header"
+      })))
+    }
+
+    // Check size bounds (< 100MB)
+    if (crdtBytes.byteLength > 100_000_000) {
+      return yield* _(Effect.fail(new SnapshotError({
+        operation: "validate",
+        reason: "Snapshot exceeds maximum size (100MB)"
+      })))
+    }
+
+    yield* _(Effect.logInfo("Snapshot integrity validated", {
+      size: crdtBytes.byteLength
+    }))
+  })
+
 // If snapshot application fails mid-way, attempt rollback
 export const applySnapshotWithRollback = (config: SnapshotApplicationConfig) =>
   Effect.gen(function* (_) {
-    // Take backup of current state
+    // ✅ Step 1: Validate snapshot integrity BEFORE touching state
+    yield* _(validateSnapshotIntegrity(config.snapshot.crdtBytes))
+
+    // Step 2: Take backup of current state
     const backup = yield* _(
       Effect.sync(() => ({
         state: Y.encodeStateAsUpdateV2(config.ydoc),
@@ -5416,12 +5685,20 @@ export const applySnapshotWithRollback = (config: SnapshotApplicationConfig) =>
 
     yield* _(Effect.logInfo("Created state backup before snapshot application"))
 
-    // Attempt snapshot application
+    // Step 3: Attempt snapshot application with retry on transient errors
     const result = yield* _(
       applySnapshotWithStateReplacement(config).pipe(
+        Effect.retry({
+          schedule: Schedule.exponential("1 second"),
+          times: 2,  // Retry twice for transient errors (memory pressure, etc.)
+          while: (error) => error instanceof SnapshotError && error.retryable
+        }),
         Effect.catchAll((error) =>
           Effect.gen(function* (_) {
-            yield* _(Effect.logError("Snapshot application failed, attempting rollback", error))
+            yield* _(Effect.logError("Snapshot application failed, attempting rollback", {
+              error,
+              errorType: error.constructor.name
+            }))
 
             // Rollback: Restore from backup
             yield* _(
@@ -5436,6 +5713,7 @@ export const applySnapshotWithRollback = (config: SnapshotApplicationConfig) =>
               })
             )
 
+            // Restore checkpoint
             yield* _(saveCheckpoint({
               collection: config.collection,
               checkpoint: backup.checkpoint
@@ -5443,7 +5721,7 @@ export const applySnapshotWithRollback = (config: SnapshotApplicationConfig) =>
 
             yield* _(Effect.logInfo("Rollback successful, state restored to pre-snapshot"))
 
-            // Re-throw error after rollback
+            // Re-throw error after rollback so caller knows snapshot failed
             return yield* _(Effect.fail(error))
           })
         )
@@ -6010,6 +6288,89 @@ const fetchSnapshotFromComponent = (convexClient: ConvexClient, api: any) =>
 
 ## Phase 4: Schema Validation (P4)
 
+### Guidelines: Effect.Schema vs Convex Validators
+
+**⚠️ IMPORTANT**: Don't duplicate validation. Choose the right tool for each layer.
+
+#### When to Use Convex Validators (`v.*`)
+
+✅ **ALWAYS use Convex validators for**:
+1. **Mutation/Query arguments** - Required by Convex runtime
+2. **Schema definitions** - `defineSchema()` requires `v.*` validators
+3. **Public API boundaries** - Where Convex enforces validation
+4. **Database indexes** - Only work with Convex validators
+
+```typescript
+// ✅ CORRECT: Convex validators at API boundary
+export const insertTask = mutation({
+  args: {
+    id: v.string(),
+    text: v.string(),
+    isCompleted: v.boolean()
+  },
+  handler: async (ctx, args) => {
+    // Validation already happened via Convex runtime
+    return await ctx.db.insert("tasks", args)
+  }
+})
+```
+
+#### When to Use Effect.Schema
+
+✅ **Use Effect.Schema for**:
+1. **Complex transformations** - Parsing, decoding, encoding
+2. **CRDT byte validation** - Checking Yjs update format
+3. **Internal business logic** - Schema-driven code generation
+4. **Type-safe parsing** - When you need runtime type checking with compile-time inference
+
+```typescript
+// ✅ CORRECT: Effect.Schema for complex CRDT validation
+const CRDTDelta = Schema.Struct({
+  crdtBytes: Schema.instanceOf(ArrayBuffer).pipe(
+    Schema.filter(validateYjsUpdateHeader),
+    Schema.transform(/* ... */)
+  ),
+  version: Schema.Number.pipe(Schema.positive())
+})
+
+// Use internally, not at Convex boundary
+const validateDelta = (delta: unknown) =>
+  Schema.decodeUnknown(CRDTDelta)(delta)
+```
+
+#### ❌ AVOID: Duplicate Validation
+
+Don't validate the same data with both systems:
+
+```typescript
+// ❌ WRONG: Duplicate validation
+export const insertTask = mutation({
+  args: {
+    id: v.string(),      // Convex validation
+    text: v.string(),
+    isCompleted: v.boolean()
+  },
+  handler: async (ctx, args) => {
+    // ❌ WRONG: Validating again with Effect.Schema
+    const validated = yield* _(Schema.decodeUnknown(TaskSchema)(args))
+
+    return await ctx.db.insert("tasks", validated)
+  }
+})
+```
+
+**Performance Impact**: Running both validators adds ~2-5ms per mutation.
+
+#### Decision Tree
+
+```
+Is this a Convex mutation/query argument?
+├─ YES → Use Convex validators (v.*)
+└─ NO → Is this complex parsing/transformation?
+   ├─ YES → Use Effect.Schema
+   └─ NO → Use plain TypeScript types
+```
+
 ### 4.1 Component Document Schema
 
 **File:** `src/schemas/Document.ts` (NEW)
@@ -6428,7 +6789,7 @@ export class CRDTEncodingError extends Data.TaggedError("CRDTEncodingError")<{
 
 ```typescript
 import { Effect } from "effect"
-import { ReplicateComponentService, ConvexCtxService } from "../services"
+import type { GenericMutationCtx } from "convex/server"
 import { ComponentWriteError, MainTableWriteError, DualStorageError, CRDTEncodingError } from "../errors"
 import * as Y from "yjs"
 
@@ -6437,6 +6798,8 @@ import * as Y from "yjs"
 // ============================================================================
 
 interface InsertConfig<T> {
+  readonly ctx: GenericMutationCtx<any>  // Pass Convex context explicitly
+  readonly component: any
   readonly collection: string
   readonly documentId: string
   readonly document: T
@@ -6452,16 +6815,33 @@ interface InsertConfig<T> {
  * 3. Write document to main table (materialized view)
  * 4. Both writes must succeed or entire operation fails
  *
+ * ⚠️ CRITICAL Recovery Strategy: Dual-Storage Transaction Safety
+ *
+ * Convex mutations run in transactions, so either:
+ * - ✅ Both component and main table writes succeed
+ * - ✅ Both writes fail (transaction rolled back automatically)
+ * - ❌ Partial success is IMPOSSIBLE (Convex guarantees atomicity)
+ *
+ * If component write succeeds but main table write fails:
+ * 1. Convex automatically rolls back the entire transaction
+ * 2. Component write is undone (event not persisted)
+ * 3. Error is propagated to client
+ * 4. Client can retry the entire operation
+ *
+ * ⚠️ IMPORTANT: Do NOT use Effect.retry inside the mutation
+ * - Retry at client layer (TanStack DB) for determinism
+ * - Convex mutations must remain deterministic
+ *
  * Error handling:
  * - CRDTEncodingError: Failed to encode as Yjs delta
  * - ComponentWriteError: Event log append failed
  * - MainTableWriteError: Main table insert failed
- * - DualStorageError: Partial failure (should never happen due to Convex transactions)
+ * - DualStorageError: Should never occur (Convex transactions prevent partial writes)
  */
 export const insertDocumentEffect = <T>(config: InsertConfig<T>) =>
   Effect.gen(function* (_) {
-    const component = yield* _(ReplicateComponentService)
-    const ctx = yield* _(ConvexCtxService)
+    // ✅ Use ctx and component from config (passed explicitly)
+    const { ctx, component } = config
 
     // Step 1: Encode document as Yjs CRDT delta
     const crdtBytes = yield* _(
@@ -6482,6 +6862,8 @@ export const insertDocumentEffect = <T>(config: InsertConfig<T>) =>
     )
 
     // Step 2: Write to component (event log) - APPEND ONLY
+    // ⚠️ NO retry/timeout here - keep mutation deterministic
+    // Retry happens at client layer (TanStack DB)
     const componentResult = yield* _(
       Effect.tryPromise({
         try: () =>
@@ -6499,10 +6881,7 @@ export const insertDocumentEffect = <T>(config: InsertConfig<T>) =>
             operation: "insert",
             cause
           })
-      }).pipe(
-        Effect.timeout("5 seconds"),
-        Effect.retry(Schedule.exponential("100 millis").pipe(Schedule.intersect(Schedule.recurs(3))))
-      )
+      })
     )
 
     // Step 3: Write to main table (materialized view)
@@ -6548,7 +6927,7 @@ export const insertDocumentEffect = <T>(config: InsertConfig<T>) =>
 
 ```typescript
 import { Effect, Schedule } from "effect"
-import { ReplicateComponentService, ConvexCtxService } from "../services"
+import type { GenericMutationCtx } from "convex/server"
 import { ComponentWriteError, MainTableWriteError, VersionConflictError, CRDTEncodingError } from "../errors"
 import * as Y from "yjs"
 
@@ -6557,6 +6936,8 @@ import * as Y from "yjs"
 // ============================================================================
 
 interface UpdateConfig<T> {
+  readonly ctx: GenericMutationCtx<any>  // Pass Convex context explicitly
+  readonly component: any
   readonly collection: string
   readonly documentId: string
   readonly updates: Partial<T>
@@ -6580,8 +6961,8 @@ interface UpdateConfig<T> {
  */
 export const updateDocumentEffect = <T>(config: UpdateConfig<T>) =>
   Effect.gen(function* (_) {
-    const component = yield* _(ReplicateComponentService)
-    const ctx = yield* _(ConvexCtxService)
+    // ✅ Use ctx and component from config (passed explicitly)
+    const { ctx, component } = config
 
     // Step 1: Fetch current document and check version
     const current = yield* _(
@@ -6690,7 +7071,7 @@ export const updateDocumentEffect = <T>(config: UpdateConfig<T>) =>
 
 ```typescript
 import { Effect, Schedule } from "effect"
-import { ReplicateComponentService, ConvexCtxService } from "../services"
+import type { GenericMutationCtx } from "convex/server"
 import { ComponentWriteError, MainTableWriteError, CRDTEncodingError } from "../errors"
 import * as Y from "yjs"
 
@@ -6699,6 +7080,8 @@ import * as Y from "yjs"
 // ============================================================================
 
 interface DeleteConfig {
+  readonly ctx: GenericMutationCtx<any>  // Pass Convex context explicitly
+  readonly component: any
   readonly collection: string
   readonly documentId: string
 }
@@ -6723,8 +7106,8 @@ interface DeleteConfig {
  */
 export const deleteDocumentEffect = (config: DeleteConfig) =>
   Effect.gen(function* (_) {
-    const component = yield* _(ReplicateComponentService)
-    const ctx = yield* _(ConvexCtxService)
+    // ✅ Use ctx and component from config (passed explicitly)
+    const { ctx, component } = config
 
     // Step 1: Encode deletion as Yjs delta
     const crdtBytes = yield* _(
@@ -6798,6 +7181,127 @@ export const deleteDocumentEffect = (config: DeleteConfig) =>
 ---
 
 ## Phase 6: Server-Side Integration (Effect as Internal Implementation)
+
+### ⚠️ Server-Side Effect Usage Limitations
+
+**CRITICAL**: Convex mutations and queries must be deterministic. Limit Effect usage to preserve Convex's execution guarantees.
+
+#### Convex Determinism Requirements
+
+From Convex documentation:
+- **Mutations must be deterministic** - Same inputs → same outputs
+- **Queries cannot perform side effects** - Read-only operations
+- **No non-deterministic operations** - No `Math.random()`, `Date.now()` (use `Date.now()` only for timestamps stored in DB)
+
+#### ✅ ALLOWED: Effect for Error Handling
+
+```typescript
+// ✅ CORRECT: Use Effect for error handling and composition
+const insertDocumentEffect = (
+  ctx: MutationCtx,
+  tableName: string,
+  args: InsertArgs
+) => Effect.gen(function*(_) {
+  // Effect.tryPromise for error handling
+  const componentResult = yield* _(Effect.tryPromise({
+    try: () => component.insertDocument(args),
+    catch: (error) => new ComponentError({ operation: "insert", cause: error })
+  }))
+
+  const mainTableResult = yield* _(Effect.tryPromise({
+    try: () => ctx.db.insert(tableName, args.document),
+    catch: (error) => new ConvexMutationError({ operation: "insert", cause: error })
+  }))
+
+  return { componentResult, mainTableResult }
+})
+```
+
+#### ❌ AVOID: Non-Deterministic Effect Operations
+
+Don't use these Effect APIs inside Convex mutations/queries:
+
+```typescript
+// ❌ WRONG: Retry inside mutation (non-deterministic)
+export const insertTask = mutation({
+  handler: async (ctx, args) => {
+    return await Effect.runPromise(
+      insertEffect(ctx, args).pipe(
+        Effect.retry({ times: 3 })  // ❌ WRONG: Retry in mutation
+      )
+    )
+  }
+})
+
+// ❌ WRONG: Timeout in mutation (timing-dependent)
+export const insertTask = mutation({
+  handler: async (ctx, args) => {
+    return await Effect.runPromise(
+      insertEffect(ctx, args).pipe(
+        Effect.timeout("5 seconds")  // ❌ WRONG: Timeout in mutation
+      )
+    )
+  }
+})
+
+// ❌ WRONG: Logging with side effects
+export const insertTask = mutation({
+  handler: async (ctx, args) => {
+    return await Effect.runPromise(
+      Effect.gen(function*(_) {
+        yield* _(Effect.logInfo("Inserting task"))  // ❌ WRONG: Side effect in mutation
+        return yield* _(insertEffect(ctx, args))
+      })
+    )
+  }
+})
+```
+
+#### ✅ CORRECT: Move Non-Deterministic Logic to Client
+
+```typescript
+// ✅ CORRECT: Retry at client layer (TanStack DB)
+export const useTasks = () => {
+  const collection = createCollection(
+    convexCollectionOptions({
+      api: { insertDocument: api.tasks.insertDocument },
+      // TanStack handles retry, not Convex
+    })
+  )
+
+  return createConvexCollection(collection)  // Adds offline support with retry
+}
+
+// ✅ CORRECT: Simple, deterministic mutation
+export const insertTask = mutation({
+  handler: async (ctx, args) => {
+    // No Effect retry, timeout, or logging
+    // Just error handling via Effect.tryPromise
+    return await Effect.runPromise(
+      insertDocumentEffect(ctx, "tasks", args)
+    )
+  }
+})
+```
+
+#### Decision Matrix
+
+| Effect Feature | Client | Server (Convex) | Reason |
+|----------------|--------|-----------------|---------|
+| `Effect.gen` | ✅ | ✅ | Composition is fine |
+| `Effect.tryPromise` | ✅ | ✅ | Error handling is safe |
+| `Effect.retry` | ✅ | ❌ | Non-deterministic |
+| `Effect.timeout` | ✅ | ❌ | Timing-dependent |
+| `Effect.logInfo` | ✅ | ⚠️ | Avoid (side effect) |
+| `Effect.sleep` | ✅ | ❌ | Non-deterministic |
+| `Effect.all` | ✅ | ✅ | Parallel composition OK if operations are deterministic |
+
+**Summary**: Use Effect on the server ONLY for:
+1. Error handling (`Effect.tryPromise`)
+2. Composition (`Effect.gen`, `Effect.all`)
+3. Type-safe error tracking
+
+Move retry, timeout, and scheduling logic to the client (TanStack DB layer).
 
 ### 6.1 Architecture Overview
 
@@ -7885,9 +8389,10 @@ export class Replicate<T> {
   public createSchemaVersionQuery() {
     return query({
       handler: async (ctx) => {
-        return await this._runEffect(
+        return await Effect.runPromise(
           Effect.gen(function* (_) {
-            const component = yield* _(ReplicateComponentService)
+            // ✅ Use this.component directly (class property)
+            const component = this.component
 
             // Query component for schema version
             const result = yield* _(
@@ -7908,8 +8413,7 @@ export class Replicate<T> {
             }))
 
             return result.version
-          }),
-          ctx
+          })
         )
       }
     })
@@ -7924,9 +8428,10 @@ export class Replicate<T> {
     return mutation({
       args: { version: v.number() },
       handler: async (ctx, args) => {
-        return await this._runEffect(
+        return await Effect.runPromise(
           Effect.gen(function* (_) {
-            const component = yield* _(ReplicateComponentService)
+            // ✅ Use this.component directly (class property)
+            const component = this.component
 
             // Update schema version in component
             yield* _(
@@ -7947,8 +8452,7 @@ export class Replicate<T> {
               collection: this.tableName,
               version: args.version
             }))
-          }),
-          ctx
+          })
         )
       }
     })
@@ -8986,6 +9490,100 @@ export const insertDocument = mutation({
 
 ---
 
+## Documentation & Migration Artifacts
+
+**⚠️ IMPORTANT**: This EFFECT.md file is a comprehensive technical design document. Create separate operational documents for execution and maintenance.
+
+### Required Documentation
+
+Create these documents alongside the migration:
+
+#### 1. **MIGRATION_RUNBOOK.md** - Step-by-Step Execution Guide
+- Day-by-day task checklist
+- Prerequisites and environment setup
+- Verification steps after each phase
+- Rollback procedures if issues arise
+- Expected output at each milestone
+
+**Example structure:**
+```markdown
+# Effect.ts Migration Runbook
+
+## Phase 1: Foundation (Days 1-5)
+- [ ] Day 1: Install dependencies and verify versions
+- [ ] Day 2: Create base error types
+- [ ] Day 3: Create IDBService
+- [ ] Day 4: Create YjsService
+- [ ] Day 5: Create ConnectionService and verify integration
+
+## Verification Checklist
+- [ ] All tests pass
+- [ ] No TypeScript errors
+- [ ] Services initialize correctly
+```
+
+#### 2. **TROUBLESHOOTING.md** - Common Issues & Solutions
+- Split-brain detection debugging
+- Corrupt snapshot recovery steps
+- IDB quota exceeded handling
+- Component write failures
+- Memory leak investigation
+- Performance degradation diagnosis
+
+**Example structure:**
+```markdown
+# Troubleshooting Guide
+
+## Issue: Split-Brain Detected
+**Symptoms:** Multiple tabs claiming leadership
+**Diagnosis:** Check BroadcastChannel messages
+**Resolution:** Lexicographic tabId resolution (automatic)
+**Prevention:** Ensure leader heartbeat < timeout threshold
+
+## Issue: Corrupt Snapshot
+**Symptoms:** Y.applyUpdateV2 throws error
+**Diagnosis:** Check snapshot integrity validation
+**Resolution:** Rollback to previous checkpoint
+**Prevention:** Validate snapshot before applying
+```
+
+#### 3. **ARCHITECTURE.md** - High-Level Design Diagrams
+- System architecture overview
+- Data flow diagrams (CRDT → Component → Main Table)
+- Service dependency graph
+- Error handling flow
+- Multi-tab coordination sequence diagram
+
+**Include:**
+- Mermaid diagrams for visual clarity
+- Rationale for key architectural decisions (ADRs)
+- Trade-offs and alternatives considered
+
+#### 4. **PERFORMANCE.md** - Benchmarks & Tuning Guide
+- Baseline performance metrics (pre-migration)
+- Post-migration performance comparisons
+- Effect.ts overhead analysis
+- Tuning parameters (buffer sizes, rate limits)
+- Memory profiling results
+
+**Note:** Create this AFTER migration when real benchmarks are available.
+
+#### 5. **TESTING_STRATEGY.md** - Test Plan & Coverage
+- Unit test strategy for Effect services
+- Integration test scenarios
+- E2E test matrix (multi-tab, offline, reconnection)
+- Property-based tests for CRDT operations
+- Chaos testing procedures
+
+**Note:** To be created separately as testing is added post-migration.
+
+### Documentation Maintenance
+
+- **Keep EFFECT.md as design reference** - Don't modify after implementation starts
+- **Update runbook with real-world learnings** - Add gotchas discovered during migration
+- **Version documentation with code** - Tag docs with release versions
+- **Cross-reference between docs** - Link related sections
+
 ## Breaking Changes Summary
 
 ### v1.0 Release - ZERO User-Facing Breaking Changes
@@ -9055,8 +9653,6 @@ That's it! These are the only required changes.
 - `effect`: ^3.x
 - `@effect/schema`: ^0.x
 - `@effect/platform`: ^0.x
-
-**Optional**: Remove `@logtape/logtape` (Effect.Logger is now used internally)
 
 ### Optional New Features (All Opt-In)
 
@@ -9293,21 +9889,19 @@ const insert = storage.createInsertMutation({
 4. **Hard Deletes**: Documents physically removed from main table (history preserved in component)
 5. **Retry Policies**: Exponential backoff with configurable limits
 6. **Error Handling**: All errors are typed, no more `unknown` errors
-7. **Logging**: Effect.Logger replaces LogTape
+7. **Logging**: Effect.Logger integrates with LogTape (unified logging)
 
 ### Removed Features
 
 - **Silent Error Fallbacks**: All errors are now explicit
 - **Promise.all**: Replaced with `Effect.all`
 - **Manual Reconnection Listeners**: Replaced with Effect.Stream
-- **LogTape**: Replaced with Effect.Logger
 
 ### Migration Checklist
 
 **Step 1: Install Dependencies**
 ```bash
 pnpm add effect @effect/schema @effect/platform
-pnpm remove @logtape/logtape
 ```
 
 **Step 2: Update Client Code**
@@ -9482,25 +10076,19 @@ This migration represents a **complete architectural overhaul** with substantial
 
 ### Next Steps
 
-**Immediate (Week 1):**
+**Phase-Based Approach** (No specific timeline - proceed at your own pace):
+
 1. ✅ Review and approve this migration plan
 2. Install Effect.ts dependencies
-3. Begin Phase 1 (Foundation & Services)
-4. Set up development environment
+3. Implement Phase 1: Foundation & Services
+4. Implement Phase 2: Connection Management
+5. Implement Phase 3: CRDT Streaming
+6. Implement Phase 4: Schema Validation & Protocol
+7. Implement Phase 5: Mutation Error Handling
+8. Implement Phase 6: Server-Side Integration
+9. Implement Phase 7: Public API (Zero Breaking Changes)
 
-**Short-term (Weeks 2-10):**
-1. Implement all client-side services
-2. Refactor connection management
-3. Implement CRDT streaming with gap detection
-4. Add schema validation
-
-**Mid-term (Weeks 11-18):**
-1. Complete server-side Effect integration
-2. Update all factory methods
-3. Update example apps
-4. Create migration guide
-
-**Long-term (Weeks 19-22):**
+**Final Tasks:**
 1. Remove all legacy code
 2. Final testing and benchmarking
 3. Beta → RC → v1.0 release
@@ -9531,14 +10119,13 @@ This is a **v1.0 feature release** with **ZERO user-facing breaking changes**. T
 
 **Effect.ts is 100% internal** - Users continue using Promise-based APIs with zero code changes.
 
-The 20-week timeline accounts for complete feature coverage including gap detection, reconciliation, multi-tab coordination, and comprehensive server-side integration. This is not just a refactor—it's a ground-up rebuild for production durability.
+This plan provides complete feature coverage including gap detection, reconciliation, multi-tab coordination, and comprehensive server-side integration. This is not just a refactor—it's a ground-up rebuild for production durability.
 
 ---
 
-**Document Version:** 2.0
+**Document Version:** 2.1 (Audit-Revised)
 **Last Updated:** 2025-11-20
 **Status:** Comprehensive v1.0 Migration Plan - Ready for Execution
 **Total LOC Impact:** 2,495 → ~3,500 LOC (+1,005 LOC for complete feature set)
-**Timeline:** 20 weeks (5 months)
 **Breaking Changes:** None (Effect is internal implementation detail)
 **Feature Completeness:** 100% (gap detection, reconciliation, multi-tab, compaction, server-side Effect)

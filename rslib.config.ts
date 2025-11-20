@@ -64,32 +64,6 @@ export default defineConfig({
       },
     },
     {
-      // Server SSR - BUNDLED (default mode)
-      id: 'ssr',
-      format: 'esm',
-      syntax: 'es2022',
-      dts: {
-        bundle: false,
-      },
-      shims: {
-        esm: {
-          __dirname: true,
-          __filename: true,
-        },
-      },
-      output: {
-        distPath: {
-          root: './dist',
-        },
-        externals: ['convex/server', 'convex/values'],
-      },
-      source: {
-        entry: {
-          ssr: './src/server/ssr.ts', // ← Simple file entry (bundled)
-        },
-      },
-    },
-    {
       // Component - BUNDLELESS (special case to preserve directory structure)
       // Glob pattern entry preserves entire component/ directory including _generated/
       id: 'component',

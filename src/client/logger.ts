@@ -5,6 +5,7 @@ import {
   getConsoleSink,
   getLogger as getLogTapeLogger,
 } from '@logtape/logtape';
+import { Logger as EffectLogger, Layer, ConfigProvider, List, HashMap } from 'effect';
 
 let isConfigured = false;
 
@@ -55,3 +56,51 @@ export async function configureLogger(enableLogging = false): Promise<void> {
 export function getLogger(category: string[]): Logger {
   return getLogTapeLogger(['convex-replicate', ...category]);
 }
+
+// Configure Effect.Logger to forward to LogTape
+export const configureEffectLogger = () => {
+  const logtape = getLogTapeLogger(['convex-replicate']);
+
+  return EffectLogger.replace(
+    EffectLogger.defaultLogger,
+    EffectLogger.make(({ logLevel, message, cause, spans, annotations }) => {
+      // Convert annotations HashMap to plain object
+      const annotationsObj = Object.fromEntries(HashMap.toEntries(annotations));
+
+      // Convert spans List to array and extract labels
+      const spansArray = List.toArray(spans).map((s) => s.label);
+
+      const meta = {
+        ...annotationsObj,
+        spans: spansArray,
+        ...(cause ? { cause } : {}),
+      };
+
+      // Convert message to string (it's of type unknown)
+      const messageStr = String(message);
+
+      // Map Effect log levels to LogTape levels
+      switch (logLevel._tag) {
+        case 'Fatal':
+        case 'Error':
+          logtape.error(messageStr, meta);
+          break;
+        case 'Warning':
+          logtape.warn(messageStr, meta);
+          break;
+        case 'Info':
+          logtape.info(messageStr, meta);
+          break;
+        case 'Debug':
+        case 'Trace':
+          logtape.debug(messageStr, meta);
+          break;
+      }
+    })
+  );
+};
+
+// Initialize once at app startup
+export const LoggerLayer = Layer.setConfigProvider(
+  ConfigProvider.fromJson({ logLevel: 'info' })
+).pipe(Layer.provide(configureEffectLogger()));
