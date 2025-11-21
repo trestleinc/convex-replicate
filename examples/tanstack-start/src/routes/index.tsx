@@ -6,12 +6,13 @@ import { useTasks } from '../useTasks';
 import { ConvexHttpClient } from 'convex/browser';
 import { useLiveQuery } from '@tanstack/react-db';
 import { api } from '../../convex/_generated/api';
+import type { Materialized } from '@trestleinc/replicate/client';
 
 const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
 
 export const Route = createFileRoute('/')({
   loader: async () => {
-    const tasks = await httpClient.query(api.tasks.getTasks);
+    const tasks = await httpClient.query(api.tasks.material);
     return { tasks };
   },
   component: HomeComponent,
@@ -74,12 +75,12 @@ function StaticTasksView({ tasks }: { tasks: ReadonlyArray<Task> }) {
   );
 }
 
-function LiveTasksView({ initialTasks }: { initialTasks: ReadonlyArray<Task> }) {
+function LiveTasksView({ material }: { material: Materialized<Task> }) {
   const [newTaskText, setNewTaskText] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
 
-  const collection = useTasks(initialTasks);
+  const collection = useTasks(material);
   const { data: tasks, isLoading, isError } = useLiveQuery(collection as any);
 
   const handleCreateTask = (e: React.FormEvent) => {
@@ -248,7 +249,7 @@ function HomeComponent() {
 
   return (
     <ClientOnly fallback={<StaticTasksView tasks={documents} />}>
-      <LiveTasksView initialTasks={ssrData} />
+      <LiveTasksView material={ssrData} />
     </ClientOnly>
   );
 }

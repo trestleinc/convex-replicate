@@ -1,8 +1,3 @@
-/**
- * Simple logger for component code.
- * Self-contained (no external dependencies) since components must be standalone.
- */
-
 interface Logger {
   debug(message: string, context?: Record<string, any>): void;
   info(message: string, context?: Record<string, any>): void;

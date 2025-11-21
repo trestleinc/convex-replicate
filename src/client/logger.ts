@@ -16,7 +16,6 @@ export async function configureLogger(enableLogging = false): Promise<void> {
     sinks: {
       console: getConsoleSink({
         formatter(record: LogRecord): readonly unknown[] {
-          // Build message with embedded values using %o for object expansion
           let msg = '';
           const values: unknown[] = [];
           for (let i = 0; i < record.message.length; i++) {
@@ -27,7 +26,6 @@ export async function configureLogger(enableLogging = false): Promise<void> {
             }
           }
 
-          // Add properties if they exist
           const hasProperties = Object.keys(record.properties).length > 0;
           const propsMsg = hasProperties ? ' | Props: %o' : '';
 
@@ -57,17 +55,14 @@ export function getLogger(category: string[]): Logger {
   return getLogTapeLogger(['convex-replicate', ...category]);
 }
 
-// Configure Effect.Logger to forward to LogTape
 export const configureEffectLogger = () => {
   const logtape = getLogTapeLogger(['convex-replicate']);
 
   return EffectLogger.replace(
     EffectLogger.defaultLogger,
     EffectLogger.make(({ logLevel, message, cause, spans, annotations }) => {
-      // Convert annotations HashMap to plain object
       const annotationsObj = Object.fromEntries(HashMap.toEntries(annotations));
 
-      // Convert spans List to array and extract labels
       const spansArray = List.toArray(spans).map((s) => s.label);
 
       const meta = {
@@ -76,10 +71,8 @@ export const configureEffectLogger = () => {
         ...(cause ? { cause } : {}),
       };
 
-      // Convert message to string (it's of type unknown)
       const messageStr = String(message);
 
-      // Map Effect log levels to LogTape levels
       switch (logLevel._tag) {
         case 'Fatal':
         case 'Error':
@@ -100,7 +93,6 @@ export const configureEffectLogger = () => {
   );
 };
 
-// Initialize once at app startup
 export const LoggerLayer = Layer.setConfigProvider(
   ConfigProvider.fromJson({ logLevel: 'info' })
 ).pipe(Layer.provide(configureEffectLogger()));

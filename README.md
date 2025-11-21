@@ -409,7 +409,7 @@ export const {
 - `insertDocument` - Dual-storage insert mutation
 - `updateDocument` - Dual-storage update mutation
 - `deleteDocument` - Dual-storage delete mutation
-- `getProtocolVersion` - Protocol version query (for client initialization)
+- `getProtocolVersion` - Protocol version query (for client setup)
 - `compact` - Compaction function (for cron jobs)
 - `prune` - Snapshot cleanup function (for cron jobs)
 
@@ -590,7 +590,7 @@ ConvexReplicate includes automatic protocol migration to handle package updates 
 2. **Automatic Migration**: If versions differ, it runs sequential migrations (v1 → v2 → v3)
 3. **Local Storage Update**: The new version is stored locally for future checks
 
-**Note:** Protocol initialization happens automatically when you create your first collection - no manual setup required! The library handles version checking and migrations transparently.
+**Note:** Protocol setup happens automatically when you create your first collection - no manual configuration required! The library handles version checking and migrations transparently.
 
 ### Debugging Protocol Issues
 
@@ -608,7 +608,7 @@ console.log('Needs migration:', info.needsMigration);
 ### Migration Best Practices
 
 - **Protocol checks are automatic** - happens when creating collections
-- **Handle initialization errors** gracefully in your app
+- **Handle setup errors** gracefully in your app
 - **Test migrations** by simulating version upgrades
 - **Monitor protocol versions** in production for debugging
 
@@ -1220,7 +1220,7 @@ crons.weekly('prune tasks snapshots',
 2. **Create snapshot** - `Y.snapshot()` + `Y.encodeSnapshotV2()` for compression
 3. **Validate** - `Y.snapshotContainsUpdate()` verifies correctness
 4. **Delete old deltas** - Free up storage while keeping snapshots
-5. **Gap detection** - Stream query automatically serves snapshots when deltas unavailable
+5. **Difference detection** - Stream query automatically serves snapshots when deltas unavailable
 
 **Key Insight:** Yjs works perfectly in Convex's standard runtime - no Node.js actions needed! Compaction runs in mutations with full ACID guarantees.
 
@@ -1297,7 +1297,7 @@ export const getProtocolVersion = query({
 });
 ```
 
-**Client-Side Initialization:**
+**Client-Side Setup:**
 
 ```typescript
 // On app startup
@@ -1324,14 +1324,14 @@ Protocol changes require NPM package update; schema changes use migrations!
 
 ---
 
-### 6. ✅ Reset Handling: Gap Detection and Transparent Recovery
+### 6. ✅ Reset Handling: Difference Detection and Transparent Recovery
 
-**Status: FULLY IMPLEMENTED** (via gap detection!)
+**Status: FULLY IMPLEMENTED** (via difference detection!)
 
 **The Challenge:**
 What happens when a client is so far behind that deltas were compacted?
 
-**Our Solution: Automatic Gap Detection with State Vector Sync**
+**Our Solution: Automatic Difference Detection with State Vector Sync**
 
 This is where ConvexReplicate really shines - **reset handling is already built into our stream query!** Let's look at the actual code:
 
@@ -1360,7 +1360,7 @@ export const stream = query({
       return { changes: documents, ... };
     }
 
-    // 2. Check for gap (client too far behind)
+    // 2. Check for difference (client too far behind)
     const oldestDelta = await ctx.db
       .query('documents')
       .withIndex('by_timestamp', (q) =>
@@ -1368,7 +1368,7 @@ export const stream = query({
       .order('asc')
       .first();
 
-    // 3. GAP DETECTED = RESET HANDLING!
+    // 3. DIFFERENCE DETECTED = RESET HANDLING!
     if (oldestDelta && args.checkpoint.lastModified < oldestDelta.timestamp) {
       const snapshot = await ctx.db
         .query('snapshots')
@@ -1406,7 +1406,7 @@ export const stream = query({
       };
     }
 
-    // 6. Caught up - no gap, just no new changes
+    // 6. Caught up - no difference, just no new changes
     return { changes: [], checkpoint: args.checkpoint, hasMore: false };
   }
 });
@@ -1415,8 +1415,8 @@ export const stream = query({
 **How It Works:**
 
 1. **Try incremental sync** - Return deltas if available (lines 150-175)
-2. **Detect gap** - Check if client's checkpoint is before oldest delta (lines 180-188)
-3. **Serve snapshot** - Fetch latest snapshot when gap detected (lines 191-195)
+2. **Detect difference** - Check if client's checkpoint is before oldest delta (lines 180-188)
+3. **Serve snapshot** - Fetch latest snapshot when difference detected (lines 191-195)
 4. **Preserve offline changes** - Use state vector to compute minimal diff (lines 207-232)
 5. **Transparent to client** - Looks just like normal sync!
 
@@ -1424,10 +1424,10 @@ export const stream = query({
 
 - **No special client handling** - Client doesn't know if it received deltas or snapshot
 - **No data loss** - State vectors preserve client's offline changes during "reset"
-- **No `resetRequired` flags** - Gap detection IS the reset handling
+- **No `resetRequired` flags** - Difference detection IS the reset handling
 - **Much simpler** - No manual edit detection, no synthetic delta generation, no corruption detection
 
-**This is way simpler than originally planned!** The "reset handling" section in our old docs described a complex system. Our actual implementation is elegant - gap detection + state vectors = transparent reset handling!
+**This is way simpler than originally planned!** The "reset handling" section in our old docs described a complex system. Our actual implementation is elegant - difference detection + state vectors = transparent reset handling!
 
 ---
 
@@ -1490,7 +1490,7 @@ ConvexReplicate has been built from the ground up to handle real-world productio
 | **3. Long Histories** | ✅ Complete | Cron-based compaction with state vector sync |
 | **4. Schema Migrations** | ✅ Complete | Configuration-based with sequential chain |
 | **5. Protocol Evolution** | ✅ Complete | Version negotiation with local storage migration |
-| **6. Reset Handling** | ✅ Complete | Automatic gap detection (transparent to client!) |
+| **6. Reset Handling** | ✅ Complete | Automatic difference detection (transparent to client!) |
 | **7. Authorization** | ✅ Complete | Optional hooks + standard Convex patterns |
 
 **Key Architectural Insights:**
@@ -1499,7 +1499,7 @@ ConvexReplicate has been built from the ground up to handle real-world productio
 - **Dual-storage architecture** - Component for CRDTs, main table for queries
 - **Yjs in standard runtime** - No Node.js actions needed, full ACID guarantees
 - **State vectors prevent data loss** - Clients sync from snapshots without reset
-- **Gap detection = reset handling** - Much simpler than originally planned!
+- **Difference detection = reset handling** - Much simpler than originally planned!
 
 **Jamie Happiness Score: 7/7 (100%)** - All production requirements met! 🎉
 

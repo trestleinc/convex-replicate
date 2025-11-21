@@ -4,22 +4,10 @@ import { mutation, query } from './_generated/server';
 import { getLogger } from './logger';
 import { OperationType } from './shared.js';
 
-// Current protocol version of this ConvexReplicate package
-// Increment when breaking changes are introduced
 export const PROTOCOL_VERSION = 1;
 
-// Re-export shared enum for server-side use
 export { OperationType };
 
-/**
- * Insert a new document with CRDT bytes (Yjs format).
- * Appends delta to event log (event sourcing pattern).
- *
- * @param collection - Collection identifier
- * @param documentId - Unique document identifier
- * @param crdtBytes - ArrayBuffer containing Yjs CRDT bytes (delta)
- * @param version - CRDT version number
- */
 export const insertDocument = mutation({
   args: {
     collection: v.string(),
@@ -31,7 +19,6 @@ export const insertDocument = mutation({
     success: v.boolean(),
   }),
   handler: async (ctx, args) => {
-    // Append delta to event log (no duplicate check - event sourcing!)
     await ctx.db.insert('documents', {
       collection: args.collection,
       documentId: args.documentId,
@@ -44,15 +31,6 @@ export const insertDocument = mutation({
   },
 });
 
-/**
- * Update an existing document with new CRDT bytes (Yjs format).
- * Appends delta to event log (event sourcing pattern).
- *
- * @param collection - Collection identifier
- * @param documentId - Unique document identifier
- * @param crdtBytes - ArrayBuffer containing Yjs CRDT bytes (delta)
- * @param version - CRDT version number
- */
 export const updateDocument = mutation({
   args: {
     collection: v.string(),
@@ -64,7 +42,6 @@ export const updateDocument = mutation({
     success: v.boolean(),
   }),
   handler: async (ctx, args) => {
-    // Append delta to event log (no check - event sourcing!)
     await ctx.db.insert('documents', {
       collection: args.collection,
       documentId: args.documentId,
@@ -77,15 +54,6 @@ export const updateDocument = mutation({
   },
 });
 
-/**
- * Delete a document from CRDT storage.
- * Appends deletion delta to event log (preserves history).
- *
- * @param collection - Collection identifier
- * @param documentId - Unique document identifier
- * @param crdtBytes - ArrayBuffer containing Yjs deletion delta
- * @param version - CRDT version number
- */
 export const deleteDocument = mutation({
   args: {
     collection: v.string(),
@@ -97,7 +65,6 @@ export const deleteDocument = mutation({
     success: v.boolean(),
   }),
   handler: async (ctx, args) => {
-    // Append deletion delta to event log (preserve history!)
     await ctx.db.insert('documents', {
       collection: args.collection,
       documentId: args.documentId,
@@ -110,27 +77,13 @@ export const deleteDocument = mutation({
   },
 });
 
-/**
- * Stream CRDT changes for incremental replication.
- * Returns Yjs CRDT bytes for documents modified since the checkpoint.
- * Can be used for both polling (awaitReplication) and subscriptions (live updates).
- *
- * Gap Detection:
- * - If checkpoint is older than oldest available delta (deltas were compacted),
- *   serves latest snapshot instead of incremental deltas
- * - No need for compactionState table - dynamically queries oldest delta
- *
- * @param collection - Collection identifier
- * @param checkpoint - Last replication checkpoint
- * @param limit - Maximum number of changes to return (default: 100)
- */
 export const stream = query({
   args: {
     collection: v.string(),
     checkpoint: v.object({
       lastModified: v.number(),
     }),
-    vector: v.optional(v.bytes()), // Client's CRDT state for gap-free sync
+    vector: v.optional(v.bytes()),
     limit: v.optional(v.number()),
   },
   returns: v.object({
@@ -140,7 +93,7 @@ export const stream = query({
         crdtBytes: v.bytes(),
         version: v.number(),
         timestamp: v.number(),
-        operationType: v.string(), // 'delta' | 'diff' | 'snapshot'
+        operationType: v.string(),
       })
     ),
     checkpoint: v.object({
@@ -151,7 +104,6 @@ export const stream = query({
   handler: async (ctx, args) => {
     const limit = args.limit ?? 100;
 
-    // Try normal incremental sync first
     const documents = await ctx.db
       .query('documents')
       .withIndex('by_timestamp', (q) =>
@@ -161,7 +113,6 @@ export const stream = query({
       .take(limit);
 
     if (documents.length > 0) {
-      // Normal case: return incremental deltas
       const changes = documents.map((doc) => ({
         documentId: doc.documentId,
         crdtBytes: doc.crdtBytes,
@@ -181,19 +132,13 @@ export const stream = query({
       };
     }
 
-    // No deltas found - either caught up OR gap detected
-    // Check if gap exists (checkpoint is before oldest available delta)
     const oldestDelta = await ctx.db
       .query('documents')
       .withIndex('by_timestamp', (q) => q.eq('collection', args.collection))
       .order('asc')
       .first();
 
-    // Gap detected: checkpoint is older than oldest delta (deltas were compacted)
     if (oldestDelta && args.checkpoint.lastModified < oldestDelta.timestamp) {
-      // Gap detected - serve from snapshot
-
-      // Fetch latest snapshot
       const snapshot = await ctx.db
         .query('snapshots')
         .withIndex('by_collection', (q) => q.eq('collection', args.collection))
@@ -202,13 +147,12 @@ export const stream = query({
 
       if (!snapshot) {
         throw new Error(
-          `Gap detected but no snapshot available for collection: ${args.collection}. ` +
+          `Disparity detected but no snapshot available for collection: ${args.collection}. ` +
             `Client checkpoint: ${args.checkpoint.lastModified}, ` +
             `Oldest delta: ${oldestDelta.timestamp}`
         );
       }
 
-      // Send full snapshot (no diff computation to avoid state vector timing issues)
       return {
         changes: [
           {
@@ -225,7 +169,6 @@ export const stream = query({
       };
     }
 
-    // Caught up - no gap, just no new changes
     return {
       changes: [],
       checkpoint: args.checkpoint,
@@ -234,10 +177,6 @@ export const stream = query({
   },
 });
 
-/**
- * Get the current protocol version from the server.
- * Used by clients to check if they need to migrate local storage.
- */
 export const getProtocolVersion = query({
   args: {},
   returns: v.object({
@@ -250,16 +189,6 @@ export const getProtocolVersion = query({
   },
 });
 
-/**
- * Get the current schema version for a collection.
- * Used by clients to detect schema version mismatches and trigger migrations.
- *
- * Returns the version stored in the migrations table for this collection.
- * If no version is set, returns 1 (default initial version).
- *
- * @param collection - Collection identifier
- * @returns Schema version number (defaults to 1 if not set)
- */
 export const getSchemaVersion = query({
   args: {
     collection: v.string(),
@@ -279,14 +208,6 @@ export const getSchemaVersion = query({
   },
 });
 
-/**
- * Get initial CRDT state for a collection (for SSR).
- * Returns latest snapshot if available, otherwise reconstructs from deltas.
- * Used by clients to initialize Yjs with correct Item IDs.
- *
- * @param collection - Collection identifier
- * @returns CRDT bytes (snapshot or merged deltas) + checkpoint, or null if empty
- */
 export const getInitialState = query({
   args: {
     collection: v.string(),
@@ -303,7 +224,6 @@ export const getInitialState = query({
   handler: async (ctx, args) => {
     const logger = getLogger(['ssr']);
 
-    // Try to fetch latest snapshot first (most efficient)
     const snapshot = await ctx.db
       .query('snapshots')
       .withIndex('by_collection', (q) => q.eq('collection', args.collection))
@@ -325,7 +245,6 @@ export const getInitialState = query({
       };
     }
 
-    // No snapshot - reconstruct from all deltas
     const deltas = await ctx.db
       .query('documents')
       .withIndex('by_collection', (q) => q.eq('collection', args.collection))
@@ -343,10 +262,8 @@ export const getInitialState = query({
       deltaCount: deltas.length,
     });
 
-    // Sort by timestamp (chronological order)
     const sorted = deltas.sort((a, b) => a.timestamp - b.timestamp);
 
-    // Merge all deltas into single update
     const updates = sorted.map((d) => new Uint8Array(d.crdtBytes));
     const merged = Y.mergeUpdates(updates);
 
@@ -368,10 +285,6 @@ export const getInitialState = query({
   },
 });
 
-/**
- * Internal helper to compact a single collection.
- * Extracted for reuse by compactCollection().
- */
 async function _compactCollectionInternal(ctx: any, collection: string, retentionDays?: number) {
   const cutoffMs = (retentionDays ?? 90) * 24 * 60 * 60 * 1000;
   const cutoffTime = Date.now() - cutoffMs;
@@ -384,7 +297,6 @@ async function _compactCollectionInternal(ctx: any, collection: string, retentio
     cutoffTime,
   });
 
-  // 1. Fetch old deltas for this collection
   const oldDeltas = await ctx.db
     .query('documents')
     .withIndex('by_timestamp', (q: any) =>
@@ -404,7 +316,6 @@ async function _compactCollectionInternal(ctx: any, collection: string, retentio
     };
   }
 
-  // 2. Sort by timestamp (chronological order)
   const sorted = oldDeltas.sort((a: any, b: any) => a.timestamp - b.timestamp);
 
   logger.info('Compacting deltas', {
@@ -414,15 +325,12 @@ async function _compactCollectionInternal(ctx: any, collection: string, retentio
     newestTimestamp: sorted[sorted.length - 1].timestamp,
   });
 
-  // 3. Merge updates into single update (COLLECTION-LEVEL)
   const updates = sorted.map((d: any) => new Uint8Array(d.crdtBytes));
   const merged = Y.mergeUpdates(updates);
 
-  // 4. Create Y.Doc with correct collection GUID (matches client!)
   const ydoc = new Y.Doc({ guid: collection });
   Y.applyUpdateV2(ydoc, merged);
 
-  // 5. Create snapshot of ENTIRE collection
   const snapshot = Y.snapshot(ydoc);
   const snapshotBytes = Y.encodeSnapshotV2(snapshot);
 
@@ -434,7 +342,6 @@ async function _compactCollectionInternal(ctx: any, collection: string, retentio
     ).toFixed(2),
   });
 
-  // 6. Validate snapshot contains all updates
   const isValid = updates.every((update: any) => Y.snapshotContainsUpdate(snapshot, update));
 
   if (!isValid) {
@@ -448,7 +355,6 @@ async function _compactCollectionInternal(ctx: any, collection: string, retentio
     };
   }
 
-  // 7. Store snapshot
   await ctx.db.insert('snapshots', {
     collection,
     snapshotBytes: snapshotBytes.buffer as ArrayBuffer,
@@ -456,12 +362,10 @@ async function _compactCollectionInternal(ctx: any, collection: string, retentio
     createdAt: Date.now(),
   });
 
-  // 8. Delete compacted deltas
   for (const delta of sorted) {
     await ctx.db.delete(delta._id);
   }
 
-  // Cleanup
   ydoc.destroy();
 
   const result = {
@@ -477,13 +381,6 @@ async function _compactCollectionInternal(ctx: any, collection: string, retentio
   return result;
 }
 
-/**
- * Compact a specific collection by name.
- * Used by per-collection factory methods in Replicate class.
- *
- * @param collection - Collection name to compact
- * @param retentionDays - Compact deltas older than this (default: 90 days)
- */
 export const compactCollectionByName = mutation({
   args: {
     collection: v.string(),
@@ -494,13 +391,6 @@ export const compactCollectionByName = mutation({
   },
 });
 
-/**
- * Prune snapshots for a specific collection by name.
- * Used by per-collection factory methods in Replicate class.
- *
- * @param collection - Collection name to prune
- * @param retentionDays - Delete snapshots older than this (default: 180 days)
- */
 export const pruneCollectionByName = mutation({
   args: {
     collection: v.string(),
@@ -518,7 +408,6 @@ export const pruneCollectionByName = mutation({
       cutoffTime,
     });
 
-    // Get snapshots for this collection, newest first
     const snapshots = await ctx.db
       .query('snapshots')
       .withIndex('by_collection', (q) => q.eq('collection', args.collection))
@@ -532,7 +421,6 @@ export const pruneCollectionByName = mutation({
 
     let deletedCount = 0;
 
-    // Delete old snapshots (keep at least 2 recent ones)
     for (let i = 2; i < snapshots.length; i++) {
       const snapshot = snapshots[i];
 

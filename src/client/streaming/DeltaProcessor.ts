@@ -1,55 +1,35 @@
 import { Effect, Stream, Schedule, Option, Queue } from 'effect';
 import type { ConvexClient } from 'convex/browser';
 import {
-  type CRDTDelta,
+  type Delta,
   type Checkpoint,
   validateDelta,
   validateStreamResponse,
-} from '../../schemas/CRDTDelta.js';
+} from '../../schemas/Delta.js';
 import { YjsApplicationError, SubscriptionError } from '../errors/index.js';
 import * as Y from 'yjs';
 
-// ============================================================================
-// Streaming Configuration
-// ============================================================================
-
 export const STREAMING_CONFIG = {
-  // Backpressure
-  bufferCapacity: 1000, // Max deltas in buffer before dropping/blocking
-  bufferStrategy: 'dropping' as const, // "dropping" | "sliding" | "suspending"
+  bufferCapacity: 1000,
+  bufferStrategy: 'dropping' as const,
+  maxDeltasPerSecond: 100,
+  deltaConcurrency: 'unbounded' as const,
+  maxConsecutiveErrors: 10,
+  errorRetryDelay: 1000,
 
-  // Rate limiting
-  maxDeltasPerSecond: 100, // Default: 100 deltas/sec
-
-  // Concurrency
-  deltaConcurrency: 'unbounded' as const, // Yjs is single-threaded, safe to process in order
-
-  // Error recovery
-  maxConsecutiveErrors: 10, // Trigger gap detection after 10 consecutive errors
-  errorRetryDelay: 1000, // Wait 1s before retrying failed delta
-
-  // Adaptive tuning (based on device)
-  mobileMaxDeltasPerSecond: 50, // Slower devices
-  lowEndMaxDeltasPerSecond: 20, // Very low-end devices
+  mobileMaxDeltasPerSecond: 50,
+  lowEndMaxDeltasPerSecond: 20,
 } as const;
 
 export type BufferStrategy = 'dropping' | 'sliding' | 'suspending';
 
-// ============================================================================
-// Device Capability Detection
-// ============================================================================
-
 const detectDeviceCapability = (): 'desktop' | 'mobile' | 'low-end' => {
-  // SSR-safe check
   if (typeof navigator === 'undefined') return 'desktop';
 
-  // Check if mobile
   const isMobile = /Mobile|Android|iPhone|iPad|iPod/.test(navigator.userAgent);
 
-  // Check hardware concurrency (CPU cores)
   const cores = navigator.hardwareConcurrency || 2;
 
-  // Check if low-end device
   const isLowEnd = cores <= 2;
 
   if (isLowEnd) return 'low-end';
@@ -70,11 +50,7 @@ const getAdaptiveRateLimit = (): number => {
   }
 };
 
-// ============================================================================
-// Yjs Delta Application
-// ============================================================================
-
-export const applyYjsDelta = (ydoc: Y.Doc, change: CRDTDelta) =>
+export const applyYjsDelta = (ydoc: Y.Doc, change: Delta) =>
   Effect.try({
     try: () => {
       const origin = change.operationType === 'snapshot' ? 'snapshot' : 'subscription';
@@ -99,21 +75,16 @@ export const applyYjsDelta = (ydoc: Y.Doc, change: CRDTDelta) =>
     })
   );
 
-// ============================================================================
-// Paginated CRDT Stream
-// ============================================================================
-
 export interface StreamConfig {
   readonly convexClient: ConvexClient;
   readonly api: { stream: any };
-  readonly initialCheckpoint: Checkpoint;
+  readonly origin: Checkpoint;
   readonly pageSize: number;
 }
 
-export const streamCRDTDeltas = (config: StreamConfig) =>
-  Stream.paginateEffect(config.initialCheckpoint, (checkpoint) =>
+export const streamDeltas = (config: StreamConfig) =>
+  Stream.paginateEffect(config.origin, (checkpoint) =>
     Effect.gen(function* () {
-      // Query next page with timeout and retry
       const rawResponse = yield* Effect.tryPromise({
         try: () =>
           config.convexClient.query(config.api.stream, {
@@ -133,10 +104,8 @@ export const streamCRDTDeltas = (config: StreamConfig) =>
         })
       );
 
-      // Validate response schema
       const response = yield* validateStreamResponse(rawResponse);
 
-      // Return deltas + next checkpoint (or None if done)
       return [
         response.changes,
         response.hasMore ? Option.some(response.checkpoint) : Option.none(),
@@ -144,36 +113,27 @@ export const streamCRDTDeltas = (config: StreamConfig) =>
     })
   ).pipe(Stream.flatMap((deltas) => Stream.fromIterable(deltas)));
 
-// ============================================================================
-// Process CRDT Stream with Rate Limiting
-// ============================================================================
-
 export interface ProcessConfig extends StreamConfig {
   readonly ydoc: Y.Doc;
-  readonly syncToTanStack: (change: CRDTDelta, ydoc: Y.Doc) => Effect.Effect<void>;
+  readonly syncToTanStack: (change: Delta, ydoc: Y.Doc) => Effect.Effect<void>;
   readonly maxDeltasPerSecond?: number;
 }
 
 export const processCRDTStream = (config: ProcessConfig) =>
-  streamCRDTDeltas(config).pipe(
-    // Rate limit: prevent Yjs GC pressure
+  streamDeltas(config).pipe(
     Stream.throttle({
-      cost: () => 1, // Each delta costs 1 unit
+      cost: () => 1,
       duration: `${1000 / (config.maxDeltasPerSecond ?? getAdaptiveRateLimit())} millis`,
       units: config.maxDeltasPerSecond ?? getAdaptiveRateLimit(),
       burst: 10,
     }),
 
-    // Validate each delta
     Stream.mapEffect((delta) =>
       Effect.gen(function* () {
-        // Schema validation
         const validDelta = yield* validateDelta(delta);
 
-        // Apply to Yjs
         yield* applyYjsDelta(config.ydoc, validDelta);
 
-        // Sync to TanStack DB
         yield* config.syncToTanStack(validDelta, config.ydoc);
 
         return validDelta.timestamp;
@@ -183,7 +143,6 @@ export const processCRDTStream = (config: ProcessConfig) =>
           schedule: Schedule.exponential('100 millis').pipe(Schedule.intersect(Schedule.recurs(3))),
         }),
         Effect.catchAll((error) =>
-          // Log error but don't fail stream (fault-tolerant)
           Effect.logError('Delta processing failed (continuing)', {
             error,
             documentId: delta.documentId,
@@ -192,15 +151,10 @@ export const processCRDTStream = (config: ProcessConfig) =>
       )
     ),
 
-    // Accumulate latest timestamp for checkpointing
     Stream.runFold(0, (latestTimestamp, currentTimestamp) =>
       Math.max(latestTimestamp, currentTimestamp)
     )
   );
-
-// ============================================================================
-// Backpressure Utilities
-// ============================================================================
 
 export const createBufferedStream = <T>(capacity: number, strategy: BufferStrategy) =>
   Effect.gen(function* () {
@@ -208,17 +162,14 @@ export const createBufferedStream = <T>(capacity: number, strategy: BufferStrate
 
     switch (strategy) {
       case 'dropping':
-        // Drop oldest items when full
         queue = yield* Queue.dropping<T>(capacity);
         break;
 
       case 'sliding':
-        // Drop newest items when full
         queue = yield* Queue.sliding<T>(capacity);
         break;
 
       case 'suspending':
-        // Block producer when full (backpressure)
         queue = yield* Queue.bounded<T>(capacity);
         break;
     }
@@ -226,21 +177,16 @@ export const createBufferedStream = <T>(capacity: number, strategy: BufferStrate
     return queue;
   });
 
-// ============================================================================
-// Adaptive Rate Limiting
-// ============================================================================
-
-export const applyRateLimit = (stream: Stream.Stream<CRDTDelta>, maxPerSecond: number) =>
+export const applyRateLimit = (stream: Stream.Stream<Delta>, maxPerSecond: number) =>
   stream.pipe(
-    // Throttle: Allow max N items per second
     Stream.throttle({
-      cost: () => 1, // Each delta costs 1 unit
-      units: maxPerSecond, // Max units per duration
-      duration: '1 second', // Time window
+      cost: () => 1,
+      units: maxPerSecond,
+      duration: '1 second',
     })
   );
 
-export const createAdaptiveRateLimitedStream = (source: Stream.Stream<CRDTDelta>) =>
+export const createAdaptiveRateLimitedStream = (source: Stream.Stream<Delta>) =>
   Effect.gen(function* () {
     const rateLimit = getAdaptiveRateLimit();
 

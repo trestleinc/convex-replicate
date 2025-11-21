@@ -1,9 +1,5 @@
 import { Data } from 'effect';
 
-// ============================================================================
-// Connection Errors
-// ============================================================================
-
 export class NetworkError extends Data.TaggedError('NetworkError')<{
   readonly cause: unknown;
   readonly retryable: true;
@@ -26,10 +22,6 @@ export class ConnectionTimeoutError extends Data.TaggedError('ConnectionTimeoutE
   readonly operation: string;
   readonly timeoutMs: number;
 }> {}
-
-// ============================================================================
-// CRDT Errors
-// ============================================================================
 
 export class YjsApplicationError extends Data.TaggedError('YjsApplicationError')<{
   readonly documentId: string;
@@ -55,15 +47,11 @@ export class CorruptDeltaError extends Data.TaggedError('CorruptDeltaError')<{
   readonly crdtBytesSize: number;
 }> {}
 
-export class GapDetectedError extends Data.TaggedError('GapDetectedError')<{
+export class DifferenceDetectedError extends Data.TaggedError('DifferenceDetectedError')<{
   readonly collection: string;
   readonly checkpointTimestamp: number;
   readonly oldestDeltaTimestamp: number;
 }> {}
-
-// ============================================================================
-// Storage Errors (IndexedDB)
-// ============================================================================
 
 export class IDBError extends Data.TaggedError('IDBError')<{
   readonly operation: 'get' | 'set' | 'delete' | 'clear';
@@ -84,10 +72,6 @@ export class CheckpointError extends Data.TaggedError('CheckpointError')<{
   readonly cause: unknown;
 }> {}
 
-// ============================================================================
-// Protocol Errors
-// ============================================================================
-
 export class ProtocolVersionError extends Data.TaggedError('ProtocolVersionError')<{
   readonly expected: number;
   readonly actual: number;
@@ -104,10 +88,6 @@ export class ProtocolInitError extends Data.TaggedError('ProtocolInitError')<{
   readonly stage: 'load' | 'validate' | 'migrate' | 'store';
   readonly cause: unknown;
 }> {}
-
-// ============================================================================
-// Convex Mutation Errors
-// ============================================================================
 
 export class AuthError extends Data.TaggedError('AuthError')<{
   readonly status: 401 | 403;
@@ -149,10 +129,6 @@ export class ComponentError extends Data.TaggedError('ComponentError')<{
   readonly operation: string;
   readonly cause: unknown;
 }> {}
-
-// ============================================================================
-// Error Type Guards
-// ============================================================================
 
 export const isRetriableError = (error: unknown): boolean => {
   if (error instanceof NetworkError) return error.retryable;

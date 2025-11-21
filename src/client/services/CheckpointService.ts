@@ -6,7 +6,6 @@ export interface Checkpoint {
   lastModified: number;
 }
 
-// Service definition
 export class CheckpointService extends Context.Tag('CheckpointService')<
   CheckpointService,
   {
@@ -19,7 +18,6 @@ export class CheckpointService extends Context.Tag('CheckpointService')<
   }
 >() {}
 
-// Service implementation
 export const CheckpointServiceLive = Layer.effect(
   CheckpointService,
   Effect.gen(function* (_) {

@@ -8,12 +8,8 @@ import {
 } from '../errors.js';
 import * as Y from 'yjs';
 
-// ============================================================================
-// Dual-Storage Update Effect
-// ============================================================================
-
 interface UpdateConfig<T> {
-  readonly ctx: GenericMutationCtx<any>; // Pass Convex context explicitly
+  readonly ctx: GenericMutationCtx<any>;
   readonly component: any;
   readonly collection: string;
   readonly documentId: string;
@@ -21,27 +17,10 @@ interface UpdateConfig<T> {
   readonly expectedVersion: number;
 }
 
-/**
- * Dual-storage update operation with optimistic concurrency control.
- *
- * Flow:
- * 1. Fetch current document from main table
- * 2. Check version (optimistic locking)
- * 3. Encode updates as Yjs CRDT delta
- * 4. Append delta to component (event log)
- * 5. Update document in main table (increment version)
- *
- * Concurrency:
- * - Uses version field for optimistic concurrency control
- * - If version mismatch, throws VersionConflictError
- * - Client must refetch and retry
- */
 export const updateDocumentEffect = <T>(config: UpdateConfig<T>) =>
   Effect.gen(function* () {
-    // ✅ Use ctx and component from config (passed explicitly)
     const { ctx, component } = config;
 
-    // Step 1: Fetch current document and check version
     const current = yield* Effect.tryPromise({
       try: async () => {
         const doc = await ctx.db
@@ -66,7 +45,6 @@ export const updateDocumentEffect = <T>(config: UpdateConfig<T>) =>
       );
     }
 
-    // Step 2: Encode updates as Yjs delta
     const crdtBytes = yield* Effect.try({
       try: () => {
         const ydoc = new Y.Doc();
@@ -85,7 +63,6 @@ export const updateDocumentEffect = <T>(config: UpdateConfig<T>) =>
 
     const newVersion = config.expectedVersion + 1;
 
-    // Step 3: Append delta to component (event log)
     yield* Effect.tryPromise({
       try: () =>
         component.updateDocument({
@@ -104,7 +81,6 @@ export const updateDocumentEffect = <T>(config: UpdateConfig<T>) =>
         }),
     });
 
-    // Step 4: Update main table with new version
     yield* Effect.try({
       try: () =>
         ctx.db.patch(current._id, {

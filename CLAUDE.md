@@ -223,19 +223,19 @@ import type { Task } from '../src/useTasks';
 // Define all queries and mutations using the builder
 export const {
   stream,
-  getTasks,
-  insertDocument,
-  updateDocument,
-  deleteDocument,
-  getProtocolVersion,
+  material,
+  insert,
+  update,
+  remove,
+  protocol,
   compact,
   prune
 } = defineReplicate<Task>({
   component: components.replicate,
   collection: 'tasks',
   // Optional: customize compaction and pruning
-  compactionRetentionDays: 90,
-  pruneRetentionDays: 180,
+  compaction: { retention: 90 },
+  pruning: { retention: 180 },
   // Optional: add hooks for permissions and lifecycle events
   // hooks: { ... }
 });
@@ -243,12 +243,12 @@ export const {
 
 **What `defineReplicate` provides:**
 
-- `stream` - CRDT stream with gap detection support (for real-time sync)
-- `getTasks` - Materialized docs query (for server-side rendering)
-- `insertDocument` - Dual-storage insert (component + main table)
-- `updateDocument` - Dual-storage update (component + main table)
-- `deleteDocument` - Dual-storage delete (component + main table)
-- `getProtocolVersion` - Protocol version wrapper (required for client)
+- `stream` - CRDT stream with difference detection support (for real-time sync)
+- `material` - Materialized docs query (for server-side rendering)
+- `insert` - Dual-storage insert (component + main table)
+- `update` - Dual-storage update (component + main table)
+- `remove` - Dual-storage remove (component + main table)
+- `protocol` - Protocol version wrapper (required for client)
 - `compact` - Compaction function for cron jobs
 - `prune` - Snapshot cleanup function for cron jobs
 
@@ -256,7 +256,7 @@ All functions support optional hooks for permissions and lifecycle events via th
 
 ### 4. Client-Side Integration (TanStack DB)
 
-**Note:** Protocol initialization happens automatically when you create your first collection - no manual setup required!
+**Note:** Protocol setup happens automatically when you create your first collection - no manual configuration required!
 
 ```typescript
 // src/useTasks.ts
@@ -288,10 +288,10 @@ export function useTasks(initialData?: ReadonlyArray<Task>) {
           convexClient,
           api: {
             stream: api.tasks.stream,
-            insertDocument: api.tasks.insertDocument,
-            updateDocument: api.tasks.updateDocument,
-            deleteDocument: api.tasks.deleteDocument,
-            getProtocolVersion: api.tasks.getProtocolVersion, // For protocol version checking
+            insert: api.tasks.insert,
+            update: api.tasks.update,
+            remove: api.tasks.remove,
+            protocol: api.tasks.protocol, // For protocol version checking
           },
           collection: 'tasks',
           getKey: (task) => task.id,
@@ -373,18 +373,18 @@ import type { Task } from '../src/useTasks';
 // Define all functions including compact and prune
 export const {
   stream,
-  getTasks,
-  insertDocument,
-  updateDocument,
-  deleteDocument,
-  getProtocolVersion,
+  material,
+  insert,
+  update,
+  remove,
+  protocol,
   compact,  // For cron jobs
   prune     // For cron jobs
 } = defineReplicate<Task>({
   component: components.replicate,
   collection: 'tasks',
-  compactionRetentionDays: 90,
-  pruneRetentionDays: 180,
+  compaction: { retention: 90 },
+  pruning: { retention: 180 },
 });
 ```
 
@@ -419,24 +419,24 @@ export default crons;
 ```typescript
 // convex/tasks.ts - Frequent compaction, short retention
 export const {
-  stream, getTasks, insertDocument, updateDocument, deleteDocument,
-  getProtocolVersion, compact, prune
+  stream, material, insert, update, remove,
+  protocol, compact, prune
 } = defineReplicate<Task>({
   component: components.replicate,
   collection: 'tasks',
-  compactionRetentionDays: 30,
-  pruneRetentionDays: 90,
+  compaction: { retention: 30 },
+  pruning: { retention: 90 },
 });
 
 // convex/users.ts - Infrequent compaction, long retention
 export const {
-  stream, getTasks, insertDocument, updateDocument, deleteDocument,
-  getProtocolVersion, compact, prune
+  stream, material, insert, update, remove,
+  protocol, compact, prune
 } = defineReplicate<User>({
   component: components.replicate,
   collection: 'users',
-  compactionRetentionDays: 365,
-  pruneRetentionDays: 730,
+  compaction: { retention: 365 },
+  pruning: { retention: 730 },
 });
 ```
 
@@ -471,44 +471,44 @@ The `defineReplicate<T>()` builder provides a declarative API for creating all r
 ```typescript
 export const {
   stream,
-  getTasks,
-  insertDocument,
-  updateDocument,
-  deleteDocument,
-  getProtocolVersion,
+  material,
+  insert,
+  update,
+  remove,
+  protocol,
   compact,
   prune
 } = defineReplicate<Task>({
   component: components.replicate,
   collection: 'tasks',
-  compactionRetentionDays: 90,   // Optional, default: 90
-  pruneRetentionDays: 180,       // Optional, default: 180
-  hooks: {                        // Optional hooks for all operations
-    checkRead: (ctx) => { /* ... */ },
-    checkWrite: (ctx) => { /* ... */ },
-    checkDelete: (ctx) => { /* ... */ },
+  compaction: { retention: 90 },   // Optional, default: 90 days
+  pruning: { retention: 180 },     // Optional, default: 180 days
+  hooks: {                          // Optional hooks for all operations
+    evalRead: (ctx) => { /* ... */ },
+    evalWrite: (ctx) => { /* ... */ },
+    evalRemove: (ctx) => { /* ... */ },
     onInsert: (ctx, doc) => { /* ... */ },
     onUpdate: (ctx, doc) => { /* ... */ },
-    onDelete: (ctx, id) => { /* ... */ },
-    transform: (doc) => { /* ... */ },  // Transform docs before returning (getTasks only)
+    onRemove: (ctx, id) => { /* ... */ },
+    transform: (doc) => { /* ... */ },  // Transform docs before returning (material only)
   }
 });
 ```
 
 **Generated Functions:**
-- **`stream`** - CRDT stream with gap detection (for real-time sync)
-- **`getTasks`** - Materialized docs query (for server-side rendering)
-- **`insertDocument`** - Dual-storage insert (component + main table)
-- **`updateDocument`** - Dual-storage update (component + main table)
-- **`deleteDocument`** - Dual-storage delete (component + main table)
-- **`getProtocolVersion`** - Protocol version wrapper (required for client)
+- **`stream`** - CRDT stream with difference detection (for real-time sync)
+- **`material`** - Materialized docs query (for server-side rendering)
+- **`insert`** - Dual-storage insert (component + main table)
+- **`update`** - Dual-storage update (component + main table)
+- **`remove`** - Dual-storage remove (component + main table)
+- **`protocol`** - Protocol version wrapper (required for client)
 - **`compact`** - Compaction function for cron jobs
 - **`prune`** - Snapshot cleanup function for cron jobs
 
 **Optional Hooks:**
-- `checkRead` / `checkWrite` / `checkDelete` - Permission guards
-- `onInsert` / `onUpdate` / `onDelete` - Lifecycle callbacks
-- `transform` - Transform docs before returning (getTasks only)
+- `evalRead` / `evalWrite` / `evalRemove` - Permission guards
+- `onInsert` / `onUpdate` / `onRemove` - Lifecycle callbacks
+- `transform` - Transform docs before returning (material only)
 
 ### Client-Side Collection Options
 
@@ -589,16 +589,16 @@ pnpm run dev  # Starts both Vite and Convex
 
 1. **Create** - Client generates Yjs document with unique ID
 2. **Encode** - Client calls `Y.encodeStateAsUpdate()` to get CRDT delta
-3. **Insert** - Client calls `collection.insert()` which triggers `insertDocument` mutation
+3. **Insert** - Client calls `collection.insert()` which triggers `insert` mutation
 4. **Dual-write** - Component appends delta to event log, main table stores current state
 5. **Update** - Client merges changes offline, encodes delta
-6. **Submit** - Client calls `collection.update()` which triggers `updateDocument` mutation
-7. **Delete** - Client calls `collection.delete()` which triggers `deleteDocument` mutation (hard delete)
+6. **Submit** - Client calls `collection.update()` which triggers `update` mutation
+7. **Delete** - Client calls `collection.delete()` which triggers `remove` mutation (hard delete)
 8. **Sync** - Yjs automatically merges concurrent changes (CRDT magic!)
 
 ### SSR Data Loading
 
-The `getTasks` query returns an enhanced SSR response with format:
+The `material` function returns a `Materialized<T>` response with format:
 ```typescript
 {
   documents: T[];           // Array of documents
@@ -617,7 +617,7 @@ import { api } from '../convex/_generated/api';
 export const Route = createFileRoute('/tasks')({
   loader: async () => {
     const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
-    const ssrData = await httpClient.query(api.tasks.getTasks);
+    const ssrData = await httpClient.query(api.tasks.material);
     return { initialTasks: ssrData.documents };  // Extract documents array
   },
 });

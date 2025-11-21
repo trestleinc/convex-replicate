@@ -1,10 +1,6 @@
 import { Schema } from '@effect/schema';
 import { Effect } from 'effect';
 
-// ============================================================================
-// Component Document Schema (Event Log)
-// ============================================================================
-
 export const ComponentDocument = Schema.Struct({
   collection: Schema.String.pipe(
     Schema.minLength(1),
@@ -37,25 +33,15 @@ export const ComponentDocument = Schema.Struct({
 
 export type ComponentDocument = Schema.Schema.Type<typeof ComponentDocument>;
 
-// ============================================================================
-// Yjs Update Header Validation
-// ============================================================================
-
 const validateYjsUpdateHeader = (buffer: ArrayBuffer): boolean => {
   try {
     const view = new DataView(buffer);
-    // Yjs updates start with specific byte patterns
-    // First byte should be 0x00 (for struct updates) or 0x01 (for delete sets)
     const firstByte = view.getUint8(0);
     return firstByte === 0x00 || firstByte === 0x01 || firstByte === 0x02;
   } catch {
     return false;
   }
 };
-
-// ============================================================================
-// Validation Effect
-// ============================================================================
 
 export const validateComponentDocument = (doc: unknown) =>
   Schema.decodeUnknown(ComponentDocument)(doc).pipe(

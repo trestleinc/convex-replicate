@@ -10,17 +10,17 @@ import type { Task } from '../src/useTasks';
  */
 
 export const {
-  stream, // CRDT stream query (for real-time sync with gap detection)
-  getTasks, // SSR query (for server-side rendering)
-  insertDocument, // Insert mutation (dual-storage)
-  updateDocument, // Update mutation (dual-storage)
-  deleteDocument, // Delete mutation (dual-storage with hard delete)
-  getProtocolVersion, // Protocol version query
+  stream, // CRDT stream query (for real-time sync with difference detection)
+  material, // SSR query (for server-side rendering)
+  insert, // Insert mutation (dual-storage)
+  update, // Update mutation (dual-storage)
+  remove, // Remove mutation (dual-storage with hard delete)
+  protocol, // Protocol version query
   compact, // Compaction mutation (for cron jobs)
   prune, // Snapshot cleanup mutation (for cron jobs)
 } = defineReplicate<Task>({
   component: components.replicate,
   collection: 'tasks',
-  compaction: { retentionDays: 90 },
-  pruning: { retentionDays: 180 },
+  compaction: { retention: 90 },
+  pruning: { retention: 180 },
 });

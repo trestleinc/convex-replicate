@@ -13,20 +13,16 @@ export default defineSchema({
     .index('by_collection_document_version', ['collection', 'documentId', 'version'])
     .index('by_timestamp', ['collection', 'timestamp']),
 
-  // Snapshots for compacted history
-  // One snapshot per collection (not per document!)
   snapshots: defineTable({
     collection: v.string(),
-    snapshotBytes: v.bytes(), // V2 encoded entire collection Y.Doc
-    latestCompactionTimestamp: v.number(), // Timestamp of newest delta included in snapshot
-    createdAt: v.number(), // When this snapshot was created
+    snapshotBytes: v.bytes(),
+    latestCompactionTimestamp: v.number(),
+    createdAt: v.number(),
   }).index('by_collection', ['collection']),
 
-  // Schema version tracking for migrations
-  // Stores the current schema version for each collection
   migrations: defineTable({
     collection: v.string(),
-    version: v.number(), // Current schema version for this collection
-    updatedAt: v.number(), // When this version was set
+    version: v.number(),
+    updatedAt: v.number(),
   }).index('by_collection', ['collection']),
 });

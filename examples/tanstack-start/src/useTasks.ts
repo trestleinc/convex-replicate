@@ -3,6 +3,7 @@ import {
   convexCollectionOptions,
   handleReconnect,
   type ConvexCollection,
+  type Materialized,
 } from '@trestleinc/replicate/client';
 import { api } from '../convex/_generated/api';
 import { convexClient } from './router';
@@ -16,34 +17,21 @@ export interface Task {
 
 let tasksCollection: ConvexCollection<Task> | null = null;
 
-export function useTasks(initialData?: ReadonlyArray<Task>) {
-  // biome-ignore lint/correctness/useExhaustiveDependencies: initialData only used on first render - DO NOT add to deps as it would recreate Y.Doc and corrupt CRDT state
+export function useTasks(material?: Materialized<Task>) {
   return useMemo(() => {
-    // Create singleton collection - persist across renders to maintain Y.Doc state
-    // DO NOT force recreation as it creates new Y.Doc instances causing CRDT state corruption
     if (!tasksCollection) {
-      // Layer 3: TanStack DB (reactive queries)
-      // Layer 2: Yjs + IndexedDB (source of truth) - configured via convexCollectionOptions
-      const rawCollection = createCollection(
-        convexCollectionOptions<Task>({
-          convexClient,
-          api: {
-            stream: api.tasks.stream,
-            insertDocument: api.tasks.insertDocument,
-            updateDocument: api.tasks.updateDocument,
-            deleteDocument: api.tasks.deleteDocument,
-            getProtocolVersion: api.tasks.getProtocolVersion,
-            ssrQuery: api.tasks.getTasks, // For reconciliation - ensures deleted items are removed
-          },
-          collection: 'tasks',
-          getKey: (task) => task.id,
-          initialData,
-        })
+      tasksCollection = handleReconnect(
+        createCollection(
+          convexCollectionOptions<Task>({
+            convexClient,
+            api: api.tasks,
+            collection: 'tasks',
+            getKey: (task) => task.id,
+            material,
+          })
+        )
       );
-
-      // Layer 1: Offline reconnect (retry layer)
-      tasksCollection = handleReconnect(rawCollection);
     }
     return tasksCollection;
-  }, []); // Empty deps - only create once per session to prevent Y.Doc recreation
+  }, [material]);
 }

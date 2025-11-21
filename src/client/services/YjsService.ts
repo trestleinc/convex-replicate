@@ -8,7 +8,6 @@ class YjsError extends Data.TaggedError('YjsError')<{
   cause: unknown;
 }> {}
 
-// Service definition with lifecycle management
 export class YjsService extends Context.Tag('YjsService')<
   YjsService,
   {
@@ -24,7 +23,6 @@ export class YjsService extends Context.Tag('YjsService')<
   }
 >() {}
 
-// Service implementation
 export const YjsServiceLive = Layer.effect(
   YjsService,
   Effect.gen(function* (_) {
@@ -33,12 +31,10 @@ export const YjsServiceLive = Layer.effect(
     return YjsService.of({
       createDocument: (collection) =>
         Effect.gen(function* (_) {
-          // Load or generate stable clientID (stored per collection)
           const clientIdKey = `yjsClientId:${collection}`;
           let clientId = yield* _(idb.get<number>(clientIdKey));
 
           if (!clientId) {
-            // Generate deterministic clientID (not random for better CRDT convergence)
             clientId = Math.floor(Math.random() * 2147483647);
             yield* _(idb.set(clientIdKey, clientId));
             yield* _(
@@ -60,7 +56,6 @@ export const YjsServiceLive = Layer.effect(
 
       destroyDocument: (doc) =>
         Effect.sync(() => {
-          // Critical: Free memory by destroying Y.Doc
           doc.destroy();
         }),
 
@@ -84,7 +79,6 @@ export const YjsServiceLive = Layer.effect(
         Effect.try({
           try: () => {
             if (transact) {
-              // Use doc.transact for proper batching and event handling
               doc.transact(() => {
                 Y.applyUpdateV2(doc, update, origin);
               }, origin);

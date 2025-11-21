@@ -1,6 +1,5 @@
 import { Effect, Context, Layer, Ref } from 'effect';
 
-// Connection state ADT - using manual discriminated union
 export type ConnectionStateValue =
   | { readonly _tag: 'Disconnected' }
   | { readonly _tag: 'Connecting' }
@@ -27,7 +26,6 @@ export const ConnectionState = {
   }),
 };
 
-// Service definition
 export class ConnectionService extends Context.Tag('ConnectionService')<
   ConnectionService,
   {
@@ -39,7 +37,6 @@ export class ConnectionService extends Context.Tag('ConnectionService')<
   }
 >() {}
 
-// Service implementation
 export const ConnectionServiceLive = Layer.effect(
   ConnectionService,
   Effect.gen(function* (_) {

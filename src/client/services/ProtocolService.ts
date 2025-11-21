@@ -8,7 +8,6 @@ export class ProtocolMismatchError extends Data.TaggedError('ProtocolMismatchErr
   serverVersion: number;
 }> {}
 
-// Service definition
 export class ProtocolService extends Context.Tag('ProtocolService')<
   ProtocolService,
   {
@@ -22,7 +21,6 @@ export class ProtocolService extends Context.Tag('ProtocolService')<
   }
 >() {}
 
-// Service implementation
 export const ProtocolServiceLive = (convexClient: ConvexClient, api: any) =>
   Layer.effect(
     ProtocolService,
@@ -33,17 +31,17 @@ export const ProtocolServiceLive = (convexClient: ConvexClient, api: any) =>
         getStoredVersion: () =>
           Effect.gen(function* (_) {
             const stored = yield* _(idb.get<number>('protocolVersion'));
-            return stored ?? 1; // Default to v1
+            return stored ?? 1;
           }),
 
         setStoredVersion: (version) => idb.set('protocolVersion', version),
 
         getServerVersion: () =>
           Effect.tryPromise({
-            try: () => convexClient.query(api.getProtocolVersion, {}),
+            try: () => convexClient.query(api.protocol, {}),
             catch: (cause) =>
               new NetworkError({
-                operation: 'getProtocolVersion',
+                operation: 'protocol',
                 retryable: true,
                 cause,
               }),
@@ -53,7 +51,7 @@ export const ProtocolServiceLive = (convexClient: ConvexClient, api: any) =>
             Effect.catchTag('TimeoutException', () =>
               Effect.fail(
                 new NetworkError({
-                  operation: 'getProtocolVersion',
+                  operation: 'protocol',
                   retryable: true,
                   cause: new Error('Operation timed out after 5 seconds'),
                 })
@@ -64,14 +62,14 @@ export const ProtocolServiceLive = (convexClient: ConvexClient, api: any) =>
         runMigration: () =>
           Effect.gen(function* (_) {
             const stored = yield* _(idb.get<number>('protocolVersion'));
-            const storedVersion = stored ?? 1; // Default to v1
+            const storedVersion = stored ?? 1;
 
             const serverResponse = yield* _(
               Effect.tryPromise({
-                try: () => convexClient.query(api.getProtocolVersion, {}),
+                try: () => convexClient.query(api.protocol, {}),
                 catch: (cause) =>
                   new NetworkError({
-                    operation: 'getProtocolVersion',
+                    operation: 'protocol',
                     retryable: true,
                     cause,
                   }),
@@ -80,7 +78,7 @@ export const ProtocolServiceLive = (convexClient: ConvexClient, api: any) =>
                 Effect.catchTag('TimeoutException', () =>
                   Effect.fail(
                     new NetworkError({
-                      operation: 'getProtocolVersion',
+                      operation: 'protocol',
                       retryable: true,
                       cause: new Error('Operation timed out after 5 seconds'),
                     })
@@ -98,15 +96,12 @@ export const ProtocolServiceLive = (convexClient: ConvexClient, api: any) =>
                 })
               );
 
-              // Sequential migrations
               for (let version = storedVersion + 1; version <= serverVersion; version++) {
                 yield* _(Effect.logInfo(`Migrating to protocol v${version}`));
 
-                // Migration logic per version
                 if (version === 2) {
                   yield* _(migrateV1toV2());
                 }
-                // Future versions here
               }
 
               yield* _(idb.set('protocolVersion', serverVersion));
@@ -127,9 +122,7 @@ export const ProtocolServiceLive = (convexClient: ConvexClient, api: any) =>
     })
   );
 
-// Migration functions
 const migrateV1toV2 = () =>
   Effect.gen(function* (_) {
     yield* _(Effect.logInfo('Running v1→v2 migration'));
-    // Migration logic here (placeholder for future)
   });

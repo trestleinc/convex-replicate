@@ -19,7 +19,6 @@ class SnapshotRecoveryError extends Data.TaggedError('SnapshotRecoveryError')<{
   cause: unknown;
 }> {}
 
-// Service definition
 export class SnapshotService extends Context.Tag('SnapshotService')<
   SnapshotService,
   {
@@ -32,7 +31,6 @@ export class SnapshotService extends Context.Tag('SnapshotService')<
   }
 >() {}
 
-// Service implementation
 export const SnapshotServiceLive = Layer.effect(
   SnapshotService,
   Effect.gen(function* (_) {
@@ -42,26 +40,23 @@ export const SnapshotServiceLive = Layer.effect(
     return SnapshotService.of({
       recoverFromSnapshot: (collection, fetchSnapshot, truncateTanStack, syncYjsToTanStack) =>
         Effect.gen(function* () {
-          yield* Effect.logWarning('Gap detected, recovering from snapshot', {
+          yield* Effect.logWarning('Difference detected, recovering from snapshot', {
             collection,
           });
 
-          // Fetch snapshot from server
           const snapshot = yield* fetchSnapshot();
 
           if (!snapshot) {
             return yield* Effect.fail(
               new SnapshotMissingError({
                 collection,
-                message: 'Gap detected but no snapshot available - data loss scenario',
+                message: 'Difference detected but no snapshot available - data loss scenario',
               })
             );
           }
 
-          // Get existing doc (preserves clientID)
           const ydoc = yield* yjs.createDocument(collection);
 
-          // Clear Yjs state WITHOUT destroying doc
           yield* Effect.sync(() => {
             const ymap = ydoc.getMap(collection);
             ydoc.transact(() => {
@@ -72,14 +67,11 @@ export const SnapshotServiceLive = Layer.effect(
             }, 'snapshot-clear');
           });
 
-          // Apply snapshot (full state)
           yield* yjs.applyUpdate(ydoc, snapshot.crdtBytes);
 
-          // Truncate TanStack DB and rebuild from Yjs
           yield* truncateTanStack();
           yield* syncYjsToTanStack();
 
-          // Save new checkpoint
           yield* checkpoint.saveCheckpoint(collection, snapshot.checkpoint);
 
           return yield* Effect.logInfo('Snapshot recovery completed', {

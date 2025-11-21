@@ -2,7 +2,6 @@ import { Effect, Context, Layer, Schedule } from 'effect';
 import { get as idbGet, set as idbSet, del as idbDel, type UseStore } from 'idb-keyval';
 import { IDBError, IDBWriteError } from '../errors';
 
-// Service definition
 export class IDBService extends Context.Tag('IDBService')<
   IDBService,
   {
@@ -17,7 +16,6 @@ export class IDBService extends Context.Tag('IDBService')<
   }
 >() {}
 
-// Service implementation
 export const IDBServiceLive = Layer.succeed(
   IDBService,
   IDBService.of({
@@ -99,7 +97,7 @@ export const IDBServiceLive = Layer.succeed(
 
     clear: (store) =>
       Effect.tryPromise({
-        try: () => (store as any).clear(), // idb-keyval doesn't export clear for UseStore
+        try: () => (store as any).clear(),
         catch: (cause) =>
           new IDBError({
             operation: 'clear',
