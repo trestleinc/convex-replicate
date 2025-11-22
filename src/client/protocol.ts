@@ -1,5 +1,4 @@
-import { Effect, Layer } from 'effect';
-import { Schema } from '@effect/schema';
+import { Effect, Layer, Schema } from 'effect';
 import { createStore, get, set, clear } from 'idb-keyval';
 import { getLogger } from './logger.js';
 import {

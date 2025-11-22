@@ -1,5 +1,4 @@
-import { Schema } from '@effect/schema';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import { DeltaValidationError } from '../client/errors/index.js';
 
 export const Delta = Schema.Struct({

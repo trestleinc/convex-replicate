@@ -473,7 +473,7 @@ export function convexCollectionOptions<T extends object>({
                   checkpoint: docs.length > 0 ? { lastModified: 0 } : loadCheckpoint(),
                   limit: 100,
                 },
-                async (response) => {
+                (response) => {
                   const { changes, checkpoint: newCheckpoint } = response;
 
                   for (const change of changes) {
