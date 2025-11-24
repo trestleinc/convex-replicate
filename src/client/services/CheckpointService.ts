@@ -17,8 +17,7 @@ export class CheckpointService extends Context.Tag('CheckpointService')<
     readonly clearCheckpoint: (collection: string) => Effect.Effect<void, IDBError>;
     readonly loadCheckpointWithStaleDetection: (
       collection: string,
-      hasSSRData: boolean,
-      hasPersistedYjsState: boolean
+      hasSSRData: boolean
     ) => Effect.Effect<Checkpoint, IDBError>;
   }
 >() {}
@@ -75,9 +74,10 @@ export const CheckpointServiceLive = Layer.effect(
 
       clearCheckpoint,
 
-      loadCheckpointWithStaleDetection: (collection, hasSSRData, hasPersistedYjsState) =>
+      loadCheckpointWithStaleDetection: (collection, hasSSRData) =>
         Effect.gen(function* (_) {
           // If we have SSR data, always start fresh (lastModified: 0)
+          // to sync from the SSR snapshot point
           if (hasSSRData) {
             yield* _(
               Effect.logDebug('Using fresh checkpoint due to SSR data', {
@@ -87,20 +87,12 @@ export const CheckpointServiceLive = Layer.effect(
             return { lastModified: 0 };
           }
 
-          // Detect stale checkpoint scenario:
-          // Yjs loaded persisted state from IndexedDB, but no SSR data provided
-          // This means checkpoint might be ahead of what we have, causing missed updates
-          if (hasPersistedYjsState) {
-            yield* _(
-              Effect.logDebug('Clearing stale checkpoint due to persisted Yjs state', {
-                collection,
-              })
-            );
-            yield* _(clearCheckpoint(collection));
-            return { lastModified: 0 };
-          }
-
           // Normal case: load stored checkpoint
+          // This works correctly because:
+          // - Yjs IndexedDB persistence is independent from checkpoint tracking
+          // - Checkpoint tracks subscription position (what we've received from server)
+          // - Yjs tracks document state (CRDT)
+          // - Both should work together, not conflict
           return yield* _(loadCheckpoint(collection));
         }),
     });

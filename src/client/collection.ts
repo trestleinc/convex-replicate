@@ -446,7 +446,14 @@ export function convexCollectionOptions<T extends object>({
               ymap.forEach((itemYMap, _key) => {
                 if (itemYMap instanceof Y.Map) {
                   const item = itemYMap.toJSON() as T;
-                  write({ type: 'update', value: item });
+                  // Use insert for initial sync to populate TanStack DB
+                  // If item already exists (shouldn't happen), try/catch will handle it
+                  try {
+                    write({ type: 'insert', value: item });
+                  } catch {
+                    // Fallback to update if item somehow already exists
+                    write({ type: 'update', value: item });
+                  }
                 }
               });
 
@@ -455,14 +462,15 @@ export function convexCollectionOptions<T extends object>({
 
             await reconcile();
 
-            // Load checkpoint with stale detection
+            // Load checkpoint
+            // If we have SSR data (docs.length > 0), start from checkpoint 0
+            // Otherwise, use stored checkpoint to resume from where we left off
             const checkpoint = await Effect.runPromise(
               Effect.gen(function* () {
                 const checkpointService = yield* CheckpointService;
                 return yield* checkpointService.loadCheckpointWithStaleDetection(
                   collection,
-                  docs.length > 0,
-                  ymap.size > 0
+                  docs.length > 0
                 );
               }).pipe(Effect.provide(checkpointLayer))
             );
