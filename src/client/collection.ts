@@ -14,6 +14,7 @@ import { ensureSet } from './set.js';
 import {
   CheckpointService,
   CheckpointServiceLive,
+  YjsService,
   YjsServiceLive,
   SubscriptionService,
   SubscriptionServiceLive,
@@ -97,29 +98,14 @@ export function convexCollectionOptions<T extends object>({
     convexClient,
     api: api.protocol ? { protocol: api.protocol } : undefined,
   });
-  const clientIdKey = `convex-replicate:yjsClientId:${collection}`;
-  let clientId = Number.parseInt(localStorage.getItem(clientIdKey) || '0', 10);
-  if (!clientId) {
-    clientId = Math.floor(Math.random() * 2147483647);
-    localStorage.setItem(clientIdKey, clientId.toString());
-  }
 
-  const ydoc = new Y.Doc({ guid: collection, clientID: clientId } as any);
-  const ymap = ydoc.getMap(collection);
-
-  const persistence = new IndexeddbPersistence(collection, ydoc);
-
-  const persistenceReadyPromise = new Promise<void>((resolve) => {
-    persistence.on('synced', () => {
-      resolve();
-    });
-  });
+  // Declare Yjs variables - will be initialized in sync function using YjsService
+  let ydoc: Y.Doc = null as any; // Initialized before mutation handlers can be called
+  let ymap: Y.Map<unknown> = null as any;
+  let persistence: IndexeddbPersistence = null as any;
+  let persistenceReadyPromise: Promise<void> = null as any;
   let pendingUpdate: Uint8Array | null = null;
-  (ydoc as any).on('updateV2', (update: Uint8Array, origin: any) => {
-    if (origin === YjsOrigin.Insert || origin === YjsOrigin.Update || origin === YjsOrigin.Remove) {
-      pendingUpdate = update;
-    }
-  });
+  let updateObserverCleanup: (() => void) | null = null;
   let syncParams: any = null;
 
   const reconcile = () =>
@@ -435,7 +421,43 @@ export function convexCollectionOptions<T extends object>({
         // Start async initialization + data loading + subscription
         (async () => {
           try {
-            await Promise.all([setPromise, persistenceReadyPromise]);
+            await setPromise; // Wait for protocol initialization
+
+            // Create Yjs document using YjsService!
+            const yjsResult = await Effect.runPromise(
+              Effect.gen(function* () {
+                const yjs = yield* YjsService;
+
+                // Create document
+                const doc = yield* yjs.createDocument(collection);
+                const map = yield* yjs.getMap<unknown>(doc, collection);
+
+                // Setup update observer
+                const cleanup = yield* yjs.observeUpdates(doc, (update, origin) => {
+                  if (
+                    origin === YjsOrigin.Insert ||
+                    origin === YjsOrigin.Update ||
+                    origin === YjsOrigin.Remove
+                  ) {
+                    pendingUpdate = update;
+                  }
+                });
+
+                return { doc, map, updateCleanup: cleanup };
+              }).pipe(Effect.provide(servicesLayer))
+            );
+
+            ydoc = yjsResult.doc;
+            ymap = yjsResult.map;
+            updateObserverCleanup = yjsResult.updateCleanup;
+
+            // Setup persistence (imperative - y-indexeddb constraint)
+            persistence = new IndexeddbPersistence(collection, ydoc);
+            persistenceReadyPromise = new Promise<void>((resolve) => {
+              persistence.on('synced', resolve);
+            });
+
+            await persistenceReadyPromise;
 
             // Initialize OptimisticService with syncParams
             await Effect.runPromise(
@@ -638,7 +660,12 @@ export function convexCollectionOptions<T extends object>({
               connectionMonitor();
             }
 
-            persistence.destroy();
+            // Cleanup Yjs update observer
+            if (updateObserverCleanup) {
+              updateObserverCleanup();
+            }
+
+            persistence?.destroy();
             cleanupFunctions.delete(collection);
           },
         };
