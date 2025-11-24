@@ -416,10 +416,10 @@ export function convexCollectionOptions<T extends object>({
         // Store TanStack DB sync methods for snapshot restore
         syncParams = params;
 
-        // Initialize subscription variable
+        // Initialize subscription and monitoring variables
         let subscription: (() => void) | null = null;
+        let connectionMonitor: (() => void) | null = null;
         let currentCheckpoint: { lastModified: number } | null = null;
-        const handleOnline: (() => Promise<void>) | null = null;
 
         // Declare SSR variables
         let ssrDocuments: ReadonlyArray<T> | undefined;
@@ -524,129 +524,107 @@ export function convexCollectionOptions<T extends object>({
             // Store checkpoint for reconnection
             currentCheckpoint = checkpoint;
 
-            // Define subscription callback that can be reused on reconnection
-            const handleSubscriptionUpdate = (response: any) => {
-              const { changes, checkpoint: newCheckpoint } = response;
+            // Define subscription handler as Effect program
+            const subscriptionHandler = (response: any) =>
+              Effect.gen(function* () {
+                const optimistic = yield* OptimisticService;
+                const checkpointSvc = yield* CheckpointService;
 
-              // Run subscription handler as Effect program
-              Effect.runPromise(
-                Effect.gen(function* () {
-                  const optimistic = yield* OptimisticService;
-                  const checkpointSvc = yield* CheckpointService;
+                const { changes, checkpoint: newCheckpoint } = response;
 
-                  for (const change of changes) {
-                    const { operationType, crdtBytes, documentId } = change;
+                for (const change of changes) {
+                  const { operationType, crdtBytes, documentId } = change;
 
-                    if (operationType === 'snapshot') {
-                      // Apply snapshot to Yjs
-                      Y.applyUpdateV2(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Snapshot);
+                  if (operationType === 'snapshot') {
+                    // Apply snapshot to Yjs
+                    Y.applyUpdateV2(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Snapshot);
 
-                      // Replace all data in TanStack DB
-                      const items: T[] = [];
-                      ymap.forEach((itemYMap) => {
-                        if (itemYMap instanceof Y.Map) {
-                          items.push(itemYMap.toJSON() as T);
-                        }
-                      });
-                      yield* optimistic.replaceAll(items);
-                    } else {
-                      // Capture item data BEFORE applying delta
-                      let itemBeforeDelta: T | null = null;
-                      if (documentId) {
-                        const itemYMapBefore = ymap.get(documentId);
-                        if (itemYMapBefore instanceof Y.Map) {
-                          itemBeforeDelta = itemYMapBefore.toJSON() as T;
-                        }
+                    // Replace all data in TanStack DB
+                    const items: T[] = [];
+                    ymap.forEach((itemYMap) => {
+                      if (itemYMap instanceof Y.Map) {
+                        items.push(itemYMap.toJSON() as T);
                       }
+                    });
+                    yield* optimistic.replaceAll(items);
+                  } else {
+                    // Capture item data BEFORE applying delta
+                    let itemBeforeDelta: T | null = null;
+                    if (documentId) {
+                      const itemYMapBefore = ymap.get(documentId);
+                      if (itemYMapBefore instanceof Y.Map) {
+                        itemBeforeDelta = itemYMapBefore.toJSON() as T;
+                      }
+                    }
 
-                      // Apply delta to Yjs
-                      Y.applyUpdateV2(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Subscription);
+                    // Apply delta to Yjs
+                    Y.applyUpdateV2(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Subscription);
 
-                      // Sync affected document to TanStack DB
-                      if (documentId) {
-                        const itemYMap = ymap.get(documentId);
-                        if (itemYMap instanceof Y.Map) {
-                          // Item EXISTS after delta - upsert
-                          const item = itemYMap.toJSON() as T;
-                          yield* optimistic.upsert([item]);
-                        } else if (itemBeforeDelta) {
-                          // Item DELETED by delta
-                          yield* optimistic.delete([itemBeforeDelta]);
-                        }
+                    // Sync affected document to TanStack DB
+                    if (documentId) {
+                      const itemYMap = ymap.get(documentId);
+                      if (itemYMap instanceof Y.Map) {
+                        // Item EXISTS after delta - upsert
+                        const item = itemYMap.toJSON() as T;
+                        yield* optimistic.upsert([item]);
+                      } else if (itemBeforeDelta) {
+                        // Item DELETED by delta
+                        yield* optimistic.delete([itemBeforeDelta]);
                       }
                     }
                   }
-
-                  // Save checkpoint
-                  currentCheckpoint = newCheckpoint;
-                  yield* checkpointSvc.saveCheckpoint(collection, newCheckpoint);
-                }).pipe(Effect.provide(servicesLayer))
-              ).catch((error) => {
-                logger.error('Subscription handler error', { collection, error });
-              });
-            };
-
-            // Create initial subscription
-            try {
-              subscription = convexClient.onUpdate(
-                api.stream,
-                {
-                  checkpoint: currentCheckpoint,
-                  limit: 100,
-                },
-                handleSubscriptionUpdate
-              );
-            } catch (subscriptionError) {
-              logger.error('Failed to setup subscription', {
-                collection,
-                error: subscriptionError,
-              });
-              throw subscriptionError;
-            }
-
-            // Setup reconnection handling
-            const handleOnline = async () => {
-              logger.info('Connection restored, recreating subscription', { collection });
-
-              // Load latest checkpoint from storage
-              try {
-                const latestCheckpoint = await Effect.runPromise(
-                  Effect.gen(function* () {
-                    const checkpointService = yield* CheckpointService;
-                    return yield* checkpointService.loadCheckpoint(collection);
-                  }).pipe(Effect.provide(checkpointLayer))
-                );
-
-                currentCheckpoint = latestCheckpoint;
-
-                // Cleanup old subscription
-                if (subscription) {
-                  subscription();
                 }
 
-                // Create new subscription with latest checkpoint
-                subscription = convexClient.onUpdate(
-                  api.stream,
-                  {
-                    checkpoint: latestCheckpoint,
-                    limit: 100,
-                  },
-                  handleSubscriptionUpdate
-                );
+                // Save checkpoint
+                currentCheckpoint = newCheckpoint;
+                yield* checkpointSvc.saveCheckpoint(collection, newCheckpoint);
+              }).pipe(Effect.provide(servicesLayer));
 
-                logger.info('Subscription recreated successfully', { collection });
-              } catch (error) {
-                logger.error('Failed to recreate subscription on reconnect', {
+            // Initialize SubscriptionService and create subscription
+            subscription = await Effect.runPromise(
+              Effect.gen(function* () {
+                const subscriptionSvc = yield* SubscriptionService;
+
+                // Initialize subscription service
+                yield* subscriptionSvc.initialize({
+                  convexClient,
+                  api: api.stream,
                   collection,
-                  error,
                 });
-              }
-            };
 
-            // Listen for connection restoration
-            if (typeof window !== 'undefined') {
-              window.addEventListener('online', handleOnline);
-            }
+                // Create subscription with handler
+                return yield* subscriptionSvc.create(checkpoint, subscriptionHandler);
+              }).pipe(Effect.provide(servicesLayer))
+            );
+
+            // Setup reconnection handling with ConnectionService
+            connectionMonitor = await Effect.runPromise(
+              Effect.gen(function* () {
+                const connectionSvc = yield* ConnectionService;
+                const subscriptionSvc = yield* SubscriptionService;
+                const checkpointSvc = yield* CheckpointService;
+
+                return yield* connectionSvc.startMonitoring({
+                  onOnline: () =>
+                    Effect.gen(function* () {
+                      yield* Effect.logInfo('Connection restored, recreating subscription', {
+                        collection,
+                      });
+
+                      // Load latest checkpoint
+                      const latestCheckpoint = yield* checkpointSvc.loadCheckpoint(collection);
+                      currentCheckpoint = latestCheckpoint;
+
+                      // Recreate subscription with latest checkpoint - ONE LINE!
+                      yield* subscriptionSvc.recreate(latestCheckpoint);
+
+                      yield* Effect.logInfo('Subscription recreated successfully', {
+                        collection,
+                      });
+                    }),
+                });
+              }).pipe(Effect.provide(servicesLayer))
+            );
 
             // Mark collection as ready
             markReady();
@@ -665,9 +643,9 @@ export function convexCollectionOptions<T extends object>({
               subscription();
             }
 
-            // Cleanup online event listener
-            if (typeof window !== 'undefined' && handleOnline) {
-              window.removeEventListener('online', handleOnline);
+            // Cleanup connection monitor
+            if (connectionMonitor) {
+              connectionMonitor();
             }
 
             persistence.destroy();
