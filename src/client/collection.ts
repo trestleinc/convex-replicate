@@ -345,27 +345,21 @@ export function convexCollectionOptions<T extends object>({
       try {
         await Promise.all([setPromise, persistenceReadyPromise]);
 
-        // Remove from Yjs Y.Map - creates deletion tombstone using helper
-        await Effect.runPromise(applyYjsDelete(transaction.mutations));
+        // Apply Yjs delete and sync to TanStack DB using services
+        await Effect.runPromise(
+          Effect.gen(function* () {
+            const optimistic = yield* OptimisticService;
 
-        // Update TanStack DB data layer immediately to prevent re-appearance
-        if (syncParams) {
-          const { begin, write, commit } = syncParams;
-          try {
-            begin();
-            transaction.mutations.forEach((mut: any) => {
-              write({ type: 'delete', value: mut.original });
-            });
-            commit();
-          } catch (error) {
-            logger.error('TanStack DB delete failed', {
-              collection,
-              error,
-            });
-          }
-        }
+            // Apply Yjs delete using helper
+            yield* applyYjsDelete(transaction.mutations);
 
-        // Send deletion DELTA to Convex
+            // Use OptimisticService for TanStack DB!
+            const itemsToDelete = transaction.mutations.map((mut: any) => mut.original);
+            yield* optimistic.delete(itemsToDelete);
+          }).pipe(Effect.provide(servicesLayer))
+        );
+
+        // Send deletion DELTA to Convex (mutation handler's job)
         if (pendingUpdate) {
           const documentKey = String(transaction.mutations[0].key);
           const mutationArgs: any = {
