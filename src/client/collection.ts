@@ -8,8 +8,11 @@ import {
 import type { ConvexClient } from 'convex/browser';
 import type { FunctionReference } from 'convex/server';
 import type { CollectionConfig, Collection } from '@tanstack/db';
+import { Effect, Layer } from 'effect';
 import { getLogger } from './logger.js';
 import { ensureSet } from './set.js';
+import { CheckpointService, CheckpointServiceLive } from './services/CheckpointService.js';
+import { IDBServiceLive } from './services/IDBService.js';
 
 const logger = getLogger(['convex-replicate', 'collection']);
 
@@ -395,27 +398,8 @@ export function convexCollectionOptions<T extends object>({
         // Collect initial docs for TanStack DB
         const docs: T[] = ssrDocuments ? [...ssrDocuments] : [];
 
-        // Checkpoint persistence helpers
-        const checkpointKey = `convex-replicate:checkpoint:${collection}`;
-        const loadCheckpoint = (): { lastModified: number } => {
-          try {
-            const stored = localStorage.getItem(checkpointKey);
-            if (stored) {
-              return JSON.parse(stored);
-            }
-          } catch (error) {
-            logger.warn('Failed to load checkpoint from localStorage', { error });
-          }
-          return { lastModified: 0 };
-        };
-
-        const saveCheckpoint = (checkpoint: { lastModified: number }) => {
-          try {
-            localStorage.setItem(checkpointKey, JSON.stringify(checkpoint));
-          } catch (error) {
-            logger.warn('Failed to save checkpoint to localStorage', { error });
-          }
-        };
+        // Setup checkpoint service layer
+        const checkpointLayer = Layer.provide(CheckpointServiceLive, IDBServiceLive);
 
         // Start async initialization + data loading + subscription
         (async () => {
@@ -427,7 +411,12 @@ export function convexCollectionOptions<T extends object>({
 
               // Save checkpoint so subscription starts from correct point
               if (ssrCheckpoint) {
-                saveCheckpoint(ssrCheckpoint);
+                await Effect.runPromise(
+                  Effect.gen(function* () {
+                    const checkpointService = yield* CheckpointService;
+                    yield* checkpointService.saveCheckpoint(collection, ssrCheckpoint);
+                  }).pipe(Effect.provide(checkpointLayer))
+                );
               }
             }
             if (ssrDocuments && ssrDocuments.length > 0) {
@@ -466,11 +455,23 @@ export function convexCollectionOptions<T extends object>({
 
             await reconcile();
 
+            // Load checkpoint with stale detection
+            const checkpoint = await Effect.runPromise(
+              Effect.gen(function* () {
+                const checkpointService = yield* CheckpointService;
+                return yield* checkpointService.loadCheckpointWithStaleDetection(
+                  collection,
+                  docs.length > 0,
+                  ymap.size > 0
+                );
+              }).pipe(Effect.provide(checkpointLayer))
+            );
+
             try {
               subscription = convexClient.onUpdate(
                 api.stream,
                 {
-                  checkpoint: docs.length > 0 ? { lastModified: 0 } : loadCheckpoint(),
+                  checkpoint,
                   limit: 100,
                 },
                 (response) => {
@@ -554,7 +555,14 @@ export function convexCollectionOptions<T extends object>({
                   }
 
                   // Save checkpoint
-                  saveCheckpoint(newCheckpoint);
+                  Effect.runPromise(
+                    Effect.gen(function* () {
+                      const checkpointService = yield* CheckpointService;
+                      yield* checkpointService.saveCheckpoint(collection, newCheckpoint);
+                    }).pipe(Effect.provide(checkpointLayer))
+                  ).catch((error) => {
+                    logger.warn('Failed to save checkpoint', { collection, error });
+                  });
                 }
               );
             } catch (subscriptionError) {
