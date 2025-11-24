@@ -479,24 +479,26 @@ export function convexCollectionOptions<T extends object>({
             }
 
             if (ymap.size > 0) {
-              const { begin, write, commit } = syncParams;
-              begin();
+              await Effect.runPromise(
+                Effect.gen(function* () {
+                  const optimistic = yield* OptimisticService;
 
-              ymap.forEach((itemYMap, _key) => {
-                if (itemYMap instanceof Y.Map) {
-                  const item = itemYMap.toJSON() as T;
-                  // Use insert for initial sync to populate TanStack DB
-                  // If item already exists (shouldn't happen), try/catch will handle it
-                  try {
-                    write({ type: 'insert', value: item });
-                  } catch {
-                    // Fallback to update if item somehow already exists
-                    write({ type: 'update', value: item });
-                  }
-                }
-              });
+                  const items: T[] = [];
+                  ymap.forEach((itemYMap, _key) => {
+                    if (itemYMap instanceof Y.Map) {
+                      items.push(itemYMap.toJSON() as T);
+                    }
+                  });
 
-              commit();
+                  // Use OptimisticService for initial sync!
+                  yield* optimistic.insert(items);
+
+                  yield* Effect.logInfo('Initial sync completed', {
+                    collection,
+                    itemCount: items.length,
+                  });
+                }).pipe(Effect.provide(servicesLayer))
+              );
             }
 
             await Effect.runPromise(reconcile().pipe(Effect.provide(servicesLayer)));
