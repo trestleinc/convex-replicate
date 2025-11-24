@@ -27,14 +27,14 @@ import {
 
 const logger = getLogger(['convex-replicate', 'collection']);
 
-// Create unified services layer
+// Create unified services layer with proper dependency resolution
+// YjsServiceLive and CheckpointServiceLive depend on IDBServiceLive
 const servicesLayer = Layer.mergeAll(
-  IDBServiceLive,
-  YjsServiceLive,
-  CheckpointServiceLive,
-  SubscriptionServiceLive,
   OptimisticServiceLive,
-  ConnectionServiceLive
+  SubscriptionServiceLive,
+  ConnectionServiceLive,
+  Layer.provide(YjsServiceLive, IDBServiceLive),
+  Layer.provide(CheckpointServiceLive, IDBServiceLive)
 );
 
 export { OperationType } from '../component/shared.js';
@@ -443,6 +443,14 @@ export function convexCollectionOptions<T extends object>({
         (async () => {
           try {
             await Promise.all([setPromise, persistenceReadyPromise]);
+
+            // Initialize OptimisticService with syncParams
+            await Effect.runPromise(
+              Effect.gen(function* () {
+                const optimistic = yield* OptimisticService;
+                yield* optimistic.initialize(params);
+              }).pipe(Effect.provide(servicesLayer))
+            );
             if (ssrCRDTBytes) {
               // Apply CRDT bytes to Yjs (preserves original Item IDs)
               Y.applyUpdateV2(ydoc, new Uint8Array(ssrCRDTBytes), YjsOrigin.SSRInit);
@@ -520,92 +528,61 @@ export function convexCollectionOptions<T extends object>({
             const handleSubscriptionUpdate = (response: any) => {
               const { changes, checkpoint: newCheckpoint } = response;
 
-              for (const change of changes) {
-                const { operationType, crdtBytes, documentId } = change;
-
-                switch (operationType) {
-                  case 'snapshot': {
-                    // Apply snapshot to Yjs
-                    Y.applyUpdateV2(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Snapshot);
-
-                    const {
-                      truncate,
-                      begin: snapshotBegin,
-                      write: snapshotWrite,
-                      commit: snapshotCommit,
-                    } = syncParams;
-
-                    truncate(); // Clear existing data
-
-                    snapshotBegin();
-                    ymap.forEach((itemYMap) => {
-                      if (itemYMap instanceof Y.Map) {
-                        snapshotWrite({ type: 'insert', value: itemYMap.toJSON() });
-                      }
-                    });
-                    snapshotCommit();
-                    break;
-                  }
-
-                  default: {
-                    // Capture item data BEFORE applying delta
-                    let itemBeforeDelta: T | null = null;
-                    if (documentId) {
-                      const itemYMapBefore = ymap.get(documentId);
-                      if (itemYMapBefore instanceof Y.Map) {
-                        itemBeforeDelta = itemYMapBefore.toJSON() as T;
-                      }
-                    }
-
-                    // Apply delta to Yjs
-                    Y.applyUpdateV2(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Subscription);
-
-                    // Sync affected document to TanStack DB
-                    if (documentId) {
-                      const itemYMap = ymap.get(documentId);
-                      if (itemYMap instanceof Y.Map) {
-                        // Item EXISTS after delta - UPDATE or INSERT
-                        const { begin, write, commit } = syncParams;
-                        const item = itemYMap.toJSON() as T;
-
-                        begin();
-                        try {
-                          write({ type: 'update', value: item });
-                          commit();
-                        } catch {
-                          write({ type: 'insert', value: item });
-                          commit();
-                        }
-                      } else if (itemBeforeDelta) {
-                        // Item DELETED by delta
-                        const { begin, write, commit } = syncParams;
-                        try {
-                          begin();
-                          write({ type: 'delete', value: itemBeforeDelta });
-                          commit();
-                        } catch (error) {
-                          logger.error('Subscription delete failed', {
-                            collection,
-                            documentId,
-                            error,
-                          });
-                        }
-                      }
-                    }
-                    break;
-                  }
-                }
-              }
-
-              // Save checkpoint and update current checkpoint
-              currentCheckpoint = newCheckpoint;
+              // Run subscription handler as Effect program
               Effect.runPromise(
                 Effect.gen(function* () {
-                  const checkpointService = yield* CheckpointService;
-                  yield* checkpointService.saveCheckpoint(collection, newCheckpoint);
-                }).pipe(Effect.provide(checkpointLayer))
+                  const optimistic = yield* OptimisticService;
+                  const checkpointSvc = yield* CheckpointService;
+
+                  for (const change of changes) {
+                    const { operationType, crdtBytes, documentId } = change;
+
+                    if (operationType === 'snapshot') {
+                      // Apply snapshot to Yjs
+                      Y.applyUpdateV2(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Snapshot);
+
+                      // Replace all data in TanStack DB
+                      const items: T[] = [];
+                      ymap.forEach((itemYMap) => {
+                        if (itemYMap instanceof Y.Map) {
+                          items.push(itemYMap.toJSON() as T);
+                        }
+                      });
+                      yield* optimistic.replaceAll(items);
+                    } else {
+                      // Capture item data BEFORE applying delta
+                      let itemBeforeDelta: T | null = null;
+                      if (documentId) {
+                        const itemYMapBefore = ymap.get(documentId);
+                        if (itemYMapBefore instanceof Y.Map) {
+                          itemBeforeDelta = itemYMapBefore.toJSON() as T;
+                        }
+                      }
+
+                      // Apply delta to Yjs
+                      Y.applyUpdateV2(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Subscription);
+
+                      // Sync affected document to TanStack DB
+                      if (documentId) {
+                        const itemYMap = ymap.get(documentId);
+                        if (itemYMap instanceof Y.Map) {
+                          // Item EXISTS after delta - upsert
+                          const item = itemYMap.toJSON() as T;
+                          yield* optimistic.upsert([item]);
+                        } else if (itemBeforeDelta) {
+                          // Item DELETED by delta
+                          yield* optimistic.delete([itemBeforeDelta]);
+                        }
+                      }
+                    }
+                  }
+
+                  // Save checkpoint
+                  currentCheckpoint = newCheckpoint;
+                  yield* checkpointSvc.saveCheckpoint(collection, newCheckpoint);
+                }).pipe(Effect.provide(servicesLayer))
               ).catch((error) => {
-                logger.warn('Failed to save checkpoint', { collection, error });
+                logger.error('Subscription handler error', { collection, error });
               });
             };
 
