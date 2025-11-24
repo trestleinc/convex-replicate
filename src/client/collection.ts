@@ -11,10 +11,31 @@ import type { CollectionConfig, Collection } from '@tanstack/db';
 import { Effect, Layer } from 'effect';
 import { getLogger } from './logger.js';
 import { ensureSet } from './set.js';
-import { CheckpointService, CheckpointServiceLive } from './services/CheckpointService.js';
-import { IDBServiceLive } from './services/IDBService.js';
+import {
+  CheckpointService,
+  CheckpointServiceLive,
+  YjsService,
+  YjsServiceLive,
+  SubscriptionService,
+  SubscriptionServiceLive,
+  OptimisticService,
+  OptimisticServiceLive,
+  ConnectionService,
+  ConnectionServiceLive,
+  IDBServiceLive,
+} from './services/index.js';
 
 const logger = getLogger(['convex-replicate', 'collection']);
+
+// Create unified services layer
+const servicesLayer = Layer.mergeAll(
+  IDBServiceLive,
+  YjsServiceLive,
+  CheckpointServiceLive,
+  SubscriptionServiceLive,
+  OptimisticServiceLive,
+  ConnectionServiceLive
+);
 
 export { OperationType } from '../component/shared.js';
 
