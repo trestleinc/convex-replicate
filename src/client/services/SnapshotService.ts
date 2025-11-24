@@ -9,12 +9,12 @@ export interface SnapshotResponse {
   documentCount: number;
 }
 
-class SnapshotMissingError extends Data.TaggedError('SnapshotMissingError')<{
+export class SnapshotMissingError extends Data.TaggedError('SnapshotMissingError')<{
   collection: string;
   message: string;
 }> {}
 
-class SnapshotRecoveryError extends Data.TaggedError('SnapshotRecoveryError')<{
+export class SnapshotRecoveryError extends Data.TaggedError('SnapshotRecoveryError')<{
   collection: string;
   cause: unknown;
 }> {}

@@ -13,10 +13,7 @@ importers:
     dependencies:
       '@effect/platform':
         specifier: ^0.93.3
-        version: 0.93.3(effect@3.19.5)
-      '@effect/schema':
-        specifier: ^0.75.5
-        version: 0.75.5(effect@3.19.5)
+        version: 0.93.3(effect@3.19.6)
       '@logtape/logtape':
         specifier: 1.1.2
         version: 1.1.2
@@ -24,8 +21,8 @@ importers:
         specifier: 0.1.3
         version: 0.1.3(@tanstack/db@0.4.20(typescript@5.9.3))
       effect:
-        specifier: ^3.19.5
-        version: 3.19.5
+        specifier: ^3.19.6
+        version: 3.19.6
       idb-keyval:
         specifier: ^6.2.2
         version: 6.2.2
@@ -41,7 +38,7 @@ importers:
         version: 2.3.4
       '@effect/vitest':
         specifier: ^0.27.0
-        version: 0.27.0(effect@3.19.5)(vitest@4.0.8(@types/node@24.10.0)(jiti@2.6.1)(jsdom@27.1.0))
+        version: 0.27.0(effect@3.19.6)(vitest@4.0.8(@types/node@24.10.0)(jiti@2.6.1)(jsdom@27.1.0))
       '@rslib/core':
         specifier: 0.17.1
         version: 0.17.1(typescript@5.9.3)
@@ -278,12 +275,6 @@ packages:
     resolution: {integrity: sha512-s88zctkeXba24Mjy7MEFMuam1p5sXmsG7uQjPIDE6EiC+2IFUQd8976TtangiU0e8qu0SALpjIH1P1QyC7/1og==}
     peerDependencies:
       effect: ^3.19.4
-
-  '@effect/schema@0.75.5':
-    resolution: {integrity: sha512-TQInulTVCuF+9EIbJpyLP6dvxbQJMphrnRqgexm/Ze39rSjfhJuufF7XvU3SxTgg3HnL7B/kpORTJbHhlE6thw==}
-    deprecated: this package has been merged into the main effect package
-    peerDependencies:
-      effect: ^3.9.2
 
   '@effect/vitest@0.27.0':
     resolution: {integrity: sha512-8bM7n9xlMUYw9GqPIVgXFwFm2jf27m/R7psI64PGpwU5+26iwyxp9eAXEsfT5S6lqztYfpQQ1Ubp5o6HfNYzJQ==}
@@ -1122,8 +1113,8 @@ packages:
   duplexer2@0.1.4:
     resolution: {integrity: sha512-asLFVfWWtJ90ZyOUHMqk7/S2w2guQKxUI2itj3d92ADHhxUSbCMGi1f1cBcJ7xM1To+pE/Khbwo1yuNbMEPKeA==}
 
-  effect@3.19.5:
-    resolution: {integrity: sha512-P/Yml/wuqfIWVg4EH3QWKEqe4txwZVa9tCnlp24mRtIxN/wbn27KLOuDyF0HcKuMYsX/SGw8Lxe0T0Y6q4tvBA==}
+  effect@3.19.6:
+    resolution: {integrity: sha512-Eh1E/CI+xCAcMSDC5DtyE29yWJINC0zwBbwHappQPorjKyS69rCA8qzpsHpfhKnPDYgxdg8zkknii8mZ+6YMQA==}
 
   emoji-regex@10.6.0:
     resolution: {integrity: sha512-toUI84YS5YmxW219erniWD0CIVOo46xGKColeNQRgOzDorgBi1v4D71/OFzgD9GO2UGKIv1C3Sp8DAn0+j5w7A==}
@@ -2496,21 +2487,16 @@ snapshots:
 
   '@csstools/css-tokenizer@3.0.4': {}
 
-  '@effect/platform@0.93.3(effect@3.19.5)':
+  '@effect/platform@0.93.3(effect@3.19.6)':
     dependencies:
-      effect: 3.19.5
+      effect: 3.19.6
       find-my-way-ts: 0.1.6
       msgpackr: 1.11.5
       multipasta: 0.2.7
 
-  '@effect/schema@0.75.5(effect@3.19.5)':
+  '@effect/vitest@0.27.0(effect@3.19.6)(vitest@4.0.8(@types/node@24.10.0)(jiti@2.6.1)(jsdom@27.1.0))':
     dependencies:
-      effect: 3.19.5
-      fast-check: 3.23.2
-
-  '@effect/vitest@0.27.0(effect@3.19.5)(vitest@4.0.8(@types/node@24.10.0)(jiti@2.6.1)(jsdom@27.1.0))':
-    dependencies:
-      effect: 3.19.5
+      effect: 3.19.6
       vitest: 4.0.8(@types/node@24.10.0)(jiti@2.6.1)(jsdom@27.1.0)
 
   '@emnapi/core@1.7.0':
@@ -3267,7 +3253,7 @@ snapshots:
     dependencies:
       readable-stream: 2.3.8
 
-  effect@3.19.5:
+  effect@3.19.6:
     dependencies:
       '@standard-schema/spec': 1.0.0
       fast-check: 3.23.2

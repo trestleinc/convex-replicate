@@ -1,4 +1,5 @@
 import { Effect, Context, Layer, Ref } from 'effect';
+import type { SyncSystemError } from './errors.js';
 
 export type ConnectionStateValue =
   | { readonly _tag: 'Disconnected' }
@@ -26,6 +27,12 @@ export const ConnectionState = {
   }),
 };
 
+export interface ConnectionHandlers {
+  onOnline?: () => Effect.Effect<void, SyncSystemError>;
+  onOffline?: () => Effect.Effect<void, SyncSystemError>;
+  onVisibilityChange?: (visible: boolean) => Effect.Effect<void, SyncSystemError>;
+}
+
 export class ConnectionService extends Context.Tag('ConnectionService')<
   ConnectionService,
   {
@@ -34,6 +41,7 @@ export class ConnectionService extends Context.Tag('ConnectionService')<
     readonly setState: (state: ConnectionStateValue) => Effect.Effect<void>;
     readonly isConnected: Effect.Effect<boolean>;
     readonly waitForConnection: Effect.Effect<void>;
+    readonly startMonitoring: (handlers?: ConnectionHandlers) => Effect.Effect<() => void, never>;
   }
 >() {}
 
@@ -79,6 +87,83 @@ export const ConnectionServiceLive = Layer.effect(
           ).pipe(Effect.timeout('30 seconds'), Effect.orDie)
         );
       }),
+
+      startMonitoring: (handlers) =>
+        Effect.sync(() => {
+          if (typeof window === 'undefined') {
+            return () => {};
+          }
+
+          const cleanupFns: Array<() => void> = [];
+
+          // Online event
+          const handleOnline = () => {
+            Effect.runPromise(
+              Effect.gen(function* (_) {
+                yield* _(Ref.set(stateRef, ConnectionState.Connected(Date.now())));
+                yield* _(Effect.logInfo('Network online detected'));
+                if (handlers?.onOnline) {
+                  yield* _(handlers.onOnline());
+                }
+              }).pipe(
+                Effect.catchAllCause((cause) => Effect.logError('Online handler error', { cause }))
+              )
+            );
+          };
+
+          // Offline event
+          const handleOffline = () => {
+            Effect.runPromise(
+              Effect.gen(function* (_) {
+                yield* _(Ref.set(stateRef, ConnectionState.Disconnected()));
+                yield* _(Effect.logWarning('Network offline detected'));
+                if (handlers?.onOffline) {
+                  yield* _(handlers.onOffline());
+                }
+              }).pipe(
+                Effect.catchAllCause((cause) => Effect.logError('Offline handler error', { cause }))
+              )
+            );
+          };
+
+          // Visibility change
+          const handleVisibilityChange = () => {
+            const isVisible = document.visibilityState === 'visible';
+            Effect.runPromise(
+              Effect.gen(function* (_) {
+                yield* _(
+                  Effect.logDebug('Visibility changed', {
+                    visible: isVisible,
+                  })
+                );
+                if (handlers?.onVisibilityChange) {
+                  yield* _(handlers.onVisibilityChange(isVisible));
+                }
+              }).pipe(
+                Effect.catchAllCause((cause) =>
+                  Effect.logError('Visibility change handler error', { cause })
+                )
+              )
+            );
+          };
+
+          window.addEventListener('online', handleOnline);
+          window.addEventListener('offline', handleOffline);
+          document.addEventListener('visibilitychange', handleVisibilityChange);
+
+          cleanupFns.push(() => window.removeEventListener('online', handleOnline));
+          cleanupFns.push(() => window.removeEventListener('offline', handleOffline));
+          cleanupFns.push(() =>
+            document.removeEventListener('visibilitychange', handleVisibilityChange)
+          );
+
+          // Return cleanup function
+          return () => {
+            for (const cleanup of cleanupFns) {
+              cleanup();
+            }
+          };
+        }),
     });
   })
 );

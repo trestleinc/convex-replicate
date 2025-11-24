@@ -3,7 +3,7 @@ import { IDBService } from './IDBService';
 import type { IDBError, IDBWriteError } from '../errors';
 import * as Y from 'yjs';
 
-class YjsError extends Data.TaggedError('YjsError')<{
+export class YjsError extends Data.TaggedError('YjsError')<{
   operation: string;
   cause: unknown;
 }> {}
@@ -20,6 +20,12 @@ export class YjsService extends Context.Tag('YjsService')<
       origin?: string,
       transact?: boolean
     ) => Effect.Effect<void, YjsError>;
+    readonly getMap: <T = unknown>(doc: Y.Doc, name: string) => Effect.Effect<Y.Map<T>, never>;
+    readonly transact: <A>(doc: Y.Doc, fn: () => A, origin?: string) => Effect.Effect<A, never>;
+    readonly observeUpdates: (
+      doc: Y.Doc,
+      handler: (update: Uint8Array, origin: any) => void
+    ) => Effect.Effect<() => void, never>;
   }
 >() {}
 
@@ -98,6 +104,29 @@ export const YjsServiceLive = Layer.effect(
             )
           )
         ),
+
+      getMap: (doc, name) =>
+        Effect.sync(() => {
+          return doc.getMap(name);
+        }),
+
+      transact: (doc, fn, origin) =>
+        Effect.sync(() => {
+          return doc.transact(fn, origin);
+        }),
+
+      observeUpdates: (doc, handler) =>
+        Effect.sync(() => {
+          const wrappedHandler = (update: Uint8Array, origin: any) => {
+            handler(update, origin);
+          };
+          (doc as any).on('updateV2', wrappedHandler);
+
+          // Return cleanup function
+          return () => {
+            (doc as any).off('updateV2', wrappedHandler);
+          };
+        }),
     });
   })
 );

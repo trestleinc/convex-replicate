@@ -322,12 +322,6 @@ packages:
     peerDependencies:
       effect: ^3.19.4
 
-  '@effect/schema@0.75.5':
-    resolution: {integrity: sha512-TQInulTVCuF+9EIbJpyLP6dvxbQJMphrnRqgexm/Ze39rSjfhJuufF7XvU3SxTgg3HnL7B/kpORTJbHhlE6thw==}
-    deprecated: this package has been merged into the main effect package
-    peerDependencies:
-      effect: ^3.9.2
-
   '@esbuild/aix-ppc64@0.25.12':
     resolution: {integrity: sha512-Hhmwd6CInZ3dwpuGTF8fJG6yoWmsToE+vYgD4nytZVxcu1ulHpUQRAB1UJ8+N1Am3Mz4+xOByoQoSZf4D+CpkA==}
     engines: {node: '>=18'}
@@ -1561,8 +1555,8 @@ packages:
   domutils@3.2.2:
     resolution: {integrity: sha512-6kZKyUajlDuqlHKVX1w7gyslj9MPIXzIFiz/rGu35uC1wMi+kMhQwGhl4lt9unC9Vb9INnY9Z3/ZA3+FhASLaw==}
 
-  effect@3.19.5:
-    resolution: {integrity: sha512-P/Yml/wuqfIWVg4EH3QWKEqe4txwZVa9tCnlp24mRtIxN/wbn27KLOuDyF0HcKuMYsX/SGw8Lxe0T0Y6q4tvBA==}
+  effect@3.19.6:
+    resolution: {integrity: sha512-Eh1E/CI+xCAcMSDC5DtyE29yWJINC0zwBbwHappQPorjKyS69rCA8qzpsHpfhKnPDYgxdg8zkknii8mZ+6YMQA==}
 
   electron-to-chromium@1.5.245:
     resolution: {integrity: sha512-rdmGfW47ZhL/oWEJAY4qxRtdly2B98ooTJ0pdEI4jhVLZ6tNf8fPtov2wS1IRKwFJT92le3x4Knxiwzl7cPPpQ==}
@@ -2598,17 +2592,12 @@ snapshots:
 
   '@csstools/css-tokenizer@3.0.4': {}
 
-  '@effect/platform@0.93.3(effect@3.19.5)':
+  '@effect/platform@0.93.3(effect@3.19.6)':
     dependencies:
-      effect: 3.19.5
+      effect: 3.19.6
       find-my-way-ts: 0.1.6
       msgpackr: 1.11.5
       multipasta: 0.2.7
-
-  '@effect/schema@0.75.5(effect@3.19.5)':
-    dependencies:
-      effect: 3.19.5
-      fast-check: 3.23.2
 
   '@esbuild/aix-ppc64@0.25.12':
     optional: true
@@ -3471,13 +3460,12 @@ snapshots:
 
   '@trestleinc/replicate@file:../..(@tanstack/db@0.4.20(typescript@5.9.3))(convex@1.28.2(react@19.2.0))':
     dependencies:
-      '@effect/platform': 0.93.3(effect@3.19.5)
-      '@effect/schema': 0.75.5(effect@3.19.5)
+      '@effect/platform': 0.93.3(effect@3.19.6)
       '@logtape/logtape': 1.1.2
       '@tanstack/db': 0.4.20(typescript@5.9.3)
       '@tanstack/offline-transactions': 0.1.3(@tanstack/db@0.4.20(typescript@5.9.3))
       convex: 1.28.2(react@19.2.0)
-      effect: 3.19.5
+      effect: 3.19.6
       idb-keyval: 6.2.2
       y-indexeddb: 9.0.12(yjs@13.6.27)
       yjs: 13.6.27
@@ -3779,7 +3767,7 @@ snapshots:
       domelementtype: 2.3.0
       domhandler: 5.0.3
 
-  effect@3.19.5:
+  effect@3.19.6:
     dependencies:
       '@standard-schema/spec': 1.0.0
       fast-check: 3.23.2
