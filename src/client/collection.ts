@@ -14,7 +14,6 @@ import { ensureSet } from './set.js';
 import {
   CheckpointService,
   CheckpointServiceLive,
-  YjsService,
   YjsServiceLive,
   SubscriptionService,
   SubscriptionServiceLive,
@@ -419,7 +418,6 @@ export function convexCollectionOptions<T extends object>({
         // Initialize subscription and monitoring variables
         let subscription: (() => void) | null = null;
         let connectionMonitor: (() => void) | null = null;
-        let currentCheckpoint: { lastModified: number } | null = null;
 
         // Declare SSR variables
         let ssrDocuments: ReadonlyArray<T> | undefined;
@@ -521,9 +519,6 @@ export function convexCollectionOptions<T extends object>({
               }).pipe(Effect.provide(checkpointLayer))
             );
 
-            // Store checkpoint for reconnection
-            currentCheckpoint = checkpoint;
-
             // Define subscription handler as Effect program
             const subscriptionHandler = (response: any) =>
               Effect.gen(function* () {
@@ -576,7 +571,6 @@ export function convexCollectionOptions<T extends object>({
                 }
 
                 // Save checkpoint
-                currentCheckpoint = newCheckpoint;
                 yield* checkpointSvc.saveCheckpoint(collection, newCheckpoint);
               }).pipe(Effect.provide(servicesLayer));
 
@@ -613,7 +607,6 @@ export function convexCollectionOptions<T extends object>({
 
                       // Load latest checkpoint
                       const latestCheckpoint = yield* checkpointSvc.loadCheckpoint(collection);
-                      currentCheckpoint = latestCheckpoint;
 
                       // Recreate subscription with latest checkpoint - ONE LINE!
                       yield* subscriptionSvc.recreate(latestCheckpoint);
