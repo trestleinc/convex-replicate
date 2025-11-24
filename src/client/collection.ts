@@ -122,13 +122,20 @@ export function convexCollectionOptions<T extends object>({
   });
   let syncParams: any = null;
 
-  const reconcile = async (): Promise<void> => {
-    if (!api.material) {
-      return;
-    }
+  const reconcile = () =>
+    Effect.gen(function* () {
+      if (!api.material) {
+        return;
+      }
 
-    try {
-      const serverResponse = await convexClient.query(api.material, {});
+      const optimistic = yield* OptimisticService;
+
+      // Wrap Convex query in Effect
+      const serverResponse = yield* Effect.tryPromise({
+        try: () => convexClient.query(api.material!, {}),
+        catch: (error) => new Error(`Reconciliation query failed: ${error}`),
+      });
+
       const serverDocs = Array.isArray(serverResponse)
         ? serverResponse
         : ((serverResponse as any).documents as T[] | undefined) || [];
@@ -142,11 +149,11 @@ export function convexCollectionOptions<T extends object>({
       });
 
       if (toRemove.length > 0) {
-        const removedItems: Array<{ key: string; item: T }> = [];
+        const removedItems: T[] = [];
         for (const key of toRemove) {
           const itemYMap = ymap.get(key);
           if (itemYMap instanceof Y.Map) {
-            removedItems.push({ key, item: itemYMap.toJSON() as T });
+            removedItems.push(itemYMap.toJSON() as T);
           }
         }
 
@@ -157,30 +164,24 @@ export function convexCollectionOptions<T extends object>({
           }
         }, 'reconciliation');
 
-        // Sync removals to TanStack DB using captured data
-        if (removedItems.length > 0 && syncParams) {
-          const { begin, write, commit } = syncParams;
-          try {
-            begin();
-            for (const { item } of removedItems) {
-              write({ type: 'delete', value: item });
-            }
-            commit();
-          } catch (error) {
-            logger.error('Reconciliation: failed to remove from TanStack DB', {
-              collection,
-              error,
-            });
-          }
-        }
+        // Use OptimisticService for TanStack DB!
+        yield* optimistic.delete(removedItems);
+
+        yield* Effect.logInfo('Reconciliation completed', {
+          collection,
+          removedCount: removedItems.length,
+        });
       }
-    } catch (error) {
-      logger.error('Reconciliation failed', {
-        collection,
-        error,
-      });
-    }
-  };
+    }).pipe(
+      Effect.catchAll((error) =>
+        Effect.gen(function* () {
+          yield* Effect.logError('Reconciliation failed', {
+            collection,
+            error,
+          });
+        })
+      )
+    );
 
   // Helper: Apply Yjs transaction for insert operations
   const applyYjsInsert = (mutations: any[]) =>
@@ -504,7 +505,7 @@ export function convexCollectionOptions<T extends object>({
               commit();
             }
 
-            await reconcile();
+            await Effect.runPromise(reconcile().pipe(Effect.provide(servicesLayer)));
 
             // Load checkpoint
             // If we have SSR data (docs.length > 0), start from checkpoint 0
