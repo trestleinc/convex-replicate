@@ -22,6 +22,9 @@ import {
   OptimisticServiceLive,
   ConnectionService,
   ConnectionServiceLive,
+  ReconciliationService,
+  ReconciliationServiceLive,
+  SnapshotServiceLive,
   IDBServiceLive,
 } from './services/index.js';
 
@@ -29,12 +32,19 @@ const logger = getLogger(['convex-replicate', 'collection']);
 
 // Create unified services layer with proper dependency resolution
 // YjsServiceLive and CheckpointServiceLive depend on IDBServiceLive
+// ReconciliationServiceLive depends on YjsServiceLive
+// SnapshotServiceLive depends on YjsServiceLive and CheckpointServiceLive
+const yjsLayer = Layer.provide(YjsServiceLive, IDBServiceLive);
+const checkpointLayer = Layer.provide(CheckpointServiceLive, IDBServiceLive);
+
 const servicesLayer = Layer.mergeAll(
   OptimisticServiceLive,
   SubscriptionServiceLive,
   ConnectionServiceLive,
-  Layer.provide(YjsServiceLive, IDBServiceLive),
-  Layer.provide(CheckpointServiceLive, IDBServiceLive)
+  yjsLayer,
+  checkpointLayer,
+  Layer.provide(ReconciliationServiceLive, yjsLayer),
+  Layer.provide(SnapshotServiceLive, Layer.merge(yjsLayer, checkpointLayer))
 );
 
 export { OperationType } from '../component/shared.js';
@@ -103,60 +113,57 @@ export function convexCollectionOptions<T extends object>({
   let ydoc: Y.Doc = null as any; // Initialized before mutation handlers can be called
   let ymap: Y.Map<unknown> = null as any;
   let persistence: IndexeddbPersistence = null as any;
-  let persistenceReadyPromise: Promise<void> = null as any;
-  let pendingUpdate: Uint8Array | null = null;
   let updateObserverCleanup: (() => void) | null = null;
-  let syncParams: any = null;
 
+  // Create deferred promises immediately - never null to avoid race conditions
+  // These are resolved by the sync function after initialization completes
+  let resolvePersistenceReady: (() => void) | undefined;
+  const persistenceReadyPromise = new Promise<void>((resolve) => {
+    resolvePersistenceReady = resolve;
+  });
+
+  let resolveOptimisticReady: (() => void) | undefined;
+  const optimisticReadyPromise = new Promise<void>((resolve) => {
+    resolveOptimisticReady = resolve;
+  });
+
+  // Queue of pending Yjs updates to handle rapid concurrent mutations
+  // Each mutation handler pushes an update, then shifts it for sending to Convex
+  const pendingUpdates: Uint8Array[] = [];
+
+  // Reconciliation function that uses ReconciliationService
   const reconcile = () =>
     Effect.gen(function* () {
       if (!api.material) {
         return;
       }
 
+      const materialApi = api.material;
       const optimistic = yield* OptimisticService;
+      const reconciliation = yield* ReconciliationService;
 
       // Wrap Convex query in Effect
       const serverResponse = yield* Effect.tryPromise({
-        try: () => convexClient.query(api.material!, {}),
+        try: () => convexClient.query(materialApi, {}),
         catch: (error) => new Error(`Reconciliation query failed: ${error}`),
       });
 
       const serverDocs = Array.isArray(serverResponse)
         ? serverResponse
         : ((serverResponse as any).documents as T[] | undefined) || [];
-      const serverDocIds = new Set(serverDocs.map((doc) => String(getKey(doc))));
 
-      const toRemove: string[] = [];
-      ymap.forEach((_itemYMap, key) => {
-        if (!serverDocIds.has(key)) {
-          toRemove.push(key);
-        }
-      });
+      // Use ReconciliationService to handle phantom document removal
+      const removedItems = yield* reconciliation.reconcile(
+        ydoc,
+        ymap,
+        collection,
+        serverDocs,
+        (doc: T) => String(getKey(doc))
+      );
 
-      if (toRemove.length > 0) {
-        const removedItems: T[] = [];
-        for (const key of toRemove) {
-          const itemYMap = ymap.get(key);
-          if (itemYMap instanceof Y.Map) {
-            removedItems.push(itemYMap.toJSON() as T);
-          }
-        }
-
-        // Remove from Yjs
-        ydoc.transact(() => {
-          for (const key of toRemove) {
-            ymap.delete(key);
-          }
-        }, 'reconciliation');
-
-        // Use OptimisticService for TanStack DB!
+      // Sync deletions to TanStack DB via OptimisticService
+      if (removedItems.length > 0) {
         yield* optimistic.delete(removedItems);
-
-        yield* Effect.logInfo('Reconciliation completed', {
-          collection,
-          removedCount: removedItems.length,
-        });
       }
     }).pipe(
       Effect.catchAll((error) =>
@@ -171,55 +178,73 @@ export function convexCollectionOptions<T extends object>({
 
   // Helper: Apply Yjs transaction for insert operations
   const applyYjsInsert = (mutations: any[]) =>
-    Effect.sync(() => {
-      ydoc.transact(() => {
-        mutations.forEach((mut: any) => {
-          const itemYMap = new Y.Map();
-          Object.entries(mut.modified as Record<string, unknown>).forEach(([k, v]) => {
-            itemYMap.set(k, v);
+    Effect.gen(function* () {
+      const yjs = yield* YjsService;
+
+      yield* yjs.transact(
+        ydoc,
+        () => {
+          mutations.forEach((mut: any) => {
+            const itemYMap = new Y.Map(); // Data structure - can't abstract
+            Object.entries(mut.modified as Record<string, unknown>).forEach(([k, v]) => {
+              itemYMap.set(k, v);
+            });
+            ymap.set(String(mut.key), itemYMap);
           });
-          ymap.set(String(mut.key), itemYMap);
-        });
-      }, YjsOrigin.Insert);
-    });
+        },
+        YjsOrigin.Insert
+      );
+    }).pipe(Effect.provide(servicesLayer));
 
   // Helper: Apply Yjs transaction for update operations
   const applyYjsUpdate = (mutations: any[]) =>
-    Effect.sync(() => {
-      ydoc.transact(() => {
-        mutations.forEach((mut: any) => {
-          const itemYMap = ymap.get(String(mut.key)) as Y.Map<any> | undefined;
-          if (itemYMap) {
-            const modifiedFields = mut.modified as Record<string, unknown>;
-            if (!modifiedFields) {
-              logger.warn('mut.modified is null/undefined', {
+    Effect.gen(function* () {
+      const yjs = yield* YjsService;
+
+      yield* yjs.transact(
+        ydoc,
+        () => {
+          mutations.forEach((mut: any) => {
+            const itemYMap = ymap.get(String(mut.key)) as Y.Map<any> | undefined;
+            if (itemYMap) {
+              const modifiedFields = mut.modified as Record<string, unknown>;
+              if (!modifiedFields) {
+                logger.warn('mut.modified is null/undefined', {
+                  collection,
+                  key: String(mut.key),
+                });
+                return;
+              }
+              Object.entries(modifiedFields).forEach(([k, v]) => {
+                itemYMap.set(k, v);
+              });
+            } else {
+              logger.error('Update attempted on non-existent item - skipping', {
                 collection,
                 key: String(mut.key),
               });
-              return;
             }
-            Object.entries(modifiedFields).forEach(([k, v]) => {
-              itemYMap.set(k, v);
-            });
-          } else {
-            logger.error('Update attempted on non-existent item - skipping', {
-              collection,
-              key: String(mut.key),
-            });
-          }
-        });
-      }, YjsOrigin.Update);
-    });
+          });
+        },
+        YjsOrigin.Update
+      );
+    }).pipe(Effect.provide(servicesLayer));
 
   // Helper: Apply Yjs transaction for delete operations
   const applyYjsDelete = (mutations: any[]) =>
-    Effect.sync(() => {
-      ydoc.transact(() => {
-        mutations.forEach((mut: any) => {
-          ymap.delete(String(mut.key));
-        });
-      }, YjsOrigin.Remove);
-    });
+    Effect.gen(function* () {
+      const yjs = yield* YjsService;
+
+      yield* yjs.transact(
+        ydoc,
+        () => {
+          mutations.forEach((mut: any) => {
+            ymap.delete(String(mut.key));
+          });
+        },
+        YjsOrigin.Remove
+      );
+    }).pipe(Effect.provide(servicesLayer));
 
   return {
     id: collection,
@@ -232,17 +257,18 @@ export function convexCollectionOptions<T extends object>({
     // REAL onInsert handler (called automatically by TanStack DB)
     onInsert: async ({ transaction }: any) => {
       try {
-        await Promise.all([setPromise, persistenceReadyPromise]);
+        await Promise.all([setPromise, persistenceReadyPromise, optimisticReadyPromise]);
 
         // Update Yjs in transaction using helper
         await Effect.runPromise(applyYjsInsert(transaction.mutations));
 
-        // Send DELTA to Convex
-        if (pendingUpdate) {
+        // Send DELTA to Convex - shift from queue to get this operation's update
+        const update = pendingUpdates.shift();
+        if (update) {
           const documentKey = String(transaction.mutations[0].key);
           const mutationArgs: any = {
             documentId: documentKey,
-            crdtBytes: pendingUpdate.slice().buffer,
+            crdtBytes: update.slice().buffer,
             materializedDoc: transaction.mutations[0].modified,
             version: Date.now(),
           };
@@ -252,7 +278,6 @@ export function convexCollectionOptions<T extends object>({
           }
 
           await convexClient.mutation(api.insert, mutationArgs);
-          pendingUpdate = null;
         }
       } catch (error: any) {
         logger.error('Insert failed', {
@@ -278,20 +303,21 @@ export function convexCollectionOptions<T extends object>({
     onUpdate: async ({ transaction }: any) => {
       try {
         // Wait for BOTH initialization AND IndexedDB persistence
-        await Promise.all([setPromise, persistenceReadyPromise]);
+        await Promise.all([setPromise, persistenceReadyPromise, optimisticReadyPromise]);
 
         // Update Yjs in transaction using helper
         await Effect.runPromise(applyYjsUpdate(transaction.mutations));
 
-        // Send delta to Convex
-        if (pendingUpdate) {
+        // Send delta to Convex - shift from queue to get this operation's update
+        const update = pendingUpdates.shift();
+        if (update) {
           const documentKey = String(transaction.mutations[0].key);
           const itemYMap = ymap.get(documentKey) as Y.Map<any>;
           const fullDoc = itemYMap ? itemYMap.toJSON() : transaction.mutations[0].modified;
 
           const mutationArgs: any = {
             documentId: documentKey,
-            crdtBytes: pendingUpdate.slice().buffer,
+            crdtBytes: update.slice().buffer,
             materializedDoc: fullDoc,
             version: Date.now(),
           };
@@ -301,9 +327,8 @@ export function convexCollectionOptions<T extends object>({
           }
 
           await convexClient.mutation(api.update, mutationArgs);
-          pendingUpdate = null;
         } else {
-          logger.warn('pendingUpdate is null - no delta to send', {
+          logger.warn('pendingUpdates queue is empty - no delta to send', {
             collection,
           });
         }
@@ -329,7 +354,7 @@ export function convexCollectionOptions<T extends object>({
     // onDelete handler (called when user does collection.delete())
     onDelete: async ({ transaction }: any) => {
       try {
-        await Promise.all([setPromise, persistenceReadyPromise]);
+        await Promise.all([setPromise, persistenceReadyPromise, optimisticReadyPromise]);
 
         // Apply Yjs delete and sync to TanStack DB using services
         await Effect.runPromise(
@@ -345,12 +370,13 @@ export function convexCollectionOptions<T extends object>({
           }).pipe(Effect.provide(servicesLayer))
         );
 
-        // Send deletion DELTA to Convex (mutation handler's job)
-        if (pendingUpdate) {
+        // Send deletion DELTA to Convex - shift from queue to get this operation's update
+        const update = pendingUpdates.shift();
+        if (update) {
           const documentKey = String(transaction.mutations[0].key);
           const mutationArgs: any = {
             documentId: documentKey,
-            crdtBytes: pendingUpdate.slice().buffer,
+            crdtBytes: update.slice().buffer,
             version: Date.now(),
           };
 
@@ -359,7 +385,6 @@ export function convexCollectionOptions<T extends object>({
           }
 
           await convexClient.mutation(api.remove, mutationArgs);
-          pendingUpdate = null;
         }
       } catch (error: any) {
         logger.error('Delete operation failed', {
@@ -393,8 +418,7 @@ export function convexCollectionOptions<T extends object>({
           cleanupFunctions.delete(collection);
         }
 
-        // Store TanStack DB sync methods for snapshot restore
-        syncParams = params;
+        // TanStack DB sync methods stored in OptimisticService
 
         // Initialize subscription and monitoring variables
         let subscription: (() => void) | null = null;
@@ -432,14 +456,14 @@ export function convexCollectionOptions<T extends object>({
                 const doc = yield* yjs.createDocument(collection);
                 const map = yield* yjs.getMap<unknown>(doc, collection);
 
-                // Setup update observer
+                // Setup update observer - push to queue for concurrent mutation handling
                 const cleanup = yield* yjs.observeUpdates(doc, (update, origin) => {
                   if (
                     origin === YjsOrigin.Insert ||
                     origin === YjsOrigin.Update ||
                     origin === YjsOrigin.Remove
                   ) {
-                    pendingUpdate = update;
+                    pendingUpdates.push(update);
                   }
                 });
 
@@ -452,10 +476,9 @@ export function convexCollectionOptions<T extends object>({
             updateObserverCleanup = yjsResult.updateCleanup;
 
             // Setup persistence (imperative - y-indexeddb constraint)
+            // Resolve the deferred promise when persistence syncs
             persistence = new IndexeddbPersistence(collection, ydoc);
-            persistenceReadyPromise = new Promise<void>((resolve) => {
-              persistence.on('synced', resolve);
-            });
+            persistence.on('synced', () => resolvePersistenceReady?.());
 
             await persistenceReadyPromise;
 
@@ -466,9 +489,17 @@ export function convexCollectionOptions<T extends object>({
                 yield* optimistic.initialize(params);
               }).pipe(Effect.provide(servicesLayer))
             );
+
+            // Signal that OptimisticService is ready
+            resolveOptimisticReady?.();
             if (ssrCRDTBytes) {
               // Apply CRDT bytes to Yjs (preserves original Item IDs)
-              Y.applyUpdateV2(ydoc, new Uint8Array(ssrCRDTBytes), YjsOrigin.SSRInit);
+              await Effect.runPromise(
+                Effect.gen(function* () {
+                  const yjs = yield* YjsService;
+                  yield* yjs.applyUpdate(ydoc, new Uint8Array(ssrCRDTBytes), YjsOrigin.SSRInit);
+                }).pipe(Effect.provide(servicesLayer))
+              );
 
               // Save checkpoint so subscription starts from correct point
               if (ssrCheckpoint) {
@@ -481,23 +512,32 @@ export function convexCollectionOptions<T extends object>({
               }
             }
             if (ssrDocuments && ssrDocuments.length > 0) {
-              ydoc.transact(() => {
-                for (const item of ssrDocuments) {
-                  const key = String(getKey(item));
+              await Effect.runPromise(
+                Effect.gen(function* () {
+                  const yjs = yield* YjsService;
+                  yield* yjs.transact(
+                    ydoc,
+                    () => {
+                      for (const item of ssrDocuments) {
+                        const key = String(getKey(item));
 
-                  // Get existing Y.Map or create new one
-                  let itemYMap = ymap.get(key) as Y.Map<unknown> | undefined;
-                  if (!itemYMap) {
-                    itemYMap = new Y.Map();
-                    ymap.set(key, itemYMap);
-                  }
+                        // Get existing Y.Map or create new one
+                        let itemYMap = ymap.get(key) as Y.Map<unknown> | undefined;
+                        if (!itemYMap) {
+                          itemYMap = new Y.Map();
+                          ymap.set(key, itemYMap);
+                        }
 
-                  // CRDT merge: Update all fields from SSR data
-                  Object.entries(item as Record<string, unknown>).forEach(([k, v]) => {
-                    itemYMap.set(k, v);
-                  });
-                }
-              }, YjsOrigin.SSRInit);
+                        // CRDT merge: Update all fields from SSR data
+                        Object.entries(item as Record<string, unknown>).forEach(([k, v]) => {
+                          itemYMap.set(k, v);
+                        });
+                      }
+                    },
+                    YjsOrigin.SSRInit
+                  );
+                }).pipe(Effect.provide(servicesLayer))
+              );
             }
 
             if (ymap.size > 0) {
@@ -543,6 +583,7 @@ export function convexCollectionOptions<T extends object>({
               Effect.gen(function* () {
                 const optimistic = yield* OptimisticService;
                 const checkpointSvc = yield* CheckpointService;
+                const yjs = yield* YjsService;
 
                 const { changes, checkpoint: newCheckpoint } = response;
 
@@ -550,8 +591,8 @@ export function convexCollectionOptions<T extends object>({
                   const { operationType, crdtBytes, documentId } = change;
 
                   if (operationType === 'snapshot') {
-                    // Apply snapshot to Yjs
-                    Y.applyUpdateV2(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Snapshot);
+                    // Apply snapshot to Yjs using YjsService
+                    yield* yjs.applyUpdate(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Snapshot);
 
                     // Replace all data in TanStack DB
                     const items: T[] = [];
@@ -571,8 +612,8 @@ export function convexCollectionOptions<T extends object>({
                       }
                     }
 
-                    // Apply delta to Yjs
-                    Y.applyUpdateV2(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Subscription);
+                    // Apply delta to Yjs using YjsService
+                    yield* yjs.applyUpdate(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Subscription);
 
                     // Sync affected document to TanStack DB
                     if (documentId) {

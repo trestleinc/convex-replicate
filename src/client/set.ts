@@ -1,6 +1,12 @@
 import type { ConvexClient } from 'convex/browser';
 import type { FunctionReference } from 'convex/server';
-import { getStoredProtocolVersion, migrateLocalStorage, storeProtocolVersion } from './protocol.js';
+import { Effect, Layer } from 'effect';
+import {
+  ProtocolService,
+  ProtocolServiceLive,
+  ensureProtocolVersion,
+} from './services/ProtocolService.js';
+import { IDBServiceLive } from './services/IDBService.js';
 import { getLogger } from './logger.js';
 
 const logger = getLogger(['convex-replicate', 'set']);
@@ -21,37 +27,21 @@ export async function setReplicate(options: SetOptions): Promise<void> {
   logger.info('Setting up Replicate client');
 
   try {
-    // Step 1: Get server protocol version
-    const serverVersion = await getServerProtocolVersion(convexClient, api);
-    logger.debug('Server protocol version', { version: serverVersion });
-
-    // Step 2: Get locally stored version
-    const localVersion = await getStoredProtocolVersion();
-    logger.debug('Local protocol version', { version: localVersion });
-
-    // Step 3: Check if migration is needed
-    if (serverVersion < localVersion) {
-      logger.warn('Server protocol version is older than local version', {
-        serverVersion,
-        localVersion,
-      });
-      // This is unusual but not necessarily an error - could be rolling back
-      // We'll store the server version but won't "downgrade"
-    } else if (serverVersion > localVersion) {
-      logger.info('Protocol upgrade detected, running migration', {
-        from: localVersion,
-        to: serverVersion,
-      });
-
-      // Step 4: Run migration if needed
-      await migrateLocalStorage(localVersion, serverVersion);
-    } else {
-      logger.debug('Protocol versions match, no migration needed');
+    if (!api?.protocol) {
+      throw new Error(
+        'No protocol version endpoint provided. Add a protocol query wrapper in your Convex app:\n\n' +
+          'export const protocol = query({\n  handler: async (ctx) => {\n    return await ctx.runQuery(components.replicate.public.protocol);\n  },\n});\n\n' +
+          'Then pass it to setReplicate:\n' +
+          'await setReplicate({ convexClient, api: { protocol: api.replicate.protocol } });'
+      );
     }
 
-    // Step 5: Store the current version
-    await storeProtocolVersion(serverVersion);
-    logger.info('Replicate setup complete', { version: serverVersion });
+    // Use ProtocolService via ensureProtocolVersion (Effect-based)
+    const version = await Effect.runPromise(
+      ensureProtocolVersion(convexClient, { getProtocolVersion: api.protocol })
+    );
+
+    logger.info('Replicate setup complete', { version });
   } catch (error) {
     logger.error('Failed to set up Replicate', { error });
     throw new Error(
@@ -96,27 +86,6 @@ export function resetSetState(): void {
   logger.debug('Set state reset');
 }
 
-async function getServerProtocolVersion(
-  convexClient: ConvexClient,
-  api?: SetOptions['api']
-): Promise<number> {
-  try {
-    if (api?.protocol) {
-      const result = await convexClient.query(api.protocol, {});
-      return result.protocolVersion;
-    }
-
-    throw new Error(
-      'No protocol version endpoint provided. Add a protocol query wrapper in your Convex app:\n\n' +
-        'export const protocol = query({\n  handler: async (ctx) => {\n    return await ctx.runQuery(components.replicate.public.protocol);\n  },\n});\n\n' +
-        'Then pass it to setReplicate:\n' +
-        'await setReplicate({ convexClient, api: { protocol: api.replicate.protocol } });'
-    );
-  } catch (error) {
-    logger.error('Failed to get server protocol version', { error });
-    throw error;
-  }
-}
 export async function getProtocolInfo(
   convexClient: ConvexClient,
   api?: SetOptions['api']
@@ -126,8 +95,24 @@ export async function getProtocolInfo(
   needsMigration: boolean;
 }> {
   try {
-    const serverVersion = await getServerProtocolVersion(convexClient, api);
-    const localVersion = await getStoredProtocolVersion();
+    if (!api?.protocol) {
+      throw new Error('Protocol API endpoint required for getProtocolInfo');
+    }
+
+    // Use ProtocolService for consistent storage access
+    const protocolLayer = Layer.provide(
+      ProtocolServiceLive(convexClient, { protocol: api.protocol }),
+      IDBServiceLive
+    );
+
+    const { serverVersion, localVersion } = await Effect.runPromise(
+      Effect.gen(function* () {
+        const protocol = yield* ProtocolService;
+        const server = yield* protocol.getServerVersion();
+        const local = yield* protocol.getStoredVersion();
+        return { serverVersion: server, localVersion: local };
+      }).pipe(Effect.provide(protocolLayer))
+    );
 
     return {
       serverVersion,
@@ -140,8 +125,21 @@ export async function getProtocolInfo(
   }
 }
 
-export async function resetProtocolStorage(): Promise<void> {
-  const { clearProtocolStorage } = await import('./protocol.js');
-  await clearProtocolStorage();
+export async function resetProtocolStorage(
+  convexClient: ConvexClient,
+  api: { protocol: FunctionReference<'query'> }
+): Promise<void> {
+  const protocolLayer = Layer.provide(
+    ProtocolServiceLive(convexClient, { protocol: api.protocol }),
+    IDBServiceLive
+  );
+
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const protocol = yield* ProtocolService;
+      yield* protocol.clearStorage();
+    }).pipe(Effect.provide(protocolLayer))
+  );
+
   logger.info('Protocol storage reset');
 }

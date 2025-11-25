@@ -1,16 +1,32 @@
 import { Effect, Context, Layer } from 'effect';
+import * as Y from 'yjs';
 import { YjsService } from './YjsService';
 import { ReconciliationError as ReconciliationErrorImport } from '../errors';
 
+/**
+ * ReconciliationService handles removal of phantom documents -
+ * documents that exist locally but have been deleted on the server.
+ */
 export class ReconciliationService extends Context.Tag('ReconciliationService')<
   ReconciliationService,
   {
+    /**
+     * Reconciles local Yjs state with server state by removing phantom documents.
+     * Uses an existing Yjs document and map instead of creating new ones.
+     *
+     * @param ydoc - Existing Yjs document
+     * @param ymap - Existing Yjs map within the document
+     * @param collection - Collection name for logging
+     * @param serverDocs - Documents from server
+     * @param getKey - Function to extract key from document
+     */
     readonly reconcile: <T>(
+      ydoc: Y.Doc,
+      ymap: Y.Map<unknown>,
       collection: string,
       serverDocs: readonly T[],
-      getKey: (doc: T) => string,
-      deleteFromTanStack: (keys: string[]) => Effect.Effect<void, never>
-    ) => Effect.Effect<void, ReconciliationErrorImport>;
+      getKey: (doc: T) => string
+    ) => Effect.Effect<T[], ReconciliationErrorImport>;
   }
 >() {}
 
@@ -20,50 +36,61 @@ export const ReconciliationServiceLive = Layer.effect(
     const yjs = yield* _(YjsService);
 
     return ReconciliationService.of({
-      reconcile: (collection, serverDocs, getKey, deleteFromTanStack) =>
+      reconcile: (ydoc, ymap, collection, serverDocs, getKey) =>
         Effect.gen(function* (_) {
-          yield* _(Effect.logInfo('Starting reconciliation', { collection }));
-
-          const ydoc = yield* _(yjs.createDocument(collection));
           const serverDocIds = new Set(serverDocs.map(getKey));
-          const ymap = ydoc.getMap(collection);
           const toDelete: string[] = [];
 
+          // Find phantom documents (exist locally but not on server)
           ymap.forEach((_, key) => {
             if (!serverDocIds.has(key)) {
               toDelete.push(key);
             }
           });
 
-          if (toDelete.length > 0) {
-            yield* _(
-              Effect.logWarning(`Found ${toDelete.length} phantom documents`, {
-                collection,
-                phantomDocs: toDelete.slice(0, 10), // Log first 10
-              })
-            );
-
-            yield* _(
-              Effect.sync(() => {
-                ydoc.transact(() => {
-                  for (const key of toDelete) {
-                    ymap.delete(key);
-                  }
-                }, 'reconciliation');
-              })
-            );
-
-            yield* _(deleteFromTanStack(toDelete));
-
-            yield* _(
-              Effect.logInfo('Reconciliation completed', {
-                collection,
-                deletedCount: toDelete.length,
-              })
-            );
-          } else {
+          if (toDelete.length === 0) {
             yield* _(Effect.logDebug('No phantom documents found', { collection }));
+            return [];
           }
+
+          yield* _(
+            Effect.logWarning(`Found ${toDelete.length} phantom documents`, {
+              collection,
+              phantomDocs: toDelete.slice(0, 10), // Log first 10
+            })
+          );
+
+          // Extract items before deletion for TanStack DB sync
+          const removedItems: any[] = [];
+          for (const key of toDelete) {
+            const itemYMap = ymap.get(key);
+            if (itemYMap instanceof Y.Map) {
+              removedItems.push(itemYMap.toJSON());
+            }
+          }
+
+          // Remove from Yjs using YjsService
+          yield* _(
+            yjs.transact(
+              ydoc,
+              () => {
+                for (const key of toDelete) {
+                  ymap.delete(key);
+                }
+              },
+              'reconciliation'
+            )
+          );
+
+          yield* _(
+            Effect.logInfo('Reconciliation completed', {
+              collection,
+              deletedCount: removedItems.length,
+            })
+          );
+
+          // Return removed items for TanStack DB sync
+          return removedItems;
         }).pipe(
           Effect.catchAll((cause) =>
             Effect.fail(

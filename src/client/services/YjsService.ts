@@ -130,12 +130,3 @@ export const YjsServiceLive = Layer.effect(
     });
   })
 );
-
-export const withYDoc = <A, E>(collection: string, f: (doc: Y.Doc) => Effect.Effect<A, E>) =>
-  Effect.gen(function* (_) {
-    const yjs = yield* _(YjsService);
-
-    return yield* _(
-      Effect.acquireUseRelease(yjs.createDocument(collection), f, (doc) => yjs.destroyDocument(doc))
-    );
-  });

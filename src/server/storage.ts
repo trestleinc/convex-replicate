@@ -217,6 +217,7 @@ export class Replicate<T extends object> {
           },
       returns: v.object({
         success: v.boolean(),
+        skipped: v.optional(v.boolean()),
         metadata: v.any(),
       }),
       handler: async (ctx, args) => {
@@ -249,13 +250,30 @@ export class Replicate<T extends object> {
           version: args.version,
         });
 
-        // 2. Update materialized doc in main table
+        // 2. Update materialized doc in main table with version conflict detection
         const existing = await ctx.db
           .query(collection)
           .filter((q) => q.eq(q.field('id'), args.documentId))
           .first();
 
         if (existing) {
+          // Version conflict detection: skip if server has newer or equal version
+          // This prevents lost updates from concurrent modifications
+          const clientVersion = args.version as number;
+          const serverVersion = (existing as any).version as number;
+          if (serverVersion >= clientVersion) {
+            return {
+              success: false,
+              skipped: true,
+              metadata: {
+                documentId: args.documentId,
+                serverVersion,
+                clientVersion,
+                collection,
+              },
+            };
+          }
+
           await ctx.db.patch(existing._id, {
             ...(args.materializedDoc as object),
             version: args.version,

@@ -6,14 +6,6 @@ export {
 } from './set.js';
 
 export {
-  getStoredProtocolVersion,
-  storeProtocolVersion,
-  migrateLocalStorage,
-  clearProtocolStorage,
-  getProtocolMetadata,
-} from './protocol.js';
-
-export {
   convexCollectionOptions,
   handleReconnect,
   type ConvexCollection,

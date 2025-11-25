@@ -4,12 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Important: Always Use Context7 for Library Documentation
 
-**CRITICAL**: When looking up documentation for any library (Yjs, Convex, TanStack, React, etc.), ALWAYS use the Context7 MCP tool. NEVER use WebSearch for library documentation.
-
-**Why:**
-- Context7 provides accurate, up-to-date documentation with code examples
-- WebSearch results can be outdated or incomplete
-- Context7 has better code snippet coverage for technical libraries
+**CRITICAL**: When looking up documentation for any library (Yjs, Convex, TanStack, Effect, etc.), ALWAYS use the Context7 MCP tool. NEVER use WebSearch for library documentation.
 
 **Usage pattern:**
 1. First resolve the library ID: `mcp__context7__resolve-library-id` with library name
@@ -19,641 +14,154 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **ConvexReplicate** (`@trestleinc/replicate`) - Offline-first data replication using Yjs CRDTs and Convex for automatic conflict resolution and real-time synchronization.
 
-This is a **single package** that provides:
-- Client-side utilities for browser/React/Svelte apps
-- Server-side replication helpers for Convex functions
-- SSR utilities for data preloading
-- Internal Convex component for CRDT storage (event-sourced architecture)
-
-## Package Structure
-
-**IMPORTANT:** This is a FLATTENED single-package architecture:
-
-```
-@trestleinc/replicate/
-├── src/
-│   ├── client/          # Client-side utilities (browser/React/Svelte)
-│   │   ├── index.ts     # Main exports (convexCollectionOptions, createConvexCollection)
-│   │   ├── collection.ts # TanStack DB + Yjs integration
-│   │   └── logger.ts    # LogTape logger
-│   ├── server/          # Server-side utilities (Convex functions)
-│   │   ├── index.ts     # Main exports (replication helpers, schema utilities)
-│   │   ├── builder.ts   # defineReplicate() builder
-│   │   ├── schema.ts    # replicatedTable() helper
-│   │   └── ssr.ts       # SSR data loading (loadCollection)
-│   └── component/       # Internal Convex component (event-sourced CRDT storage)
-│       ├── convex.config.ts # Component configuration
-│       ├── schema.ts    # Event log schema
-│       └── public.ts    # Component API (insertDocument, updateDocument, etc.)
-├── examples/
-│   ├── tanstack-start/  # TanStack Start example
-│   └── sveltekit/       # SvelteKit example
-├── dist/                # Build output (rslib)
-│   ├── index.js         # Client bundle
-│   ├── server.js        # Server bundle
-│   ├── ssr.js           # SSR bundle
-│   └── component/       # Component files (bundleless)
-└── package.json         # @trestleinc/replicate
-```
-
-**Package Exports:**
-- `@trestleinc/replicate/client` → Client utilities
-- `@trestleinc/replicate/server` → Server helpers (MUST use for Convex functions!)
-- `@trestleinc/replicate/ssr` → SSR utilities
+Single package with exports:
+- `@trestleinc/replicate/client` → Client utilities (browser/React/Svelte)
+- `@trestleinc/replicate/server` → Server helpers (Convex functions)
 - `@trestleinc/replicate/convex.config` → Component configuration
 
-## Architecture: Event-Sourced CRDT Storage
+## Development Commands
 
-### Core Concept: Append-Only Event Log
-
-ConvexReplicate implements an **event sourcing** architecture:
-
-**Component Storage** (`src/component/`):
-- Append-only event log of Yjs CRDT deltas
-- Each mutation appends a new entry (never updates existing ones)
-- Preserves complete history for debugging and future recovery
-- Source of truth for conflict resolution
-
-**Main Application Tables:**
-- Stores current state (materialized documents)
-- Used for efficient Convex queries, indexes, subscriptions
-- Optimized for server-side operations
-
-**Why Both?**
-- **Component = Event Log**: Complete history, CRDT conflict resolution
-- **Main Table = Read Model**: Current state, efficient queries
-- Similar to CQRS: write to event log, read from materialized view
-
-### Data Flow
-
-```
-Client (Yjs) → TanStack DB → Offline Executor
-    ↓
-insertDocument/updateDocument/deleteDocument mutation
-    ↓
-Component: APPEND delta to event log (never update)
-    ↓
-Main Table: INSERT/UPDATE/DELETE materialized doc
-    ↓
-Subscription notifies other clients
+### Build & Type Check
+```bash
+pnpm run build       # Build with Rslib (outputs to dist/)
+pnpm run clean       # Remove dist/
+pnpm run typecheck   # Type check entire package
 ```
 
-### Delete Pattern: Hard Delete with Event History
+### Testing
+```bash
+pnpm run test           # Run tests in watch mode (vitest)
+pnpm run test:run       # Run tests once
+pnpm run test:coverage  # Run with coverage report
 
-**v0.3.0+** uses hard deletes:
-- Main table: Document physically removed
-- Component: Deletion delta appended to event log (history preserved)
-- No filtering required in queries
-- Standard TanStack DB `collection.delete()` operations
+# Run specific test file
+pnpm run test src/test/unit/YjsService.test.ts
 
-## Available Scripts
+# Run tests matching pattern
+pnpm run test -t "should merge"
+```
 
-### Build Commands
-- `pnpm run build` - Build entire package using Rslib (outputs to `dist/`)
-- `pnpm run clean` - Remove dist/ directory
-- `pnpm run typecheck` - Type check entire package
+Tests use `fake-indexeddb` for IndexedDB mocking and `jsdom` environment. Test files are in `src/test/`.
 
-### Example App Development
+### Code Quality (Biome v2)
+```bash
+pnpm run check       # Lint + format check (dry run)
+pnpm run check:fix   # Auto-fix all issues (ALWAYS run before committing)
+```
 
-**IMPORTANT: Examples use pnpm!**
-
-Examples link to root package using `"@trestleinc/replicate": "file:../.."`. This requires **pnpm** (not Bun) for proper symlink handling.
-
-**Setup:**
+### Examples
 ```bash
 cd examples/tanstack-start  # or examples/sveltekit
 pnpm install
+pnpm run dev          # App + Convex dev server
 ```
 
-**Running examples:**
-```bash
-pnpm run dev          # Starts both app dev server + Convex
-pnpm run dev:app      # Run only app dev server
-pnpm run dev:convex   # Run only Convex dev environment
+## Architecture
+
+### Package Structure
+```
+src/
+├── client/              # Client-side (browser)
+│   ├── index.ts         # Public exports
+│   ├── collection.ts    # TanStack DB + Yjs integration
+│   ├── protocol.ts      # Protocol version management
+│   ├── set.ts           # setReplicate() setup
+│   ├── streaming/       # Delta processing
+│   │   └── DeltaProcessor.ts
+│   └── services/        # Core services (Effect-based)
+│       ├── YjsService.ts         # Yjs document management
+│       ├── OptimisticService.ts  # Optimistic updates
+│       ├── IDBService.ts         # IndexedDB persistence
+│       ├── CheckpointService.ts  # Sync checkpoints
+│       ├── SnapshotService.ts    # Snapshot management
+│       ├── SubscriptionService.ts # Convex subscriptions
+│       ├── ConnectionService.ts  # Connection state
+│       └── ReconciliationService.ts # State reconciliation
+├── server/              # Server-side (Convex functions)
+│   ├── index.ts         # Public exports
+│   ├── builder.ts       # defineReplicate() builder
+│   ├── schema.ts        # replicatedTable() helper
+│   ├── storage.ts       # ReplicateStorage class
+│   └── mutations/       # Mutation handlers
+│       ├── insert.ts
+│       └── update.ts
+├── component/           # Internal Convex component
+│   ├── convex.config.ts # Component config
+│   ├── schema.ts        # Event log schema
+│   └── public.ts        # Component API
+├── schemas/             # Shared type schemas
+│   ├── Delta.ts
+│   └── Document.ts
+└── test/                # Test files
+    ├── setup.ts         # Vitest setup (fake-indexeddb)
+    ├── mocks/           # Test mocks
+    └── unit/            # Unit tests
 ```
 
-### Code Quality (Biome v2)
-- `pnpm run check` - Run lint + format checks (dry run)
-- `pnpm run check:fix` - **Auto-fix all lint and format issues** (Run before committing!)
-- `pnpm run lint` - Lint all files (dry run)
-- `pnpm run lint:fix` - Auto-fix lint issues only
-- `pnpm run format` - Format all files
-- `pnpm run format:check` - Check formatting
+### Core Concepts
 
-## Development Practices
+**Event-Sourced Dual Storage:**
+- Component storage: Append-only Yjs CRDT deltas (event log)
+- Main table: Materialized documents (read model)
+- Similar to CQRS pattern
 
-### Before Committing
-**ALWAYS run `pnpm run check:fix`** to ensure code quality.
+**Client Services (Effect-based):**
+- Services in `src/client/services/` use Effect for dependency injection
+- `YjsService` manages Yjs documents and encoding
+- `OptimisticService` handles local-first updates
+- `IDBService` persists to IndexedDB
 
-### Package Conventions
-- **Single flattened package** - Root IS the package (`@trestleinc/replicate`)
-- **pnpm required for examples** - Proper symlink handling for `file:` protocol
-- **Example apps** have their own Convex backends in respective directories
-- **Rslib builds** output to `dist/` with 4 entry points (client, server, ssr, component)
+**Data Flow:**
+```
+Client edit → YjsService (encode delta) → OptimisticService → Offline queue
+    → Convex mutation → Component (append delta) + Main table (upsert)
+    → Subscription → Other clients
+```
 
-### Biome Configuration Notes
-- `noExplicitAny` is OFF (line 23 of biome.json)
-- `noConsole` warnings enabled except in test files
-- Generated files (`_generated/**`, `*.d.ts`) excluded from linting
+## Key Patterns
+
+### Server: defineReplicate Builder
+```typescript
+// convex/tasks.ts
+import { defineReplicate } from '@trestleinc/replicate/server';
+
+export const { stream, material, insert, update, remove, protocol, compact, prune } =
+  defineReplicate<Task>({
+    component: components.replicate,
+    collection: 'tasks',
+  });
+```
+
+### Client: Collection Setup
+```typescript
+// Use convexCollectionOptions + createConvexCollection pattern
+const rawCollection = createCollection(convexCollectionOptions<Task>({ ... }));
+const collection = createConvexCollection(rawCollection);
+```
+
+### Schema: replicatedTable Helper
+```typescript
+// Automatically injects version and timestamp fields
+tasks: replicatedTable({ id: v.string(), text: v.string() }, (t) => t.index('by_id', ['id']))
+```
 
 ## Technology Stack
 
-- **Language:** TypeScript (strict mode)
-- **Runtime:** Node.js with pnpm package manager
-- **Build Tools:** Rslib (Rspack-based, fast builds with externalization)
-- **Linting:** Biome v2
-- **CRDTs:** Yjs with IndexedDB storage (via TanStack DB)
-- **Backend:** Convex (cloud database and functions)
-- **State Management:** TanStack DB for reactive collections
-- **Offline Sync:** TanStack offline-transactions (outbox pattern)
-- **Logging:** LogTape
-
-## Using ConvexReplicate in Your App
-
-### 1. Install Component in Convex
-
-```typescript
-// convex/convex.config.ts
-import { defineApp } from 'convex/server';
-import replicate from '@trestleinc/replicate/convex.config';
-
-const app = defineApp();
-app.use(replicate);
-
-export default app;
-```
-
-### 2. Define Schema with replicatedTable Helper
-
-```typescript
-// convex/schema.ts
-import { defineSchema } from 'convex/server';
-import { v } from 'convex/values';
-import { replicatedTable } from '@trestleinc/replicate/server';
-
-export default defineSchema({
-  tasks: replicatedTable(
-    {
-      // User-defined business fields only
-      // version and timestamp auto-injected by replicatedTable
-      id: v.string(),
-      text: v.string(),
-      isCompleted: v.boolean(),
-    },
-    (table) => table
-      .index('by_user_id', ['id'])
-      .index('by_timestamp', ['timestamp'])
-  ),
-});
-```
-
-**What `replicatedTable` does:**
-- Automatically injects `version: v.number()` and `timestamp: v.number()`
-- Users only define business logic fields
-- Enables dual-storage architecture
-
-### 3. Define Convex Functions with defineReplicate Builder
-
-```typescript
-// convex/tasks.ts
-import { defineReplicate } from '@trestleinc/replicate/server';
-import { components } from './_generated/api';
-import type { Task } from '../src/useTasks';
-
-// Define all queries and mutations using the builder
-export const {
-  stream,
-  material,
-  insert,
-  update,
-  remove,
-  protocol,
-  compact,
-  prune
-} = defineReplicate<Task>({
-  component: components.replicate,
-  collection: 'tasks',
-  // Optional: customize compaction and pruning
-  compaction: { retention: 90 },
-  pruning: { retention: 180 },
-  // Optional: add hooks for permissions and lifecycle events
-  // hooks: { ... }
-});
-```
-
-**What `defineReplicate` provides:**
-
-- `stream` - CRDT stream with difference detection support (for real-time sync)
-- `material` - Materialized docs query (for server-side rendering)
-- `insert` - Dual-storage insert (component + main table)
-- `update` - Dual-storage update (component + main table)
-- `remove` - Dual-storage remove (component + main table)
-- `protocol` - Protocol version wrapper (required for client)
-- `compact` - Compaction function for cron jobs
-- `prune` - Snapshot cleanup function for cron jobs
-
-All functions support optional hooks for permissions and lifecycle events via the `hooks` parameter.
-
-### 4. Client-Side Integration (TanStack DB)
-
-**Note:** Protocol setup happens automatically when you create your first collection - no manual configuration required!
-
-```typescript
-// src/useTasks.ts
-import { createCollection } from '@tanstack/react-db';
-import {
-  convexCollectionOptions,
-  createConvexCollection,
-  type ConvexCollection,
-} from '@trestleinc/replicate/client';
-import { api } from '../convex/_generated/api';
-import { convexClient } from './router';
-import { useMemo } from 'react';
-
-export interface Task {
-  id: string;
-  text: string;
-  isCompleted: boolean;
-}
-
-// Module-level singleton
-let tasksCollection: ConvexCollection<Task>;
-
-export function useTasks(initialData?: ReadonlyArray<Task>) {
-  return useMemo(() => {
-    if (!tasksCollection) {
-      // Step 1: Create raw collection with ALL config
-      const rawCollection = createCollection(
-        convexCollectionOptions<Task>({
-          convexClient,
-          api: {
-            stream: api.tasks.stream,
-            insert: api.tasks.insert,
-            update: api.tasks.update,
-            remove: api.tasks.remove,
-            protocol: api.tasks.protocol, // For protocol version checking
-          },
-          collection: 'tasks',
-          getKey: (task) => task.id,
-          initialData,
-        })
-      );
-
-      // Step 2: Wrap with offline support (Yjs + TanStack)
-      tasksCollection = createConvexCollection(rawCollection);
-    }
-    return tasksCollection;
-  }, [initialData]);
-}
-```
-
-### 5. Use in React Components
-
-```typescript
-// src/routes/index.tsx
-import { useLiveQuery } from '@tanstack/react-db';
-import { useTasks } from '../useTasks';
-
-export function TaskList() {
-  const collection = useTasks();
-  const { data: tasks, isLoading } = useLiveQuery(collection);
-
-  const handleCreate = () => {
-    collection.insert({
-      id: crypto.randomUUID(),
-      text: 'New task',
-      isCompleted: false,
-    });
-  };
-
-  const handleUpdate = (id: string) => {
-    collection.update(id, (draft) => {
-      draft.isCompleted = !draft.isCompleted;
-    });
-  };
-
-  const handleDelete = (id: string) => {
-    // Hard delete - physically removes from main table
-    collection.delete(id);
-  };
-
-  if (isLoading) return <div>Loading...</div>;
-
-  return (
-    <div>
-      <button onClick={handleCreate}>Add Task</button>
-      {tasks.map(task => (
-        <div key={task.id}>
-          <input
-            type="checkbox"
-            checked={task.isCompleted}
-            onChange={() => handleUpdate(task.id)}
-          />
-          <span>{task.text}</span>
-          <button onClick={() => handleDelete(task.id)}>Delete</button>
-        </div>
-      ))}
-    </div>
-  );
-}
-```
-
-### 6. Set Up Automatic Compaction (Convex Cron Jobs)
-
-ConvexReplicate uses **Convex's built-in cron system** to automatically clean up old CRDT deltas and maintain storage efficiency. Export compact and prune functions from your collection file, then schedule them using Convex's native `cronJobs()`.
-
-**Step 1: Export compact and prune functions**
-
-```typescript
-// convex/tasks.ts
-import { defineReplicate } from '@trestleinc/replicate/server';
-import { components } from './_generated/api';
-import type { Task } from '../src/useTasks';
-
-// Define all functions including compact and prune
-export const {
-  stream,
-  material,
-  insert,
-  update,
-  remove,
-  protocol,
-  compact,  // For cron jobs
-  prune     // For cron jobs
-} = defineReplicate<Task>({
-  component: components.replicate,
-  collection: 'tasks',
-  compaction: { retention: 90 },
-  pruning: { retention: 180 },
-});
-```
-
-**Step 2: Create cron schedule file**
-
-```typescript
-// convex/crons.ts
-import { cronJobs } from 'convex/server';
-import { internal } from './_generated/api';
-
-const crons = cronJobs();
-
-// Daily compaction at 3am UTC
-crons.daily(
-  'compact tasks',
-  { hourUTC: 3, minuteUTC: 0 },
-  internal.tasks.compact
-);
-
-// Weekly snapshot cleanup on Sundays at 3am UTC
-crons.weekly(
-  'prune tasks snapshots',
-  { dayOfWeek: 'sunday', hourUTC: 3, minuteUTC: 0 },
-  internal.tasks.prune
-);
-
-export default crons;
-```
-
-**Per-collection customization:**
-
-```typescript
-// convex/tasks.ts - Frequent compaction, short retention
-export const {
-  stream, material, insert, update, remove,
-  protocol, compact, prune
-} = defineReplicate<Task>({
-  component: components.replicate,
-  collection: 'tasks',
-  compaction: { retention: 30 },
-  pruning: { retention: 90 },
-});
-
-// convex/users.ts - Infrequent compaction, long retention
-export const {
-  stream, material, insert, update, remove,
-  protocol, compact, prune
-} = defineReplicate<User>({
-  component: components.replicate,
-  collection: 'users',
-  compaction: { retention: 365 },
-  pruning: { retention: 730 },
-});
-```
-
-```typescript
-// convex/crons.ts - Different schedules per collection
-const crons = cronJobs();
-
-// Tasks: Compact every 12 hours
-crons.interval('compact tasks', { hours: 12 }, internal.tasks.compact);
-
-// Users: Compact weekly
-crons.weekly('compact users', { dayOfWeek: 'sunday', hourUTC: 3 }, internal.users.compact);
-
-export default crons;
-```
-
-**How it works:**
-- **Native Convex crons** - Uses Convex's built-in `cronJobs()` system (no external dependencies)
-- **Server-side only** - Cron jobs run entirely on Convex servers
-- **Per-collection control** - Each collection can have different retention policies and schedules
-- **Standard pattern** - Follows the same pattern as any other Convex cron job
-- **Full control** - Users define schedules using Convex's cron syntax (daily, weekly, interval, etc.)
-
-## Key API Concepts
-
-### Server-Side: defineReplicate Builder
-
-**IMPORTANT**: Import from `@trestleinc/replicate/server` for server-safe imports!
-
-The `defineReplicate<T>()` builder provides a declarative API for creating all replication functions at once:
-
-```typescript
-export const {
-  stream,
-  material,
-  insert,
-  update,
-  remove,
-  protocol,
-  compact,
-  prune
-} = defineReplicate<Task>({
-  component: components.replicate,
-  collection: 'tasks',
-  compaction: { retention: 90 },   // Optional, default: 90 days
-  pruning: { retention: 180 },     // Optional, default: 180 days
-  hooks: {                          // Optional hooks for all operations
-    evalRead: (ctx) => { /* ... */ },
-    evalWrite: (ctx) => { /* ... */ },
-    evalRemove: (ctx) => { /* ... */ },
-    onInsert: (ctx, doc) => { /* ... */ },
-    onUpdate: (ctx, doc) => { /* ... */ },
-    onRemove: (ctx, id) => { /* ... */ },
-    transform: (doc) => { /* ... */ },  // Transform docs before returning (material only)
-  }
-});
-```
-
-**Generated Functions:**
-- **`stream`** - CRDT stream with difference detection (for real-time sync)
-- **`material`** - Materialized docs query (for server-side rendering)
-- **`insert`** - Dual-storage insert (component + main table)
-- **`update`** - Dual-storage update (component + main table)
-- **`remove`** - Dual-storage remove (component + main table)
-- **`protocol`** - Protocol version wrapper (required for client)
-- **`compact`** - Compaction function for cron jobs
-- **`prune`** - Snapshot cleanup function for cron jobs
-
-**Optional Hooks:**
-- `evalRead` / `evalWrite` / `evalRemove` - Permission guards
-- `onInsert` / `onUpdate` / `onRemove` - Lifecycle callbacks
-- `transform` - Transform docs before returning (material only)
-
-### Client-Side Collection Options
-
-- **`convexCollectionOptions<T>(config)`** - Create TanStack DB collection config with Yjs integration
-- **`createConvexCollection<T>(rawCollection)`** - Wrap collection with offline support (TanStack offline-transactions)
-
-### Schema Utilities
-
-- **`replicatedTable(fields, applyIndexes?)`** - Automatically inject `version` and `timestamp` fields
-
-## Component Storage Schema
-
-The internal component uses an **event-sourced** schema:
-
-```typescript
-{
-  collection: string;    // Collection identifier
-  documentId: string;    // Document identifier
-  crdtBytes: ArrayBuffer;    // Yjs CRDT delta (not full state!)
-  version: number;           // Version for conflict detection
-  timestamp: number;         // Last modification time
-}
-```
-
-**Key indexes:**
-- `by_collection` - Query all deltas for collection
-- `by_collection_document_version` - Query document history
-- `by_timestamp` - Incremental sync support
-
-## Logging
-
-ConvexReplicate uses LogTape for structured logging:
-
-```typescript
-import { configure, getConsoleSink } from '@logtape/logtape';
-import { getLogger } from '@trestleinc/replicate/client';
-
-// Configure (in app entry point)
-await configure({
-  sinks: { console: getConsoleSink() },
-  loggers: [
-    {
-      category: ['convex-replicate'],
-      lowestLevel: 'debug', // 'debug' | 'info' | 'warn' | 'error'
-      sinks: ['console']
-    }
-  ],
-});
-
-// Get logger
-const logger = getLogger(['my-module']);
-logger.info('Operation started', { userId: '123' });
-```
-
-**Note:** Biome warns on `console.*` usage - use LogTape instead.
-
-## Example App
-
-`examples/tanstack-start/` contains a complete working example:
-
-**Key Files:**
-- `convex/convex.config.ts` - Component installation
-- `convex/schema.ts` - Application schema with `replicatedTable`
-- `convex/tasks.ts` - Convex functions using replication helpers
-- `src/useTasks.ts` - Custom hook with TanStack DB integration
-- `src/routes/index.tsx` - React components
-
-**Running:**
-```bash
-cd examples/tanstack-start
-pnpm install
-pnpm run dev  # Starts both Vite and Convex
-```
-
-## Common Patterns
-
-### Document Lifecycle
-
-1. **Create** - Client generates Yjs document with unique ID
-2. **Encode** - Client calls `Y.encodeStateAsUpdate()` to get CRDT delta
-3. **Insert** - Client calls `collection.insert()` which triggers `insert` mutation
-4. **Dual-write** - Component appends delta to event log, main table stores current state
-5. **Update** - Client merges changes offline, encodes delta
-6. **Submit** - Client calls `collection.update()` which triggers `update` mutation
-7. **Delete** - Client calls `collection.delete()` which triggers `remove` mutation (hard delete)
-8. **Sync** - Yjs automatically merges concurrent changes (CRDT magic!)
-
-### SSR Data Loading
-
-The `material` function returns a `Materialized<T>` response with format:
-```typescript
-{
-  documents: T[];           // Array of documents
-  checkpoint?: string;      // Optional snapshot checkpoint
-  count?: number;          // Optional total count
-  crdtBytes?: ArrayBuffer; // Optional CRDT snapshot bytes
-}
-```
-
-**Usage in TanStack Start:**
-```typescript
-// TanStack Start loader
-import { ConvexHttpClient } from 'convex/browser';
-import { api } from '../convex/_generated/api';
-
-export const Route = createFileRoute('/tasks')({
-  loader: async () => {
-    const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
-    const ssrData = await httpClient.query(api.tasks.material);
-    return { initialTasks: ssrData.documents };  // Extract documents array
-  },
-});
-
-// In component
-function TasksPage() {
-  const { initialTasks } = Route.useLoaderData();
-  const collection = useTasks(initialTasks); // Pass documents to hook
-  // ...
-}
-```
-
-## Troubleshooting
-
-### Build Issues
-- Clear dist if stale: `pnpm run clean`
-- Check rslib.config.ts if build fails
-- Component requires bundleless mode (preserves directory structure)
-
-### Type Errors
-- Run `pnpm run typecheck` to check all packages
-- Ensure peer dependencies installed (convex ^1.28.0, @tanstack/db ^0.4.20)
-- Check Convex codegen: `convex dev`
-
-### Linting/Formatting
-- Run `pnpm run check:fix` before committing
-- `noExplicitAny` disabled but prefer typed code
+- **TypeScript** (strict mode)
+- **Effect** for service architecture and dependency injection
+- **Yjs** for CRDTs (conflict-free replicated data types)
+- **Convex** for backend (cloud database + functions)
+- **TanStack DB** for reactive state
+- **TanStack offline-transactions** for outbox pattern
+- **Vitest** for testing
+- **Rslib** for building
+- **Biome** for linting/formatting
+- **LogTape** for logging (avoid console.*)
 
 ## Important Notes
 
-- **Single package architecture** - Not separate packages!
-- **Event-sourced component** - Append-only event log, not state replacement
-- **Dual-storage required** - Both component and main tables needed
-- **Peer dependencies** - convex and @tanstack/db (auto-installed by pnpm/npm v7+/Bun)
-- **Hard deletes** - Physically removed from main table, history in component
-- **replicatedTable helper** - Auto-injects version and timestamp fields
-- **Rslib for build** - Fast Rspack-based bundler with externalization
-- **LogTape for logging** - Not console.* (Biome warns on console usage)
-- **Context7 for docs** - Always use for library documentation lookups
+- **Effect-based services** - Client services use Effect for DI; understand Effect basics
+- **Hard deletes** - Documents physically removed from main table, history kept in component
+- **pnpm for examples** - Examples use `file:` protocol which requires pnpm
+- **Biome config** - `noExplicitAny` OFF, `noConsole` warns except in tests
+- **LogTape logging** - Use LogTape, not console.* (Biome warns on console)

@@ -1,5 +1,5 @@
 import { Effect, Context, Layer, Data } from 'effect';
-import { IDBService } from './IDBService';
+import { IDBService, IDBServiceLive } from './IDBService';
 import type { ConvexClient } from 'convex/browser';
 import { type IDBError, type IDBWriteError, NetworkError } from '../errors';
 
@@ -14,6 +14,7 @@ export class ProtocolService extends Context.Tag('ProtocolService')<
     readonly getStoredVersion: () => Effect.Effect<number, IDBError>;
     readonly setStoredVersion: (version: number) => Effect.Effect<void, IDBWriteError>;
     readonly getServerVersion: () => Effect.Effect<number, NetworkError>;
+    readonly clearStorage: () => Effect.Effect<void, IDBError>;
     readonly runMigration: () => Effect.Effect<
       void,
       ProtocolMismatchError | IDBError | IDBWriteError | NetworkError
@@ -35,6 +36,8 @@ export const ProtocolServiceLive = (convexClient: ConvexClient, api: any) =>
           }),
 
         setStoredVersion: (version) => idb.set('protocolVersion', version),
+
+        clearStorage: () => idb.delete('protocolVersion'),
 
         getServerVersion: () =>
           Effect.tryPromise({
@@ -126,3 +129,28 @@ const migrateV1toV2 = () =>
   Effect.gen(function* (_) {
     yield* _(Effect.logInfo('Running v1→v2 migration'));
   });
+
+/**
+ * Ensures protocol version is checked and migrations are run.
+ * This is the primary entry point for protocol initialization.
+ */
+export const ensureProtocolVersion = (
+  convexClient: ConvexClient,
+  api: { getProtocolVersion: any }
+): Effect.Effect<number, NetworkError | IDBError | IDBWriteError | ProtocolMismatchError, never> =>
+  Effect.gen(function* () {
+    const protocol = yield* ProtocolService;
+
+    // Check and run migration if needed
+    yield* protocol.runMigration();
+
+    // Get final version
+    const version = yield* protocol.getStoredVersion();
+
+    yield* Effect.logInfo('Protocol version ensured', { version });
+
+    return version;
+  }).pipe(
+    Effect.provide(Layer.provide(ProtocolServiceLive(convexClient, api), IDBServiceLive)),
+    Effect.withSpan('protocol.ensure')
+  );
