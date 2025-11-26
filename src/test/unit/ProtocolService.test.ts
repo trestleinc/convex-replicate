@@ -1,30 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { Effect, Layer } from 'effect';
+import { Effect } from 'effect';
+import { del as idbDel } from 'idb-keyval';
 import {
   ProtocolService,
   ProtocolServiceLive,
   ProtocolMismatchError,
 } from '../../client/services/ProtocolService.js';
-import { IDBService } from '../../client/services/IDBService.js';
-
-// Mock IDB Service for testing
-function createMockIDBService(storage: Map<string, unknown> = new Map()) {
-  return IDBService.of({
-    get: <T>(key: string) => Effect.sync(() => storage.get(key) as T | undefined),
-    set: (key: string, value: unknown) =>
-      Effect.sync(() => {
-        storage.set(key, value);
-      }),
-    delete: (key: string) =>
-      Effect.sync(() => {
-        storage.delete(key);
-      }),
-    clear: () =>
-      Effect.sync(() => {
-        storage.clear();
-      }),
-  });
-}
 
 // Mock Convex Client
 function createMockConvexClient(options?: { protocolVersion?: number; shouldThrow?: boolean }) {
@@ -42,19 +23,18 @@ function createMockConvexClient(options?: { protocolVersion?: number; shouldThro
 }
 
 describe('ProtocolService', () => {
-  let storage: Map<string, unknown>;
   let mockConvexClient: ReturnType<typeof createMockConvexClient>;
   const mockApi = { protocol: 'api.protocol' };
 
-  beforeEach(() => {
-    storage = new Map();
+  beforeEach(async () => {
+    // Clear protocol version from IndexedDB before each test
+    await idbDel('protocolVersion');
     mockConvexClient = createMockConvexClient();
   });
 
   function createTestLayer() {
-    return ProtocolServiceLive(mockConvexClient as any, mockApi).pipe(
-      Layer.provide(Layer.succeed(IDBService, createMockIDBService(storage)))
-    );
+    // ProtocolServiceLive now uses idb-keyval directly - no IDBService dependency
+    return ProtocolServiceLive(mockConvexClient as any, mockApi);
   }
 
   // ============================================
@@ -73,11 +53,11 @@ describe('ProtocolService', () => {
       });
 
       it('returns the stored version when one exists', async () => {
-        storage.set('protocolVersion', 3);
-
+        // Set version via setStoredVersion first
         await Effect.runPromise(
           Effect.gen(function* () {
             const svc = yield* ProtocolService;
+            yield* svc.setStoredVersion(3);
             const version = yield* svc.getStoredVersion();
             expect(version).toBe(3);
           }).pipe(Effect.provide(createTestLayer()))
@@ -91,23 +71,22 @@ describe('ProtocolService', () => {
           Effect.gen(function* () {
             const svc = yield* ProtocolService;
             yield* svc.setStoredVersion(5);
+            const version = yield* svc.getStoredVersion();
+            expect(version).toBe(5);
           }).pipe(Effect.provide(createTestLayer()))
         );
-
-        expect(storage.get('protocolVersion')).toBe(5);
       });
 
       it('overwrites existing version', async () => {
-        storage.set('protocolVersion', 2);
-
         await Effect.runPromise(
           Effect.gen(function* () {
             const svc = yield* ProtocolService;
+            yield* svc.setStoredVersion(2);
             yield* svc.setStoredVersion(4);
+            const version = yield* svc.getStoredVersion();
+            expect(version).toBe(4);
           }).pipe(Effect.provide(createTestLayer()))
         );
-
-        expect(storage.get('protocolVersion')).toBe(4);
       });
     });
   });
@@ -125,13 +104,7 @@ describe('ProtocolService', () => {
             const svc = yield* ProtocolService;
             const version = yield* svc.getServerVersion();
             expect(version).toBe(2);
-          }).pipe(
-            Effect.provide(
-              ProtocolServiceLive(mockConvexClient as any, mockApi).pipe(
-                Layer.provide(Layer.succeed(IDBService, createMockIDBService(storage)))
-              )
-            )
-          )
+          }).pipe(Effect.provide(ProtocolServiceLive(mockConvexClient as any, mockApi)))
         );
 
         expect(mockConvexClient.query).toHaveBeenCalledWith(mockApi.protocol, {});
@@ -145,11 +118,7 @@ describe('ProtocolService', () => {
             const svc = yield* ProtocolService;
             return yield* svc.getServerVersion();
           }).pipe(
-            Effect.provide(
-              ProtocolServiceLive(mockConvexClient as any, mockApi).pipe(
-                Layer.provide(Layer.succeed(IDBService, createMockIDBService(storage)))
-              )
-            ),
+            Effect.provide(ProtocolServiceLive(mockConvexClient as any, mockApi)),
             Effect.either
           )
         );
@@ -168,107 +137,76 @@ describe('ProtocolService', () => {
   describe('Migration', () => {
     describe('runMigration', () => {
       it('skips migration when versions match', async () => {
-        storage.set('protocolVersion', 1);
         mockConvexClient = createMockConvexClient({ protocolVersion: 1 });
 
         await Effect.runPromise(
           Effect.gen(function* () {
             const svc = yield* ProtocolService;
+            yield* svc.setStoredVersion(1);
             yield* svc.runMigration();
-          }).pipe(
-            Effect.provide(
-              ProtocolServiceLive(mockConvexClient as any, mockApi).pipe(
-                Layer.provide(Layer.succeed(IDBService, createMockIDBService(storage)))
-              )
-            )
-          )
+            const version = yield* svc.getStoredVersion();
+            // Version should remain unchanged
+            expect(version).toBe(1);
+          }).pipe(Effect.provide(ProtocolServiceLive(mockConvexClient as any, mockApi)))
         );
-
-        // Version should remain unchanged
-        expect(storage.get('protocolVersion')).toBe(1);
       });
 
       it('runs migration when stored < server', async () => {
-        storage.set('protocolVersion', 1);
         mockConvexClient = createMockConvexClient({ protocolVersion: 2 });
 
         await Effect.runPromise(
           Effect.gen(function* () {
             const svc = yield* ProtocolService;
+            yield* svc.setStoredVersion(1);
             yield* svc.runMigration();
-          }).pipe(
-            Effect.provide(
-              ProtocolServiceLive(mockConvexClient as any, mockApi).pipe(
-                Layer.provide(Layer.succeed(IDBService, createMockIDBService(storage)))
-              )
-            )
-          )
+            const version = yield* svc.getStoredVersion();
+            // Version should be updated
+            expect(version).toBe(2);
+          }).pipe(Effect.provide(ProtocolServiceLive(mockConvexClient as any, mockApi)))
         );
-
-        // Version should be updated
-        expect(storage.get('protocolVersion')).toBe(2);
       });
 
       it('stores new version after migration', async () => {
-        // Start with no stored version
         mockConvexClient = createMockConvexClient({ protocolVersion: 3 });
 
         await Effect.runPromise(
           Effect.gen(function* () {
             const svc = yield* ProtocolService;
+            // Start with no stored version (defaults to 1)
             yield* svc.runMigration();
-          }).pipe(
-            Effect.provide(
-              ProtocolServiceLive(mockConvexClient as any, mockApi).pipe(
-                Layer.provide(Layer.succeed(IDBService, createMockIDBService(storage)))
-              )
-            )
-          )
+            const version = yield* svc.getStoredVersion();
+            expect(version).toBe(3);
+          }).pipe(Effect.provide(ProtocolServiceLive(mockConvexClient as any, mockApi)))
         );
-
-        expect(storage.get('protocolVersion')).toBe(3);
       });
 
       it('handles migration from v1 to v2', async () => {
-        storage.set('protocolVersion', 1);
         mockConvexClient = createMockConvexClient({ protocolVersion: 2 });
 
-        // Should not throw
         await Effect.runPromise(
           Effect.gen(function* () {
             const svc = yield* ProtocolService;
+            yield* svc.setStoredVersion(1);
             yield* svc.runMigration();
-          }).pipe(
-            Effect.provide(
-              ProtocolServiceLive(mockConvexClient as any, mockApi).pipe(
-                Layer.provide(Layer.succeed(IDBService, createMockIDBService(storage)))
-              )
-            )
-          )
+            const version = yield* svc.getStoredVersion();
+            expect(version).toBe(2);
+          }).pipe(Effect.provide(ProtocolServiceLive(mockConvexClient as any, mockApi)))
         );
-
-        expect(storage.get('protocolVersion')).toBe(2);
       });
 
       it('runs incremental migrations for multiple versions', async () => {
-        storage.set('protocolVersion', 1);
         mockConvexClient = createMockConvexClient({ protocolVersion: 3 });
 
         await Effect.runPromise(
           Effect.gen(function* () {
             const svc = yield* ProtocolService;
+            yield* svc.setStoredVersion(1);
             yield* svc.runMigration();
-          }).pipe(
-            Effect.provide(
-              ProtocolServiceLive(mockConvexClient as any, mockApi).pipe(
-                Layer.provide(Layer.succeed(IDBService, createMockIDBService(storage)))
-              )
-            )
-          )
+            const version = yield* svc.getStoredVersion();
+            // Should reach the final version
+            expect(version).toBe(3);
+          }).pipe(Effect.provide(ProtocolServiceLive(mockConvexClient as any, mockApi)))
         );
-
-        // Should reach the final version
-        expect(storage.get('protocolVersion')).toBe(3);
       });
 
       it('fails with NetworkError when server query fails', async () => {
@@ -279,11 +217,7 @@ describe('ProtocolService', () => {
             const svc = yield* ProtocolService;
             return yield* svc.runMigration();
           }).pipe(
-            Effect.provide(
-              ProtocolServiceLive(mockConvexClient as any, mockApi).pipe(
-                Layer.provide(Layer.succeed(IDBService, createMockIDBService(storage)))
-              )
-            ),
+            Effect.provide(ProtocolServiceLive(mockConvexClient as any, mockApi)),
             Effect.either
           )
         );
@@ -295,24 +229,18 @@ describe('ProtocolService', () => {
       });
 
       it('does not change version when stored >= server', async () => {
-        storage.set('protocolVersion', 3);
         mockConvexClient = createMockConvexClient({ protocolVersion: 2 });
 
         await Effect.runPromise(
           Effect.gen(function* () {
             const svc = yield* ProtocolService;
+            yield* svc.setStoredVersion(3);
             yield* svc.runMigration();
-          }).pipe(
-            Effect.provide(
-              ProtocolServiceLive(mockConvexClient as any, mockApi).pipe(
-                Layer.provide(Layer.succeed(IDBService, createMockIDBService(storage)))
-              )
-            )
-          )
+            const version = yield* svc.getStoredVersion();
+            // Version should remain at the higher stored version
+            expect(version).toBe(3);
+          }).pipe(Effect.provide(ProtocolServiceLive(mockConvexClient as any, mockApi)))
         );
-
-        // Version should remain at the higher stored version
-        expect(storage.get('protocolVersion')).toBe(3);
       });
     });
   });

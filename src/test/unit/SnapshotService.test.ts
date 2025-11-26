@@ -8,26 +8,7 @@ import {
   SnapshotRecoveryError,
   type SnapshotResponse,
 } from '../../client/services/SnapshotService.js';
-import { YjsService } from '../../client/services/YjsService.js';
 import { CheckpointService, type Checkpoint } from '../../client/services/CheckpointService.js';
-
-// Mock YjsService
-function createMockYjsService() {
-  return YjsService.of({
-    createDocument: (_collection: string) => Effect.succeed(new Y.Doc()),
-    destroyDocument: (_doc: Y.Doc) => Effect.void,
-    applyUpdate: (doc: Y.Doc, update: Uint8Array, _origin?: string, _transact?: boolean) =>
-      Effect.sync(() => {
-        Y.applyUpdate(doc, update);
-      }),
-    encodeStateAsUpdate: (doc: Y.Doc) => Effect.sync(() => Y.encodeStateAsUpdate(doc)),
-    getMap: <T>(doc: Y.Doc, name: string) => Effect.succeed(doc.getMap<T>(name)),
-    transact: <A>(doc: Y.Doc, fn: () => A, origin?: string) =>
-      Effect.sync(() => doc.transact(fn, origin)),
-    observeUpdates: (_doc: Y.Doc, _handler: (update: Uint8Array, origin: any) => void) =>
-      Effect.succeed(() => {}),
-  });
-}
 
 // Mock CheckpointService
 function createMockCheckpointService() {
@@ -45,8 +26,6 @@ function createMockCheckpointService() {
         Effect.sync(() => {
           savedCheckpoints.delete(collection);
         }),
-      loadCheckpointWithStaleDetection: (collection: string, _hasSSRData: boolean) =>
-        Effect.succeed(savedCheckpoints.get(collection) ?? { lastModified: 0 }),
     }),
     savedCheckpoints,
   };
@@ -62,7 +41,8 @@ function createTestSnapshotResponse(overrides?: Partial<SnapshotResponse>): Snap
   map.set('doc-1', itemMap);
 
   return {
-    crdtBytes: Y.encodeStateAsUpdate(doc),
+    // Use V2 encoding to match yjs-helpers.applyUpdate()
+    crdtBytes: Y.encodeStateAsUpdateV2(doc),
     checkpoint: { lastModified: overrides?.checkpoint?.lastModified ?? Date.now() },
     documentCount: overrides?.documentCount ?? 1,
     ...overrides,
@@ -77,17 +57,15 @@ function createTestYjsContext() {
 }
 
 describe('SnapshotService', () => {
-  let mockYjsService: ReturnType<typeof createMockYjsService>;
   let mockCheckpointResult: ReturnType<typeof createMockCheckpointService>;
 
   beforeEach(() => {
-    mockYjsService = createMockYjsService();
     mockCheckpointResult = createMockCheckpointService();
   });
 
   function createTestLayer() {
+    // SnapshotServiceLive now uses plain yjs-helpers functions - only needs CheckpointService
     return SnapshotServiceLive.pipe(
-      Layer.provide(Layer.succeed(YjsService, mockYjsService)),
       Layer.provide(Layer.succeed(CheckpointService, mockCheckpointResult.service))
     );
   }

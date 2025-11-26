@@ -1,8 +1,5 @@
 import { Data } from 'effect';
 import type { IDBError, IDBWriteError, ReconciliationError } from '../errors/index.js';
-import type { YjsError } from './YjsService.js';
-import type { SubscriptionError } from './SubscriptionService.js';
-import type { OptimisticWriteError } from './OptimisticService.js';
 import type { SnapshotMissingError, SnapshotRecoveryError } from './SnapshotService.js';
 
 /**
@@ -22,7 +19,7 @@ export class OrchestratorError extends Data.TaggedError('OrchestratorError')<{
  * ```typescript
  * Effect.catchTags({
  *   IDBError: (error) => Effect.logError('Storage failed', error),
- *   SubscriptionError: (error) => Effect.logError('Subscription failed', error),
+ *   ReconciliationError: (error) => Effect.logError('Reconciliation failed', error),
  *   // ... handle other specific errors
  * })
  * ```
@@ -32,8 +29,5 @@ export type SyncSystemError =
   | IDBError
   | IDBWriteError
   | ReconciliationError
-  | YjsError
-  | SubscriptionError
-  | OptimisticWriteError
   | SnapshotMissingError
   | SnapshotRecoveryError;

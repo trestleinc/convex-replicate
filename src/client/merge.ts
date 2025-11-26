@@ -1,0 +1,114 @@
+/**
+ * Merge Helpers - Plain functions for Yjs CRDT operations
+ *
+ * Provides document creation, state encoding, and merge operations.
+ */
+
+import { get as idbGet, set as idbSet } from 'idb-keyval';
+import * as Y from 'yjs';
+import { getLogger } from './logger.js';
+
+const logger = getLogger(['replicate', 'merge']);
+
+/**
+ * Create a Yjs document with a persistent clientId stored in IndexedDB.
+ * The clientId ensures consistent identity across sessions for CRDT merging.
+ */
+export async function createYjsDocument(collection: string): Promise<Y.Doc> {
+  const clientIdKey = `yjsClientId:${collection}`;
+  let clientId = await idbGet<number>(clientIdKey);
+
+  if (!clientId) {
+    clientId = Math.floor(Math.random() * 2147483647);
+    await idbSet(clientIdKey, clientId);
+    logger.info('Generated new Yjs clientID', { collection, clientId });
+  }
+
+  const ydoc = new Y.Doc({
+    guid: collection,
+    clientID: clientId,
+  } as any);
+
+  logger.info('Created Yjs document', { collection, clientId });
+  return ydoc;
+}
+
+/**
+ * Destroy a Yjs document and release resources.
+ */
+export function destroyYjsDocument(doc: Y.Doc): void {
+  doc.destroy();
+}
+
+/**
+ * Encode the full state of a Yjs document as a binary update (V2 format).
+ */
+export function encodeStateAsUpdate(doc: Y.Doc): Uint8Array {
+  return Y.encodeStateAsUpdateV2(doc);
+}
+
+/**
+ * Apply a binary update to a Yjs document.
+ * @param transact - Whether to wrap in a transaction (default: true)
+ */
+export function applyUpdate(
+  doc: Y.Doc,
+  update: Uint8Array,
+  origin?: string,
+  transact = true
+): void {
+  if (transact) {
+    doc.transact(() => {
+      Y.applyUpdateV2(doc, update, origin);
+    }, origin);
+  } else {
+    Y.applyUpdateV2(doc, update, origin);
+  }
+}
+
+/**
+ * Get a Y.Map from a Yjs document by name.
+ */
+export function getYMap<T = unknown>(doc: Y.Doc, name: string): Y.Map<T> {
+  return doc.getMap(name);
+}
+
+/**
+ * Execute a function within a Yjs transaction.
+ */
+export function yjsTransact<A>(doc: Y.Doc, fn: () => A, origin?: string): A {
+  return doc.transact(fn, origin);
+}
+
+/**
+ * Execute a function within a Yjs transaction and capture the delta.
+ * Returns both the function result and a delta containing only the changes made.
+ */
+export function transactWithDelta<A>(
+  doc: Y.Doc,
+  fn: () => A,
+  origin?: string
+): { result: A; delta: Uint8Array } {
+  const beforeVector = Y.encodeStateVector(doc);
+  const result = doc.transact(fn, origin);
+  const delta = Y.encodeStateAsUpdateV2(doc, beforeVector);
+  return { result, delta };
+}
+
+/**
+ * Subscribe to Yjs document updates (V2 format).
+ * Returns a cleanup function to unsubscribe.
+ */
+export function observeUpdates(
+  doc: Y.Doc,
+  handler: (update: Uint8Array, origin: any) => void
+): () => void {
+  const wrappedHandler = (update: Uint8Array, origin: any) => {
+    handler(update, origin);
+  };
+  (doc as any).on('updateV2', wrappedHandler);
+
+  return () => {
+    (doc as any).off('updateV2', wrappedHandler);
+  };
+}

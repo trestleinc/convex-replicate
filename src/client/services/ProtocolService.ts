@@ -1,7 +1,7 @@
 import { Effect, Context, Layer, Data } from 'effect';
-import { IDBService, IDBServiceLive } from './IDBService';
+import { get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval';
 import type { ConvexClient } from 'convex/browser';
-import { type IDBError, type IDBWriteError, NetworkError } from '../errors';
+import { IDBError, IDBWriteError, NetworkError } from '../errors';
 
 export class ProtocolMismatchError extends Data.TaggedError('ProtocolMismatchError')<{
   storedVersion: number;
@@ -23,105 +23,125 @@ export class ProtocolService extends Context.Tag('ProtocolService')<
 >() {}
 
 export const ProtocolServiceLive = (convexClient: ConvexClient, api: any) =>
-  Layer.effect(
+  Layer.succeed(
     ProtocolService,
-    Effect.gen(function* (_) {
-      const idb = yield* _(IDBService);
+    ProtocolService.of({
+      getStoredVersion: () =>
+        Effect.gen(function* (_) {
+          const stored = yield* _(
+            Effect.tryPromise({
+              try: () => idbGet<number>('protocolVersion'),
+              catch: (cause) => new IDBError({ operation: 'get', key: 'protocolVersion', cause }),
+            })
+          );
+          return stored ?? 1;
+        }),
 
-      return ProtocolService.of({
-        getStoredVersion: () =>
-          Effect.gen(function* (_) {
-            const stored = yield* _(idb.get<number>('protocolVersion'));
-            return stored ?? 1;
-          }),
+      setStoredVersion: (version) =>
+        Effect.tryPromise({
+          try: () => idbSet('protocolVersion', version),
+          catch: (cause) => new IDBWriteError({ key: 'protocolVersion', value: version, cause }),
+        }),
 
-        setStoredVersion: (version) => idb.set('protocolVersion', version),
+      clearStorage: () =>
+        Effect.tryPromise({
+          try: () => idbDel('protocolVersion'),
+          catch: (cause) => new IDBError({ operation: 'delete', key: 'protocolVersion', cause }),
+        }),
 
-        clearStorage: () => idb.delete('protocolVersion'),
-
-        getServerVersion: () =>
-          Effect.tryPromise({
-            try: () => convexClient.query(api.protocol, {}),
-            catch: (cause) =>
+      getServerVersion: () =>
+        Effect.tryPromise({
+          try: () => convexClient.query(api.protocol, {}),
+          catch: (cause) =>
+            new NetworkError({
+              operation: 'protocol',
+              retryable: true,
+              cause,
+            }),
+        }).pipe(
+          Effect.map((response: any) => response.protocolVersion),
+          Effect.timeout('5 seconds'),
+          Effect.catchTag('TimeoutException', () =>
+            Effect.fail(
               new NetworkError({
                 operation: 'protocol',
                 retryable: true,
-                cause,
-              }),
-          }).pipe(
-            Effect.map((response: any) => response.protocolVersion),
-            Effect.timeout('5 seconds'),
-            Effect.catchTag('TimeoutException', () =>
-              Effect.fail(
+                cause: new Error('Operation timed out after 5 seconds'),
+              })
+            )
+          )
+        ),
+
+      runMigration: () =>
+        Effect.gen(function* (_) {
+          const stored = yield* _(
+            Effect.tryPromise({
+              try: () => idbGet<number>('protocolVersion'),
+              catch: (cause) => new IDBError({ operation: 'get', key: 'protocolVersion', cause }),
+            })
+          );
+          const storedVersion = stored ?? 1;
+
+          const serverResponse = yield* _(
+            Effect.tryPromise({
+              try: () => convexClient.query(api.protocol, {}),
+              catch: (cause) =>
                 new NetworkError({
                   operation: 'protocol',
                   retryable: true,
-                  cause: new Error('Operation timed out after 5 seconds'),
-                })
-              )
-            )
-          ),
-
-        runMigration: () =>
-          Effect.gen(function* (_) {
-            const stored = yield* _(idb.get<number>('protocolVersion'));
-            const storedVersion = stored ?? 1;
-
-            const serverResponse = yield* _(
-              Effect.tryPromise({
-                try: () => convexClient.query(api.protocol, {}),
-                catch: (cause) =>
+                  cause,
+                }),
+            }).pipe(
+              Effect.timeout('5 seconds'),
+              Effect.catchTag('TimeoutException', () =>
+                Effect.fail(
                   new NetworkError({
                     operation: 'protocol',
                     retryable: true,
-                    cause,
-                  }),
-              }).pipe(
-                Effect.timeout('5 seconds'),
-                Effect.catchTag('TimeoutException', () =>
-                  Effect.fail(
-                    new NetworkError({
-                      operation: 'protocol',
-                      retryable: true,
-                      cause: new Error('Operation timed out after 5 seconds'),
-                    })
-                  )
+                    cause: new Error('Operation timed out after 5 seconds'),
+                  })
                 )
               )
+            )
+          );
+          const serverVersion = (serverResponse as any).protocolVersion ?? 1;
+
+          if (storedVersion < serverVersion) {
+            yield* _(
+              Effect.logInfo('Running protocol migration', {
+                from: storedVersion,
+                to: serverVersion,
+              })
             );
-            const serverVersion = (serverResponse as any).protocolVersion ?? 1;
 
-            if (storedVersion < serverVersion) {
-              yield* _(
-                Effect.logInfo('Running protocol migration', {
-                  from: storedVersion,
-                  to: serverVersion,
-                })
-              );
+            for (let version = storedVersion + 1; version <= serverVersion; version++) {
+              yield* _(Effect.logInfo(`Migrating to protocol v${version}`));
 
-              for (let version = storedVersion + 1; version <= serverVersion; version++) {
-                yield* _(Effect.logInfo(`Migrating to protocol v${version}`));
-
-                if (version === 2) {
-                  yield* _(migrateV1toV2());
-                }
+              if (version === 2) {
+                yield* _(migrateV1toV2());
               }
-
-              yield* _(idb.set('protocolVersion', serverVersion));
-              yield* _(
-                Effect.logInfo('Protocol migration completed', {
-                  newVersion: serverVersion,
-                })
-              );
-            } else {
-              yield* _(
-                Effect.logDebug('Protocol version up to date', {
-                  version: storedVersion,
-                })
-              );
             }
-          }),
-      });
+
+            yield* _(
+              Effect.tryPromise({
+                try: () => idbSet('protocolVersion', serverVersion),
+                catch: (cause) =>
+                  new IDBWriteError({ key: 'protocolVersion', value: serverVersion, cause }),
+              })
+            );
+            yield* _(
+              Effect.logInfo('Protocol migration completed', {
+                newVersion: serverVersion,
+              })
+            );
+          } else {
+            yield* _(
+              Effect.logDebug('Protocol version up to date', {
+                version: storedVersion,
+              })
+            );
+          }
+        }),
     })
   );
 
@@ -136,7 +156,7 @@ const migrateV1toV2 = () =>
  */
 export const ensureProtocolVersion = (
   convexClient: ConvexClient,
-  api: { getProtocolVersion: any }
+  api: { protocol: any }
 ): Effect.Effect<number, NetworkError | IDBError | IDBWriteError | ProtocolMismatchError, never> =>
   Effect.gen(function* () {
     const protocol = yield* ProtocolService;
@@ -151,6 +171,6 @@ export const ensureProtocolVersion = (
 
     return version;
   }).pipe(
-    Effect.provide(Layer.provide(ProtocolServiceLive(convexClient, api), IDBServiceLive)),
+    Effect.provide(ProtocolServiceLive(convexClient, api)),
     Effect.withSpan('protocol.ensure')
   );

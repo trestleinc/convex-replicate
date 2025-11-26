@@ -17,8 +17,8 @@ beforeEach(() => {
     try {
       // Try to delete known database names used in tests
       const knownDbNames = [
-        'convex-replicate-test',
-        'convex-replicate',
+        'replicate-test',
+        'replicate',
         'test-collection',
         'tasks',
       ];

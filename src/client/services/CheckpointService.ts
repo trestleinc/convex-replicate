@@ -1,6 +1,6 @@
 import { Effect, Context, Layer } from 'effect';
-import { IDBService } from './IDBService';
-import type { IDBError, IDBWriteError } from '../errors';
+import { get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval';
+import { IDBError, IDBWriteError } from '../errors';
 
 export interface Checkpoint {
   lastModified: number;
@@ -15,22 +15,21 @@ export class CheckpointService extends Context.Tag('CheckpointService')<
       checkpoint: Checkpoint
     ) => Effect.Effect<void, IDBWriteError>;
     readonly clearCheckpoint: (collection: string) => Effect.Effect<void, IDBError>;
-    readonly loadCheckpointWithStaleDetection: (
-      collection: string,
-      hasSSRData: boolean
-    ) => Effect.Effect<Checkpoint, IDBError>;
   }
 >() {}
 
-export const CheckpointServiceLive = Layer.effect(
+export const CheckpointServiceLive = Layer.succeed(
   CheckpointService,
-  Effect.gen(function* (_) {
-    const idb = yield* _(IDBService);
-
-    const loadCheckpoint = (collection: string) =>
+  CheckpointService.of({
+    loadCheckpoint: (collection) =>
       Effect.gen(function* (_) {
         const key = `checkpoint:${collection}`;
-        const stored = yield* _(idb.get<Checkpoint>(key));
+        const stored = yield* _(
+          Effect.tryPromise({
+            try: () => idbGet<Checkpoint>(key),
+            catch: (cause) => new IDBError({ operation: 'get', key, cause }),
+          })
+        );
 
         if (stored) {
           yield* _(
@@ -48,53 +47,35 @@ export const CheckpointServiceLive = Layer.effect(
           })
         );
         return { lastModified: 0 };
-      });
+      }),
 
-    const clearCheckpoint = (collection: string) =>
+    saveCheckpoint: (collection, checkpoint) =>
       Effect.gen(function* (_) {
         const key = `checkpoint:${collection}`;
-        yield* _(idb.delete(key));
+        yield* _(
+          Effect.tryPromise({
+            try: () => idbSet(key, checkpoint),
+            catch: (cause) => new IDBWriteError({ key, value: checkpoint, cause }),
+          })
+        );
+        yield* _(
+          Effect.logDebug('Checkpoint saved', {
+            collection,
+            checkpoint,
+          })
+        );
+      }),
+
+    clearCheckpoint: (collection) =>
+      Effect.gen(function* (_) {
+        const key = `checkpoint:${collection}`;
+        yield* _(
+          Effect.tryPromise({
+            try: () => idbDel(key),
+            catch: (cause) => new IDBError({ operation: 'delete', key, cause }),
+          })
+        );
         yield* _(Effect.logDebug('Checkpoint cleared', { collection }));
-      });
-
-    return CheckpointService.of({
-      loadCheckpoint,
-
-      saveCheckpoint: (collection, checkpoint) =>
-        Effect.gen(function* (_) {
-          const key = `checkpoint:${collection}`;
-          yield* _(idb.set(key, checkpoint));
-          yield* _(
-            Effect.logDebug('Checkpoint saved', {
-              collection,
-              checkpoint,
-            })
-          );
-        }),
-
-      clearCheckpoint,
-
-      loadCheckpointWithStaleDetection: (collection, hasSSRData) =>
-        Effect.gen(function* (_) {
-          // If we have SSR data, always start fresh (lastModified: 0)
-          // to sync from the SSR snapshot point
-          if (hasSSRData) {
-            yield* _(
-              Effect.logDebug('Using fresh checkpoint due to SSR data', {
-                collection,
-              })
-            );
-            return { lastModified: 0 };
-          }
-
-          // Normal case: load stored checkpoint
-          // This works correctly because:
-          // - Yjs IndexedDB persistence is independent from checkpoint tracking
-          // - Checkpoint tracks subscription position (what we've received from server)
-          // - Yjs tracks document state (CRDT)
-          // - Both should work together, not conflict
-          return yield* _(loadCheckpoint(collection));
-        }),
-    });
+      }),
   })
 );

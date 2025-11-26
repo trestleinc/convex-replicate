@@ -1,94 +1,82 @@
-import { describe, it, expect } from 'vitest';
-import { Effect } from 'effect';
-import { OptimisticService, OptimisticServiceLive } from '../../client/services/index.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import {
+  initializeReplicateParams,
+  replicateInsert,
+  replicateUpdate,
+  replicateDelete,
+  _resetReplicateParams,
+  type ReplicateParams,
+} from '../../client/replicate.js';
 
 describe('Race Condition Regression Tests', () => {
-  it('waits for OptimisticService initialization before allowing operations', async () => {
-    let optimisticInitialized = false;
-    let resolveOptimisticReady: () => void;
-    const optimisticReadyPromise = new Promise<void>((resolve) => {
-      resolveOptimisticReady = resolve;
+  // Reset module-level state before each test
+  beforeEach(() => {
+    _resetReplicateParams();
+  });
+
+  it('waits for replicate initialization before allowing operations', async () => {
+    let replicateInitialized = false;
+    let resolveReplicateReady: () => void;
+    const replicateReadyPromise = new Promise<void>((resolve) => {
+      resolveReplicateReady = resolve;
     });
 
     // Simulate delayed initialization
     setTimeout(() => {
-      optimisticInitialized = true;
-      resolveOptimisticReady?.();
+      replicateInitialized = true;
+      resolveReplicateReady?.();
     }, 100);
 
     // Try to "use" service before initialization completes
     const operationStartTime = Date.now();
-    await optimisticReadyPromise;
+    await replicateReadyPromise;
     const operationEndTime = Date.now();
 
     // Verify we waited (use 95ms to allow for timing precision)
     expect(operationEndTime - operationStartTime).toBeGreaterThanOrEqual(95);
-    expect(optimisticInitialized).toBe(true);
+    expect(replicateInitialized).toBe(true);
   });
 
-  it('throws OptimisticWriteError when service not initialized', async () => {
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
-        const optimistic = yield* OptimisticService;
-
-        // Try to delete without initializing
-        return yield* optimistic.delete([{ id: '1', title: 'Task' }]);
-      }).pipe(Effect.provide(OptimisticServiceLive), Effect.either)
+  it('throws error when replicate not initialized', () => {
+    // Try to delete without initializing
+    expect(() => replicateDelete([{ id: '1', title: 'Task' }])).toThrow(
+      'ReplicateParams not initialized'
     );
-
-    expect(result._tag).toBe('Left');
-    if (result._tag === 'Left') {
-      expect(result.left._tag).toBe('OptimisticWriteError');
-      // ensureInitialized() always returns 'insert' operation
-      expect(result.left.cause).toBeDefined();
-    }
   });
 
-  it('allows operations after initialization', async () => {
-    const mockParams = {
+  it('allows operations after initialization', () => {
+    const mockParams: ReplicateParams = {
       begin: () => {},
       write: () => {},
       commit: () => {},
       truncate: () => {},
     };
 
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const optimistic = yield* OptimisticService;
+    // Initialize
+    initializeReplicateParams(mockParams);
 
-        // Initialize
-        yield* optimistic.initialize(mockParams);
-
-        // This should NOT throw
-        yield* optimistic.delete([{ id: '1', title: 'Task' }]);
-      }).pipe(Effect.provide(OptimisticServiceLive))
-    );
+    // This should NOT throw
+    replicateDelete([{ id: '1', title: 'Task' }]);
 
     // If we get here without error, test passes
     expect(true).toBe(true);
   });
 
-  it('handles rapid sequential operations after initialization', async () => {
-    const mockParams = {
+  it('handles rapid sequential operations after initialization', () => {
+    const mockParams: ReplicateParams = {
       begin: () => {},
       write: () => {},
       commit: () => {},
       truncate: () => {},
     };
 
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const optimistic = yield* OptimisticService;
+    // Initialize
+    initializeReplicateParams(mockParams);
 
-        // Initialize
-        yield* optimistic.initialize(mockParams);
-
-        // Rapid operations
-        yield* optimistic.insert([{ id: '1', title: 'Task 1' }]);
-        yield* optimistic.update([{ id: '1', title: 'Updated Task 1' }]);
-        yield* optimistic.delete([{ id: '1', title: 'Task 1' }]);
-      }).pipe(Effect.provide(OptimisticServiceLive))
-    );
+    // Rapid operations
+    replicateInsert([{ id: '1', title: 'Task 1' }]);
+    replicateUpdate([{ id: '1', title: 'Updated Task 1' }]);
+    replicateDelete([{ id: '1', title: 'Task 1' }]);
 
     // All operations completed successfully
     expect(true).toBe(true);
@@ -96,14 +84,14 @@ describe('Race Condition Regression Tests', () => {
 
   it('simulates the production bug scenario (delete immediately after init)', async () => {
     // This test simulates the exact production bug we fixed:
-    // User deletes task immediately after page load, before OptimisticService initialized
+    // User deletes task immediately after page load, before replicate initialized
 
     let resolveInitialization: () => void;
     const initializationPromise = new Promise<void>((resolve) => {
       resolveInitialization = resolve;
     });
 
-    const mockParams = {
+    const mockParams: ReplicateParams = {
       begin: () => {},
       write: () => {},
       commit: () => {},
@@ -119,22 +107,15 @@ describe('Race Condition Regression Tests', () => {
     await initializationPromise;
 
     // Now try to delete (this used to fail in production)
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const optimistic = yield* OptimisticService;
-        yield* optimistic.initialize(mockParams);
-
-        // This should work now
-        yield* optimistic.delete([{ id: 'task1', title: 'Task 1' }]);
-      }).pipe(Effect.provide(OptimisticServiceLive))
-    );
+    initializeReplicateParams(mockParams);
+    replicateDelete([{ id: 'task1', title: 'Task 1' }]);
 
     // Test passes if no error thrown
     expect(true).toBe(true);
   });
 
-  it('verifies optimisticReadyPromise blocks mutations correctly', async () => {
-    // Simulate the fix we implemented: optimisticReadyPromise
+  it('verifies replicateReadyPromise blocks mutations correctly', async () => {
+    // Simulate the fix we implemented: replicateReadyPromise
 
     let serviceReady = false;
     let resolveServiceReady: () => void;
@@ -156,32 +137,26 @@ describe('Race Condition Regression Tests', () => {
 
     const mutationEndTime = Date.now();
 
-    // Verify we waited for initialization
-    expect(mutationEndTime - mutationStartTime).toBeGreaterThanOrEqual(100);
+    // Verify we waited for initialization (use 95ms to account for timer jitter)
+    expect(mutationEndTime - mutationStartTime).toBeGreaterThanOrEqual(95);
     expect(serviceReady).toBe(true);
   });
 
-  it('handles concurrent initialization attempts gracefully', async () => {
-    const mockParams = {
+  it('handles concurrent initialization attempts gracefully', () => {
+    const mockParams: ReplicateParams = {
       begin: () => {},
       write: () => {},
       commit: () => {},
       truncate: () => {},
     };
 
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const optimistic = yield* OptimisticService;
+    // Initialize multiple times (shouldn't break)
+    initializeReplicateParams(mockParams);
+    initializeReplicateParams(mockParams);
+    initializeReplicateParams(mockParams);
 
-        // Initialize multiple times (shouldn't break)
-        yield* optimistic.initialize(mockParams);
-        yield* optimistic.initialize(mockParams);
-        yield* optimistic.initialize(mockParams);
-
-        // Operations should still work
-        yield* optimistic.insert([{ id: '1', title: 'Task' }]);
-      }).pipe(Effect.provide(OptimisticServiceLive))
-    );
+    // Operations should still work
+    replicateInsert([{ id: '1', title: 'Task' }]);
 
     expect(true).toBe(true);
   });

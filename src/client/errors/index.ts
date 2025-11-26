@@ -6,12 +6,6 @@ export class NetworkError extends Data.TaggedError('NetworkError')<{
   readonly operation: string;
 }> {}
 
-export class SubscriptionError extends Data.TaggedError('SubscriptionError')<{
-  readonly collection: string;
-  readonly checkpoint?: unknown;
-  readonly cause: unknown;
-}> {}
-
 export class ReconnectionError extends Data.TaggedError('ReconnectionError')<{
   readonly attempt: number;
   readonly maxAttempts: number;
@@ -132,7 +126,6 @@ export class ComponentError extends Data.TaggedError('ComponentError')<{
 
 export const isRetriableError = (error: unknown): boolean => {
   if (error instanceof NetworkError) return error.retryable;
-  if (error instanceof SubscriptionError) return true;
   if (error instanceof ConnectionTimeoutError) return true;
   if (error instanceof IDBError) return true;
   if (error instanceof ConvexMutationError)

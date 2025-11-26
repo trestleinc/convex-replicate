@@ -1,6 +1,6 @@
 import { Effect, Context, Layer, Data } from 'effect';
 import * as Y from 'yjs';
-import { YjsService } from './YjsService';
+import { yjsTransact, applyUpdate } from '../merge.js';
 import { CheckpointService, type Checkpoint } from './CheckpointService';
 import type { NetworkError } from '../errors';
 
@@ -48,7 +48,6 @@ export class SnapshotService extends Context.Tag('SnapshotService')<
 export const SnapshotServiceLive = Layer.effect(
   SnapshotService,
   Effect.gen(function* (_) {
-    const yjs = yield* _(YjsService);
     const checkpointSvc = yield* _(CheckpointService);
 
     return SnapshotService.of({
@@ -69,8 +68,8 @@ export const SnapshotServiceLive = Layer.effect(
             );
           }
 
-          // Clear existing Yjs state using the existing ydoc/ymap
-          yield* yjs.transact(
+          // Clear existing Yjs state using plain function
+          yjsTransact(
             ydoc,
             () => {
               const keys = Array.from(ymap.keys());
@@ -81,8 +80,8 @@ export const SnapshotServiceLive = Layer.effect(
             'snapshot-clear'
           );
 
-          // Apply snapshot update
-          yield* yjs.applyUpdate(ydoc, snapshot.crdtBytes, 'snapshot');
+          // Apply snapshot update using plain function
+          applyUpdate(ydoc, snapshot.crdtBytes, 'snapshot');
 
           // Save new checkpoint
           yield* checkpointSvc.saveCheckpoint(collection, snapshot.checkpoint);

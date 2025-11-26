@@ -41,7 +41,7 @@ export async function configureLogger(enableLogging = false): Promise<void> {
     },
     loggers: [
       {
-        category: ['convex-replicate'],
+        category: ['replicate'],
         lowestLevel: enableLogging ? 'debug' : 'warning',
         sinks: ['console'],
       },
@@ -52,11 +52,11 @@ export async function configureLogger(enableLogging = false): Promise<void> {
 }
 
 export function getLogger(category: string[]): Logger {
-  return getLogTapeLogger(['convex-replicate', ...category]);
+  return getLogTapeLogger(['replicate', ...category]);
 }
 
 export const configureEffectLogger = () => {
-  const logtape = getLogTapeLogger(['convex-replicate']);
+  const logtape = getLogTapeLogger(['replicate']);
 
   return EffectLogger.replace(
     EffectLogger.defaultLogger,

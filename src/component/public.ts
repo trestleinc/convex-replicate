@@ -265,7 +265,7 @@ export const getInitialState = query({
     const sorted = deltas.sort((a, b) => a.timestamp - b.timestamp);
 
     const updates = sorted.map((d) => new Uint8Array(d.crdtBytes));
-    const merged = Y.mergeUpdates(updates);
+    const merged = Y.mergeUpdatesV2(updates);
 
     logger.info('Initial state reconstructed', {
       collection: args.collection,
@@ -326,7 +326,7 @@ async function _compactCollectionInternal(ctx: any, collection: string, retentio
   });
 
   const updates = sorted.map((d: any) => new Uint8Array(d.crdtBytes));
-  const merged = Y.mergeUpdates(updates);
+  const merged = Y.mergeUpdatesV2(updates);
 
   const ydoc = new Y.Doc({ guid: collection });
   Y.applyUpdateV2(ydoc, merged);

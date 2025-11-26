@@ -1,15 +1,14 @@
 import type { ConvexClient } from 'convex/browser';
 import type { FunctionReference } from 'convex/server';
-import { Effect, Layer } from 'effect';
+import { Effect } from 'effect';
 import {
   ProtocolService,
   ProtocolServiceLive,
   ensureProtocolVersion,
 } from './services/ProtocolService.js';
-import { IDBServiceLive } from './services/IDBService.js';
 import { getLogger } from './logger.js';
 
-const logger = getLogger(['convex-replicate', 'set']);
+const logger = getLogger(['replicate', 'set']);
 
 let setPromise: Promise<void> | null = null;
 let isSet = false;
@@ -38,7 +37,7 @@ export async function setReplicate(options: SetOptions): Promise<void> {
 
     // Use ProtocolService via ensureProtocolVersion (Effect-based)
     const version = await Effect.runPromise(
-      ensureProtocolVersion(convexClient, { getProtocolVersion: api.protocol })
+      ensureProtocolVersion(convexClient, { protocol: api.protocol })
     );
 
     logger.info('Replicate setup complete', { version });
@@ -73,7 +72,7 @@ export function ensureSet(options: SetOptions): Promise<void> {
       throw new Error(
         `Replicate auto-setup failed: ${error instanceof Error ? error.message : 'Unknown error'}\n` +
           'This likely means the replicate component is not installed in your Convex backend.\n' +
-          'See: https://github.com/trestleinc/convex-replicate#installation'
+          'See: https://github.com/trestleinc/replicate#installation'
       );
     });
 
@@ -100,10 +99,7 @@ export async function getProtocolInfo(
     }
 
     // Use ProtocolService for consistent storage access
-    const protocolLayer = Layer.provide(
-      ProtocolServiceLive(convexClient, { protocol: api.protocol }),
-      IDBServiceLive
-    );
+    const protocolLayer = ProtocolServiceLive(convexClient, { protocol: api.protocol });
 
     const { serverVersion, localVersion } = await Effect.runPromise(
       Effect.gen(function* () {
@@ -129,10 +125,7 @@ export async function resetProtocolStorage(
   convexClient: ConvexClient,
   api: { protocol: FunctionReference<'query'> }
 ): Promise<void> {
-  const protocolLayer = Layer.provide(
-    ProtocolServiceLive(convexClient, { protocol: api.protocol }),
-    IDBServiceLive
-  );
+  const protocolLayer = ProtocolServiceLive(convexClient, { protocol: api.protocol });
 
   await Effect.runPromise(
     Effect.gen(function* () {

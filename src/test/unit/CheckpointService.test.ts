@@ -1,13 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { Effect, Layer } from 'effect';
-import {
-  CheckpointService,
-  CheckpointServiceLive,
-  IDBServiceLive,
-} from '../../client/services/index.js';
+import { Effect } from 'effect';
+import { CheckpointService, CheckpointServiceLive } from '../../client/services/index.js';
 
 describe('CheckpointService', () => {
-  const testLayer = Layer.provide(CheckpointServiceLive, IDBServiceLive);
+  // CheckpointServiceLive now uses idb-keyval directly - no IDBService dependency
+  const testLayer = CheckpointServiceLive;
 
   it('saves checkpoint to IndexedDB', async () => {
     const checkpoint = { lastModified: Date.now() };
@@ -53,74 +50,6 @@ describe('CheckpointService', () => {
         const loaded = yield* checkpointSvc.loadCheckpoint('non-existent-collection');
 
         expect(loaded.lastModified).toBe(0);
-      }).pipe(Effect.provide(testLayer))
-    );
-  });
-
-  it('loadCheckpointWithStaleDetection returns 0 when SSR data present', async () => {
-    const checkpoint = { lastModified: Date.now() };
-
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const checkpointSvc = yield* CheckpointService;
-
-        // Save a checkpoint
-        yield* checkpointSvc.saveCheckpoint('test-collection', checkpoint);
-
-        // Load with SSR data present (hasSSRData = true)
-        const loaded = yield* checkpointSvc.loadCheckpointWithStaleDetection(
-          'test-collection',
-          true
-        );
-
-        // Should return 0 checkpoint
-        expect(loaded.lastModified).toBe(0);
-      }).pipe(Effect.provide(testLayer))
-    );
-  });
-
-  it('loadCheckpointWithStaleDetection returns stored checkpoint when fresh', async () => {
-    const checkpoint = { lastModified: Date.now() };
-
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const checkpointSvc = yield* CheckpointService;
-
-        // Save a fresh checkpoint
-        yield* checkpointSvc.saveCheckpoint('test-collection', checkpoint);
-
-        // Load without SSR data (hasSSRData = false)
-        const loaded = yield* checkpointSvc.loadCheckpointWithStaleDetection(
-          'test-collection',
-          false
-        );
-
-        // Should return stored checkpoint
-        expect(loaded.lastModified).toBe(checkpoint.lastModified);
-      }).pipe(Effect.provide(testLayer))
-    );
-  });
-
-  it('loadCheckpointWithStaleDetection returns stored checkpoint even if old', async () => {
-    // Create old checkpoint (note: current implementation doesn't check staleness)
-    const oldTime = Date.now() - 31 * 24 * 60 * 60 * 1000;
-    const oldCheckpoint = { lastModified: oldTime };
-
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const checkpointSvc = yield* CheckpointService;
-
-        // Save old checkpoint
-        yield* checkpointSvc.saveCheckpoint('test-collection', oldCheckpoint);
-
-        // Load without SSR data
-        const loaded = yield* checkpointSvc.loadCheckpointWithStaleDetection(
-          'test-collection',
-          false
-        );
-
-        // Current implementation returns stored checkpoint (no staleness check)
-        expect(loaded.lastModified).toBe(oldTime);
       }).pipe(Effect.provide(testLayer))
     );
   });
