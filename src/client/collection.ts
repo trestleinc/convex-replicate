@@ -9,40 +9,31 @@ import type { ConvexClient } from 'convex/browser';
 import type { FunctionReference } from 'convex/server';
 import type { CollectionConfig, Collection } from '@tanstack/db';
 import { Effect, Layer } from 'effect';
-import { getLogger } from './logger.js';
-import { ensureSet } from './set.js';
-import {
-  CheckpointService,
-  CheckpointServiceLive,
-  ReconciliationService,
-  ReconciliationServiceLive,
-  SnapshotServiceLive,
-} from './services/index.js';
+import { getLogger } from '$/client/logger.js';
+import { ensureSet } from '$/client/set.js';
+import { Checkpoint, CheckpointLive } from '$/client/services/checkpoint.js';
+import { Reconciliation, ReconciliationLive } from '$/client/services/reconciliation.js';
+import { SnapshotLive } from '$/client/services/snapshot.js';
 import {
   initializeReplicateParams,
   replicateInsert,
   replicateDelete,
   replicateUpsert,
   replicateReplace,
-} from './replicate.js';
-import {
-  createYjsDocument,
-  getYMap,
-  transactWithDelta,
-  applyUpdate,
-} from './merge.js';
+} from '$/client/replicate.js';
+import { createYjsDocument, getYMap, transactWithDelta, applyUpdate } from '$/client/merge.js';
 
 const logger = getLogger(['replicate', 'collection']);
 
 // Create unified services layer
 // Services now use plain functions directly - simplified dependency chain
 const servicesLayer = Layer.mergeAll(
-  CheckpointServiceLive,
-  ReconciliationServiceLive,
-  Layer.provide(SnapshotServiceLive, CheckpointServiceLive)
+  CheckpointLive,
+  ReconciliationLive,
+  Layer.provide(SnapshotLive, CheckpointLive)
 );
 
-export { OperationType } from '../component/shared.js';
+export { OperationType } from '$/component/shared.js';
 
 const cleanupFunctions = new Map<string, () => void>();
 
@@ -129,7 +120,7 @@ export function convexCollectionOptions<T extends object>({
       }
 
       const materialApi = api.material;
-      const reconciliation = yield* ReconciliationService;
+      const reconciliation = yield* Reconciliation;
 
       // Wrap Convex query in Effect
       const serverResponse = yield* Effect.tryPromise({
@@ -458,15 +449,15 @@ export function convexCollectionOptions<T extends object>({
               ssrCheckpoint ||
               (await Effect.runPromise(
                 Effect.gen(function* () {
-                  const checkpointService = yield* CheckpointService;
-                  return yield* checkpointService.loadCheckpoint(collection);
-                }).pipe(Effect.provide(CheckpointServiceLive))
+                  const checkpointSvc = yield* Checkpoint;
+                  return yield* checkpointSvc.loadCheckpoint(collection);
+                }).pipe(Effect.provide(CheckpointLive))
               ));
 
             // Define subscription handler as Effect program (for checkpoint saving)
             const subscriptionHandler = (response: any) =>
               Effect.gen(function* () {
-                const checkpointSvc = yield* CheckpointService;
+                const checkpointSvc = yield* Checkpoint;
 
                 const { changes, checkpoint: newCheckpoint } = response;
 

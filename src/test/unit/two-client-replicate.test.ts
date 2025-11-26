@@ -2,18 +2,18 @@ import { describe, it, expect } from 'vitest';
 import * as Y from 'yjs';
 import {
   createTestYjsClient,
-  syncYjsClients,
-  setupBidirectionalSync,
-  syncWithStateVectors,
-} from '../utils/yjs-helpers.js';
+  replicateYjsClients,
+  setupBidirectionalReplicate,
+  replicateWithStateVectors,
+} from '$/test/utils/yjs.js';
 
-describe('Two-Client Synchronization', () => {
-  it('syncs insert from client A to client B', () => {
+describe('Two-Client Replication', () => {
+  it('replicates insert from client A to client B', () => {
     const clientA = createTestYjsClient('tasks');
     const clientB = createTestYjsClient('tasks');
 
     // Setup bidirectional sync
-    const cleanup = setupBidirectionalSync(clientA, clientB);
+    const cleanup = setupBidirectionalReplicate(clientA, clientB);
 
     // Client A inserts data
     clientA.map.set('task1', { title: 'Buy milk', done: false });
@@ -26,11 +26,11 @@ describe('Two-Client Synchronization', () => {
     clientB.cleanup();
   });
 
-  it('syncs bidirectional changes', () => {
+  it('replicates bidirectional changes', () => {
     const clientA = createTestYjsClient('tasks');
     const clientB = createTestYjsClient('tasks');
 
-    const cleanup = setupBidirectionalSync(clientA, clientB);
+    const cleanup = setupBidirectionalReplicate(clientA, clientB);
 
     // Client A adds task1
     clientA.map.set('task1', { title: 'Task A' });
@@ -49,7 +49,7 @@ describe('Two-Client Synchronization', () => {
     clientB.cleanup();
   });
 
-  it('syncs changes when updates are delayed', () => {
+  it('replicates changes when updates are delayed', () => {
     const clientA = createTestYjsClient('tasks');
     const clientB = createTestYjsClient('tasks');
 
@@ -62,7 +62,7 @@ describe('Two-Client Synchronization', () => {
     expect(clientB.map.size).toBe(0);
 
     // Client B comes online - apply all pending updates
-    syncYjsClients(clientA, clientB);
+    replicateYjsClients(clientA, clientB);
 
     // Now Client B has all 3 tasks
     expect(clientB.map.size).toBe(3);
@@ -74,7 +74,7 @@ describe('Two-Client Synchronization', () => {
     clientB.cleanup();
   });
 
-  it('syncs efficiently using state vectors', () => {
+  it('replicates efficiently using state vectors', () => {
     const clientA = createTestYjsClient('tasks');
     const clientB = createTestYjsClient('tasks');
 
@@ -84,7 +84,7 @@ describe('Two-Client Synchronization', () => {
     }
 
     // Efficient sync using state vectors
-    syncWithStateVectors(clientA, clientB);
+    replicateWithStateVectors(clientA, clientB);
 
     // Client B now has all 100 tasks
     expect(clientB.map.size).toBe(100);
@@ -99,7 +99,7 @@ describe('Two-Client Synchronization', () => {
     const clientA = createTestYjsClient('tasks');
     const clientB = createTestYjsClient('tasks');
 
-    const cleanup = setupBidirectionalSync(clientA, clientB);
+    const cleanup = setupBidirectionalReplicate(clientA, clientB);
 
     // Rapid updates
     for (let i = 0; i < 10; i++) {
@@ -116,11 +116,11 @@ describe('Two-Client Synchronization', () => {
     clientB.cleanup();
   });
 
-  it('syncs nested Y.Map structures', () => {
+  it('replicates nested Y.Map structures', () => {
     const clientA = createTestYjsClient('tasks');
     const clientB = createTestYjsClient('tasks');
 
-    const cleanup = setupBidirectionalSync(clientA, clientB);
+    const cleanup = setupBidirectionalReplicate(clientA, clientB);
 
     // Create nested Y.Map
     const task = new Y.Map();
@@ -142,11 +142,11 @@ describe('Two-Client Synchronization', () => {
     clientB.cleanup();
   });
 
-  it('syncs deletions', () => {
+  it('replicates deletions', () => {
     const clientA = createTestYjsClient('tasks');
     const clientB = createTestYjsClient('tasks');
 
-    const cleanup = setupBidirectionalSync(clientA, clientB);
+    const cleanup = setupBidirectionalReplicate(clientA, clientB);
 
     // Add tasks
     clientA.map.set('task1', { title: 'Task 1' });

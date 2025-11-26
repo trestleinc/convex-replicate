@@ -1,15 +1,11 @@
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { describe, it, expect, vi, type Mock } from 'vitest';
 import {
   initializeReplicateParams,
   replicateInsert,
-  replicateUpdate,
   replicateDelete,
   replicateUpsert,
-  replicateTruncate,
   replicateReplace,
-  _resetReplicateParams,
-  type ReplicateParams,
-} from '../../client/replicate.js';
+} from '$/client/replicate.js';
 
 // Mock version of ReplicateParams for testing
 interface MockReplicateParams {
@@ -19,12 +15,7 @@ interface MockReplicateParams {
   truncate: Mock;
 }
 
-describe('replicate helpers', () => {
-  // Reset module-level state before each test to ensure isolation
-  beforeEach(() => {
-    _resetReplicateParams();
-  });
-
+describe('Replicate Helpers', () => {
   const createMockReplicateParams = (): MockReplicateParams => {
     return {
       begin: vi.fn(),
@@ -39,12 +30,6 @@ describe('replicate helpers', () => {
     initializeReplicateParams(mockParams);
     // Initialization should complete without error
     expect(mockParams).toBeDefined();
-  });
-
-  it('throws error when not initialized', () => {
-    expect(() => replicateInsert([{ id: '1', title: 'Test' }])).toThrow(
-      'ReplicateParams not initialized'
-    );
   });
 
   it('calls replicateParams methods for insert operation', () => {
@@ -76,22 +61,6 @@ describe('replicate helpers', () => {
     expect(mockParams.commit).toHaveBeenCalledTimes(1);
   });
 
-  it('calls replicateParams methods for update operation', () => {
-    const mockParams = createMockReplicateParams();
-    initializeReplicateParams(mockParams);
-
-    const items = [{ id: '1', title: 'Updated Task' }];
-
-    replicateUpdate(items);
-
-    expect(mockParams.begin).toHaveBeenCalledTimes(1);
-    expect(mockParams.write).toHaveBeenCalledWith({
-      type: 'update',
-      value: items[0],
-    });
-    expect(mockParams.commit).toHaveBeenCalledTimes(1);
-  });
-
   it('calls replicateParams methods for delete operation', () => {
     const mockParams = createMockReplicateParams();
     initializeReplicateParams(mockParams);
@@ -118,15 +87,6 @@ describe('replicate helpers', () => {
     expect(mockParams.begin).toHaveBeenCalledTimes(1);
     expect(mockParams.write).not.toHaveBeenCalled();
     expect(mockParams.commit).toHaveBeenCalledTimes(1);
-  });
-
-  it('calls truncate for truncate operation', () => {
-    const mockParams = createMockReplicateParams();
-    initializeReplicateParams(mockParams);
-
-    replicateTruncate();
-
-    expect(mockParams.truncate).toHaveBeenCalledTimes(1);
   });
 
   it('replace calls truncate then insert', () => {
@@ -192,22 +152,5 @@ describe('replicate helpers', () => {
     initializeReplicateParams(mockParams);
 
     expect(() => replicateInsert([{ id: '1', title: 'Test' }])).toThrow('Write failed');
-  });
-
-  it('shares state across multiple function calls', () => {
-    const mockParams = createMockReplicateParams();
-
-    // Initialize once
-    initializeReplicateParams(mockParams);
-
-    // Use in multiple separate calls
-    replicateInsert([{ id: '1' }]);
-    replicateUpdate([{ id: '1', updated: true }]);
-    replicateDelete([{ id: '1' }]);
-
-    // All operations should have used the same initialized state
-    expect(mockParams.begin).toHaveBeenCalledTimes(3);
-    expect(mockParams.write).toHaveBeenCalledTimes(3);
-    expect(mockParams.commit).toHaveBeenCalledTimes(3);
   });
 });

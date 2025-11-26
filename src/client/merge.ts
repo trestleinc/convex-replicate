@@ -6,7 +6,7 @@
 
 import { get as idbGet, set as idbSet } from 'idb-keyval';
 import * as Y from 'yjs';
-import { getLogger } from './logger.js';
+import { getLogger } from '$/client/logger.js';
 
 const logger = getLogger(['replicate', 'merge']);
 
@@ -31,20 +31,6 @@ export async function createYjsDocument(collection: string): Promise<Y.Doc> {
 
   logger.info('Created Yjs document', { collection, clientId });
   return ydoc;
-}
-
-/**
- * Destroy a Yjs document and release resources.
- */
-export function destroyYjsDocument(doc: Y.Doc): void {
-  doc.destroy();
-}
-
-/**
- * Encode the full state of a Yjs document as a binary update (V2 format).
- */
-export function encodeStateAsUpdate(doc: Y.Doc): Uint8Array {
-  return Y.encodeStateAsUpdateV2(doc);
 }
 
 /**
@@ -93,22 +79,4 @@ export function transactWithDelta<A>(
   const result = doc.transact(fn, origin);
   const delta = Y.encodeStateAsUpdateV2(doc, beforeVector);
   return { result, delta };
-}
-
-/**
- * Subscribe to Yjs document updates (V2 format).
- * Returns a cleanup function to unsubscribe.
- */
-export function observeUpdates(
-  doc: Y.Doc,
-  handler: (update: Uint8Array, origin: any) => void
-): () => void {
-  const wrappedHandler = (update: Uint8Array, origin: any) => {
-    handler(update, origin);
-  };
-  (doc as any).on('updateV2', wrappedHandler);
-
-  return () => {
-    (doc as any).off('updateV2', wrappedHandler);
-  };
 }

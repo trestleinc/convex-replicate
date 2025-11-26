@@ -1,14 +1,14 @@
 import { Effect, Context, Layer } from 'effect';
 import * as Y from 'yjs';
-import { yjsTransact } from '../merge.js';
-import { ReconciliationError as ReconciliationErrorImport } from '../errors';
+import { yjsTransact } from '$/client/merge.js';
+import { ReconciliationError as ReconciliationErrorImport } from '$/client/errors.js';
 
 /**
- * ReconciliationService handles removal of phantom documents -
+ * Reconciliation handles removal of phantom documents -
  * documents that exist locally but have been deleted on the server.
  */
-export class ReconciliationService extends Context.Tag('ReconciliationService')<
-  ReconciliationService,
+export class Reconciliation extends Context.Tag('Reconciliation')<
+  Reconciliation,
   {
     /**
      * Reconciles local Yjs state with server state by removing phantom documents.
@@ -30,9 +30,9 @@ export class ReconciliationService extends Context.Tag('ReconciliationService')<
   }
 >() {}
 
-export const ReconciliationServiceLive = Layer.succeed(
-  ReconciliationService,
-  ReconciliationService.of({
+export const ReconciliationLive = Layer.succeed(
+  Reconciliation,
+  Reconciliation.of({
     reconcile: (ydoc, ymap, collection, serverDocs, getKey) =>
       Effect.gen(function* (_) {
         const serverDocIds = new Set(serverDocs.map(getKey));

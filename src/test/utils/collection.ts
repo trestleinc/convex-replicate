@@ -1,10 +1,13 @@
 /**
  * Collection Testing Helpers
- * Utilities for testing the full sync flow with SSR, subscriptions, and reconnection
+ * Utilities for testing the full replicate flow with SSR, subscriptions, and reconnection
  */
 
 import * as Y from 'yjs';
-import type { Checkpoint } from '../../client/services/CheckpointService.js';
+import type { CheckpointData } from '$/client/services/checkpoint.js';
+
+// Re-export for convenience (avoid breaking imports)
+type Checkpoint = CheckpointData;
 
 /**
  * Generate SSR-like data from a list of items
@@ -49,76 +52,10 @@ export function createTestSSRData<T extends { id: string }>(
 }
 
 /**
- * Create a delta representing a single item change
- * Simulates what the server would send for a mutation
- */
-export function createTestDelta<T extends { id: string }>(
-  collection: string,
-  item: T,
-  baseDoc?: Y.Doc
-): {
-  crdtBytes: ArrayBuffer;
-  documentId: string;
-  timestamp: number;
-} {
-  // Create or use existing doc
-  const ydoc = baseDoc || new Y.Doc();
-  const ymap = ydoc.getMap<Y.Map<unknown>>(collection);
-
-  // Capture state before change
-  const beforeVector = Y.encodeStateVector(ydoc);
-
-  // Apply the change
-  const itemMap = new Y.Map<unknown>();
-  for (const [key, value] of Object.entries(item)) {
-    itemMap.set(key, value);
-  }
-  ymap.set(item.id, itemMap);
-
-  // Capture delta (only the change)
-  const delta = Y.encodeStateAsUpdateV2(ydoc, beforeVector);
-
-  if (!baseDoc) {
-    ydoc.destroy();
-  }
-
-  return {
-    crdtBytes: delta.buffer as ArrayBuffer,
-    documentId: item.id,
-    timestamp: Date.now(),
-  };
-}
-
-/**
- * Create a subscription response with a delta change
- */
-export function createDeltaResponse(
-  delta: { crdtBytes: ArrayBuffer; documentId: string; timestamp: number },
-  checkpoint: Checkpoint
-): {
-  changes: Array<{
-    operationType: 'delta';
-    crdtBytes: ArrayBuffer;
-    documentId: string;
-  }>;
-  checkpoint: Checkpoint;
-} {
-  return {
-    changes: [
-      {
-        operationType: 'delta',
-        crdtBytes: delta.crdtBytes,
-        documentId: delta.documentId,
-      },
-    ],
-    checkpoint,
-  };
-}
-
-/**
  * Test client that can make mutations and track received updates
+ * Internal - used by simulateClientServerReplicate
  */
-export interface TestSyncClient<T extends { id: string }> {
+interface TestReplicateClient<T extends { id: string }> {
   id: string;
   ydoc: Y.Doc;
   ymap: Y.Map<Y.Map<unknown>>;
@@ -127,34 +64,27 @@ export interface TestSyncClient<T extends { id: string }> {
     documentId: string;
     timestamp: number;
   }>;
-
-  // Make a mutation and return the delta
   makeMutation: (item: T) => {
     delta: Uint8Array;
     documentId: string;
     timestamp: number;
   };
-
-  // Apply a delta from another client
   applyDelta: (delta: Uint8Array) => void;
-
-  // Get current items as plain objects
   getItems: () => T[];
-
-  // Cleanup
   destroy: () => void;
 }
 
 /**
- * Create a test sync client for simulating multi-client scenarios
+ * Create a test replicate client for simulating multi-client scenarios
+ * Internal - used by simulateClientServerReplicate
  */
-export function createTestSyncClient<T extends { id: string }>(
+function createTestReplicateClient<T extends { id: string }>(
   clientId: string,
   collection: string
-): TestSyncClient<T> {
+): TestReplicateClient<T> {
   const ydoc = new Y.Doc();
   const ymap = ydoc.getMap<Y.Map<unknown>>(collection);
-  const receivedDeltas: TestSyncClient<T>['receivedDeltas'] = [];
+  const receivedDeltas: TestReplicateClient<T>['receivedDeltas'] = [];
 
   return {
     id: clientId,
@@ -204,34 +134,26 @@ export function createTestSyncClient<T extends { id: string }>(
 
 /**
  * Mock server that routes deltas between clients
+ * Internal - used by simulateClientServerReplicate
  */
-export interface MockSyncServer<T extends { id: string }> {
-  // All deltas stored on server (event log)
+interface MockReplicateServer<T extends { id: string }> {
   deltas: Array<{
     delta: Uint8Array;
     documentId: string;
     timestamp: number;
     fromClient: string;
   }>;
-
-  // Current checkpoint (max timestamp)
   checkpoint: Checkpoint;
-
-  // Receive a mutation from a client
   receiveMutation: (
     fromClient: string,
     mutation: { delta: Uint8Array; documentId: string; timestamp: number }
   ) => void;
-
-  // Get deltas since a checkpoint (simulates stream query)
   getDeltasSince: (checkpoint: Checkpoint) => Array<{
     delta: Uint8Array;
     documentId: string;
     timestamp: number;
     fromClient: string;
   }>;
-
-  // Get SSR data (simulates getInitialState)
   getSSRData: (collection: string) => {
     crdtBytes: ArrayBuffer;
     checkpoint: Checkpoint;
@@ -239,14 +161,14 @@ export interface MockSyncServer<T extends { id: string }> {
 }
 
 /**
- * Create a mock sync server for testing multi-client scenarios
+ * Create a mock replicate server for testing multi-client scenarios
+ * Internal - used by simulateClientServerReplicate
  */
-export function createMockSyncServer<T extends { id: string }>(
+function createMockReplicateServer<T extends { id: string }>(
   collection: string
-): MockSyncServer<T> {
-  const deltas: MockSyncServer<T>['deltas'] = [];
+): MockReplicateServer<T> {
+  const deltas: MockReplicateServer<T>['deltas'] = [];
   let checkpoint: Checkpoint = { lastModified: 0 };
-  // Use incrementing counter for unique, deterministic timestamps
   let timestampCounter = 1000;
 
   return {
@@ -254,7 +176,6 @@ export function createMockSyncServer<T extends { id: string }>(
     checkpoint,
 
     receiveMutation: (fromClient, mutation) => {
-      // Server assigns timestamp (incrementing for uniqueness in tests)
       const serverTimestamp = ++timestampCounter;
       deltas.push({
         ...mutation,
@@ -269,7 +190,6 @@ export function createMockSyncServer<T extends { id: string }>(
     },
 
     getSSRData: () => {
-      // Merge all deltas into a single update
       if (deltas.length === 0) {
         return {
           crdtBytes: new ArrayBuffer(0),
@@ -277,7 +197,6 @@ export function createMockSyncServer<T extends { id: string }>(
         };
       }
 
-      // Use V2 merge for consistency
       const merged = Y.mergeUpdatesV2(deltas.map((d) => d.delta));
 
       return {
@@ -289,35 +208,24 @@ export function createMockSyncServer<T extends { id: string }>(
 }
 
 /**
- * Simulate a full sync scenario between two clients via a server
+ * Simulate a full replicate scenario between two clients via a server
  */
-export function simulateClientServerSync<T extends { id: string }>(
+export function simulateClientServerReplicate<T extends { id: string }>(
   collection: string
 ): {
-  clientA: TestSyncClient<T>;
-  clientB: TestSyncClient<T>;
-  server: MockSyncServer<T>;
-
-  // Client A makes a mutation, server receives it
+  clientA: TestReplicateClient<T>;
+  clientB: TestReplicateClient<T>;
+  server: MockReplicateServer<T>;
   clientAMutates: (item: T) => void;
-
-  // Client B makes a mutation, server receives it
   clientBMutates: (item: T) => void;
-
-  // Sync client A from server (like subscription update)
-  syncClientA: () => void;
-
-  // Sync client B from server
-  syncClientB: () => void;
-
-  // Cleanup
+  replicateToClientA: () => void;
+  replicateToClientB: () => void;
   destroy: () => void;
 } {
-  const clientA = createTestSyncClient<T>('A', collection);
-  const clientB = createTestSyncClient<T>('B', collection);
-  const server = createMockSyncServer<T>(collection);
+  const clientA = createTestReplicateClient<T>('A', collection);
+  const clientB = createTestReplicateClient<T>('B', collection);
+  const server = createMockReplicateServer<T>(collection);
 
-  // Track last synced checkpoint per client
   const clientCheckpoints = new Map<string, Checkpoint>([
     ['A', { lastModified: 0 }],
     ['B', { lastModified: 0 }],
@@ -338,13 +246,12 @@ export function simulateClientServerSync<T extends { id: string }>(
       server.receiveMutation('B', mutation);
     },
 
-    syncClientA: () => {
+    replicateToClientA: () => {
       const checkpoint = clientCheckpoints.get('A')!;
       const newDeltas = server.getDeltasSince(checkpoint);
 
       for (const delta of newDeltas) {
         if (delta.fromClient !== 'A') {
-          // Only apply deltas from other clients
           clientA.applyDelta(delta.delta);
         }
       }
@@ -355,13 +262,12 @@ export function simulateClientServerSync<T extends { id: string }>(
       }
     },
 
-    syncClientB: () => {
+    replicateToClientB: () => {
       const checkpoint = clientCheckpoints.get('B')!;
       const newDeltas = server.getDeltasSince(checkpoint);
 
       for (const delta of newDeltas) {
         if (delta.fromClient !== 'B') {
-          // Only apply deltas from other clients
           clientB.applyDelta(delta.delta);
         }
       }

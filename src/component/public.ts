@@ -1,8 +1,8 @@
 import * as Y from 'yjs';
 import { v } from 'convex/values';
-import { mutation, query } from './_generated/server';
-import { getLogger } from './logger';
-import { OperationType } from './shared.js';
+import { mutation, query } from '$/component/_generated/server';
+import { getLogger } from '$/component/logger';
+import { OperationType } from '$/component/shared.js';
 
 export const PROTOCOL_VERSION = 1;
 
@@ -185,25 +185,6 @@ export const getProtocolVersion = query({
   handler: async (_ctx) => {
     return {
       protocolVersion: PROTOCOL_VERSION,
-    };
-  },
-});
-
-export const getSchemaVersion = query({
-  args: {
-    collection: v.string(),
-  },
-  returns: v.object({
-    schemaVersion: v.number(),
-  }),
-  handler: async (ctx, args) => {
-    const migrationRecord = await ctx.db
-      .query('migrations')
-      .withIndex('by_collection', (q) => q.eq('collection', args.collection))
-      .first();
-
-    return {
-      schemaVersion: migrationRecord?.version ?? 1,
     };
   },
 });

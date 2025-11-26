@@ -3,16 +3,13 @@ import { del as idbDel } from 'idb-keyval';
 import * as Y from 'yjs';
 import {
   createYjsDocument,
-  destroyYjsDocument,
-  encodeStateAsUpdate,
   applyUpdate,
   getYMap,
   yjsTransact,
   transactWithDelta,
-  observeUpdates,
-} from '../../client/merge.js';
+} from '$/client/merge.js';
 
-describe('merge helpers', () => {
+describe('Merge Helpers', () => {
   beforeEach(async () => {
     // Clear any stored clientId between tests
     await idbDel('yjsClientId:test-collection');
@@ -32,12 +29,8 @@ describe('merge helpers', () => {
       expect(doc.clientID).toBeGreaterThan(0);
       expect(doc.guid).toBe('test-collection');
 
-      destroyYjsDocument(doc);
+      doc.destroy();
     });
-
-    // Note: Testing clientId persistence across calls is skipped because
-    // fake-indexeddb has timing issues with rapid sequential async operations.
-    // The persistence behavior is already tested by idb-keyval's own test suite.
   });
 
   describe('getYMap', () => {
@@ -48,7 +41,7 @@ describe('merge helpers', () => {
       expect(map).toBeInstanceOf(Y.Map);
       expect(map.doc).toBe(doc);
 
-      destroyYjsDocument(doc);
+      doc.destroy();
     });
   });
 
@@ -73,7 +66,7 @@ describe('merge helpers', () => {
       expect(capturedOrigin).toBe('test-origin');
       expect(map.get('key')).toBe('value');
 
-      destroyYjsDocument(doc);
+      doc.destroy();
     });
   });
 
@@ -107,90 +100,8 @@ describe('merge helpers', () => {
 
       expect(map2.get('foo')).toBe('bar');
 
-      destroyYjsDocument(doc1);
-      destroyYjsDocument(doc2);
-    });
-  });
-
-  describe('observeUpdates', () => {
-    it('fires callback on document changes', async () => {
-      const doc = await createYjsDocument('test');
-      const map = getYMap<any>(doc, 'test');
-
-      let updateCount = 0;
-      let lastUpdate: Uint8Array | null = null;
-      let lastOrigin: string | null = null;
-
-      observeUpdates(doc, (update, origin) => {
-        updateCount++;
-        lastUpdate = update;
-        lastOrigin = origin as string;
-      });
-
-      // Make first change
-      yjsTransact(
-        doc,
-        () => {
-          map.set('key1', 'value1');
-        },
-        'origin1'
-      );
-
-      expect(updateCount).toBe(1);
-      expect(lastOrigin).toBe('origin1');
-      expect(lastUpdate).toBeTruthy();
-
-      // Make second change
-      yjsTransact(
-        doc,
-        () => {
-          map.set('key2', 'value2');
-        },
-        'origin2'
-      );
-
-      expect(updateCount).toBe(2);
-      expect(lastOrigin).toBe('origin2');
-
-      destroyYjsDocument(doc);
-    });
-
-    it('returns cleanup function that unsubscribes', async () => {
-      const doc = await createYjsDocument('test');
-      const map = getYMap<any>(doc, 'test');
-
-      let updateCount = 0;
-
-      const cleanup = observeUpdates(doc, () => {
-        updateCount++;
-      });
-
-      // Make change - should fire
-      yjsTransact(
-        doc,
-        () => {
-          map.set('key1', 'value1');
-        },
-        'test'
-      );
-
-      expect(updateCount).toBe(1);
-
-      // Cleanup
-      cleanup();
-
-      // Make another change - should NOT fire
-      yjsTransact(
-        doc,
-        () => {
-          map.set('key2', 'value2');
-        },
-        'test'
-      );
-
-      expect(updateCount).toBe(1); // Still 1, not incremented
-
-      destroyYjsDocument(doc);
+      doc1.destroy();
+      doc2.destroy();
     });
   });
 
@@ -213,7 +124,7 @@ describe('merge helpers', () => {
       expect(delta.length).toBeGreaterThan(0);
       expect(map.get('key')).toBe('value');
 
-      destroyYjsDocument(doc);
+      doc.destroy();
     });
 
     it('delta can be applied to another document', async () => {
@@ -238,8 +149,8 @@ describe('merge helpers', () => {
       // doc2 should now have the same value
       expect(map2.get('foo')).toBe('bar');
 
-      destroyYjsDocument(doc1);
-      destroyYjsDocument(doc2);
+      doc1.destroy();
+      doc2.destroy();
     });
 
     it('handles rapid sequential transactions correctly', async () => {
@@ -273,7 +184,7 @@ describe('merge helpers', () => {
         expect(map.get(`key-${i}`)).toBe(`value-${i}`);
       }
 
-      destroyYjsDocument(doc);
+      doc.destroy();
     });
 
     it('each delta contains only its own changes', async () => {
@@ -315,8 +226,8 @@ describe('merge helpers', () => {
       expect(receiverMap.get('first')).toBe('A');
       expect(receiverMap.get('second')).toBe('B');
 
-      destroyYjsDocument(sender);
-      destroyYjsDocument(receiver);
+      sender.destroy();
+      receiver.destroy();
     });
 
     it('returns empty delta when no changes are made', async () => {
@@ -334,23 +245,7 @@ describe('merge helpers', () => {
       // Delta should exist but be minimal (just header, no actual changes)
       expect(delta).toBeInstanceOf(Uint8Array);
 
-      destroyYjsDocument(doc);
-    });
-  });
-
-  describe('encodeStateAsUpdate', () => {
-    it('encodes full document state', async () => {
-      const doc = await createYjsDocument('test');
-      const map = getYMap<any>(doc, 'test');
-
-      map.set('key', 'value');
-
-      const update = encodeStateAsUpdate(doc);
-
-      expect(update).toBeInstanceOf(Uint8Array);
-      expect(update.length).toBeGreaterThan(0);
-
-      destroyYjsDocument(doc);
+      doc.destroy();
     });
   });
 });

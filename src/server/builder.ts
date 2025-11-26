@@ -1,5 +1,5 @@
 import type { GenericMutationCtx, GenericQueryCtx, GenericDataModel } from 'convex/server';
-import { Replicate } from './storage.js';
+import { Replicate } from '$/server/storage.js';
 
 export function defineReplicate<T extends object>(config: {
   component: any;

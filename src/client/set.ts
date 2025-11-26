@@ -1,12 +1,8 @@
 import type { ConvexClient } from 'convex/browser';
 import type { FunctionReference } from 'convex/server';
 import { Effect } from 'effect';
-import {
-  ProtocolService,
-  ProtocolServiceLive,
-  ensureProtocolVersion,
-} from './services/ProtocolService.js';
-import { getLogger } from './logger.js';
+import { Protocol, ProtocolLive, ensureProtocolVersion } from './services/protocol.js';
+import { getLogger } from '$/client/logger.js';
 
 const logger = getLogger(['replicate', 'set']);
 
@@ -79,10 +75,10 @@ export function ensureSet(options: SetOptions): Promise<void> {
   return setPromise;
 }
 
-export function resetSetState(): void {
+// Internal - for test cleanup only
+export function _resetSetState(): void {
   setPromise = null;
   isSet = false;
-  logger.debug('Set state reset');
 }
 
 export async function getProtocolInfo(
@@ -99,11 +95,11 @@ export async function getProtocolInfo(
     }
 
     // Use ProtocolService for consistent storage access
-    const protocolLayer = ProtocolServiceLive(convexClient, { protocol: api.protocol });
+    const protocolLayer = ProtocolLive(convexClient, { protocol: api.protocol });
 
     const { serverVersion, localVersion } = await Effect.runPromise(
       Effect.gen(function* () {
-        const protocol = yield* ProtocolService;
+        const protocol = yield* Protocol;
         const server = yield* protocol.getServerVersion();
         const local = yield* protocol.getStoredVersion();
         return { serverVersion: server, localVersion: local };
@@ -119,20 +115,4 @@ export async function getProtocolInfo(
     logger.error('Failed to get protocol info', { error });
     throw error;
   }
-}
-
-export async function resetProtocolStorage(
-  convexClient: ConvexClient,
-  api: { protocol: FunctionReference<'query'> }
-): Promise<void> {
-  const protocolLayer = ProtocolServiceLive(convexClient, { protocol: api.protocol });
-
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      const protocol = yield* ProtocolService;
-      yield* protocol.clearStorage();
-    }).pipe(Effect.provide(protocolLayer))
-  );
-
-  logger.info('Protocol storage reset');
 }

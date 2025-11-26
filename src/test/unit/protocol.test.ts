@@ -1,11 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Effect } from 'effect';
 import { del as idbDel } from 'idb-keyval';
-import {
-  ProtocolService,
-  ProtocolServiceLive,
-  ProtocolMismatchError,
-} from '../../client/services/ProtocolService.js';
+import { Protocol, ProtocolLive, ProtocolMismatchError } from '$/client/services/protocol.js';
 
 // Mock Convex Client
 function createMockConvexClient(options?: { protocolVersion?: number; shouldThrow?: boolean }) {
@@ -22,7 +18,7 @@ function createMockConvexClient(options?: { protocolVersion?: number; shouldThro
   };
 }
 
-describe('ProtocolService', () => {
+describe('Protocol', () => {
   let mockConvexClient: ReturnType<typeof createMockConvexClient>;
   const mockApi = { protocol: 'api.protocol' };
 
@@ -33,8 +29,8 @@ describe('ProtocolService', () => {
   });
 
   function createTestLayer() {
-    // ProtocolServiceLive now uses idb-keyval directly - no IDBService dependency
-    return ProtocolServiceLive(mockConvexClient as any, mockApi);
+    // ProtocolLive now uses idb-keyval directly - no IDBService dependency
+    return ProtocolLive(mockConvexClient as any, mockApi);
   }
 
   // ============================================
@@ -45,7 +41,7 @@ describe('ProtocolService', () => {
       it('returns 1 when no version is stored', async () => {
         await Effect.runPromise(
           Effect.gen(function* () {
-            const svc = yield* ProtocolService;
+            const svc = yield* Protocol;
             const version = yield* svc.getStoredVersion();
             expect(version).toBe(1);
           }).pipe(Effect.provide(createTestLayer()))
@@ -56,7 +52,7 @@ describe('ProtocolService', () => {
         // Set version via setStoredVersion first
         await Effect.runPromise(
           Effect.gen(function* () {
-            const svc = yield* ProtocolService;
+            const svc = yield* Protocol;
             yield* svc.setStoredVersion(3);
             const version = yield* svc.getStoredVersion();
             expect(version).toBe(3);
@@ -69,7 +65,7 @@ describe('ProtocolService', () => {
       it('stores the version in IDB', async () => {
         await Effect.runPromise(
           Effect.gen(function* () {
-            const svc = yield* ProtocolService;
+            const svc = yield* Protocol;
             yield* svc.setStoredVersion(5);
             const version = yield* svc.getStoredVersion();
             expect(version).toBe(5);
@@ -80,7 +76,7 @@ describe('ProtocolService', () => {
       it('overwrites existing version', async () => {
         await Effect.runPromise(
           Effect.gen(function* () {
-            const svc = yield* ProtocolService;
+            const svc = yield* Protocol;
             yield* svc.setStoredVersion(2);
             yield* svc.setStoredVersion(4);
             const version = yield* svc.getStoredVersion();
@@ -101,10 +97,10 @@ describe('ProtocolService', () => {
 
         await Effect.runPromise(
           Effect.gen(function* () {
-            const svc = yield* ProtocolService;
+            const svc = yield* Protocol;
             const version = yield* svc.getServerVersion();
             expect(version).toBe(2);
-          }).pipe(Effect.provide(ProtocolServiceLive(mockConvexClient as any, mockApi)))
+          }).pipe(Effect.provide(ProtocolLive(mockConvexClient as any, mockApi)))
         );
 
         expect(mockConvexClient.query).toHaveBeenCalledWith(mockApi.protocol, {});
@@ -115,10 +111,10 @@ describe('ProtocolService', () => {
 
         const result = await Effect.runPromise(
           Effect.gen(function* () {
-            const svc = yield* ProtocolService;
+            const svc = yield* Protocol;
             return yield* svc.getServerVersion();
           }).pipe(
-            Effect.provide(ProtocolServiceLive(mockConvexClient as any, mockApi)),
+            Effect.provide(ProtocolLive(mockConvexClient as any, mockApi)),
             Effect.either
           )
         );
@@ -141,13 +137,13 @@ describe('ProtocolService', () => {
 
         await Effect.runPromise(
           Effect.gen(function* () {
-            const svc = yield* ProtocolService;
+            const svc = yield* Protocol;
             yield* svc.setStoredVersion(1);
             yield* svc.runMigration();
             const version = yield* svc.getStoredVersion();
             // Version should remain unchanged
             expect(version).toBe(1);
-          }).pipe(Effect.provide(ProtocolServiceLive(mockConvexClient as any, mockApi)))
+          }).pipe(Effect.provide(ProtocolLive(mockConvexClient as any, mockApi)))
         );
       });
 
@@ -156,13 +152,13 @@ describe('ProtocolService', () => {
 
         await Effect.runPromise(
           Effect.gen(function* () {
-            const svc = yield* ProtocolService;
+            const svc = yield* Protocol;
             yield* svc.setStoredVersion(1);
             yield* svc.runMigration();
             const version = yield* svc.getStoredVersion();
             // Version should be updated
             expect(version).toBe(2);
-          }).pipe(Effect.provide(ProtocolServiceLive(mockConvexClient as any, mockApi)))
+          }).pipe(Effect.provide(ProtocolLive(mockConvexClient as any, mockApi)))
         );
       });
 
@@ -171,12 +167,12 @@ describe('ProtocolService', () => {
 
         await Effect.runPromise(
           Effect.gen(function* () {
-            const svc = yield* ProtocolService;
+            const svc = yield* Protocol;
             // Start with no stored version (defaults to 1)
             yield* svc.runMigration();
             const version = yield* svc.getStoredVersion();
             expect(version).toBe(3);
-          }).pipe(Effect.provide(ProtocolServiceLive(mockConvexClient as any, mockApi)))
+          }).pipe(Effect.provide(ProtocolLive(mockConvexClient as any, mockApi)))
         );
       });
 
@@ -185,12 +181,12 @@ describe('ProtocolService', () => {
 
         await Effect.runPromise(
           Effect.gen(function* () {
-            const svc = yield* ProtocolService;
+            const svc = yield* Protocol;
             yield* svc.setStoredVersion(1);
             yield* svc.runMigration();
             const version = yield* svc.getStoredVersion();
             expect(version).toBe(2);
-          }).pipe(Effect.provide(ProtocolServiceLive(mockConvexClient as any, mockApi)))
+          }).pipe(Effect.provide(ProtocolLive(mockConvexClient as any, mockApi)))
         );
       });
 
@@ -199,13 +195,13 @@ describe('ProtocolService', () => {
 
         await Effect.runPromise(
           Effect.gen(function* () {
-            const svc = yield* ProtocolService;
+            const svc = yield* Protocol;
             yield* svc.setStoredVersion(1);
             yield* svc.runMigration();
             const version = yield* svc.getStoredVersion();
             // Should reach the final version
             expect(version).toBe(3);
-          }).pipe(Effect.provide(ProtocolServiceLive(mockConvexClient as any, mockApi)))
+          }).pipe(Effect.provide(ProtocolLive(mockConvexClient as any, mockApi)))
         );
       });
 
@@ -214,10 +210,10 @@ describe('ProtocolService', () => {
 
         const result = await Effect.runPromise(
           Effect.gen(function* () {
-            const svc = yield* ProtocolService;
+            const svc = yield* Protocol;
             return yield* svc.runMigration();
           }).pipe(
-            Effect.provide(ProtocolServiceLive(mockConvexClient as any, mockApi)),
+            Effect.provide(ProtocolLive(mockConvexClient as any, mockApi)),
             Effect.either
           )
         );
@@ -233,13 +229,13 @@ describe('ProtocolService', () => {
 
         await Effect.runPromise(
           Effect.gen(function* () {
-            const svc = yield* ProtocolService;
+            const svc = yield* Protocol;
             yield* svc.setStoredVersion(3);
             yield* svc.runMigration();
             const version = yield* svc.getStoredVersion();
             // Version should remain at the higher stored version
             expect(version).toBe(3);
-          }).pipe(Effect.provide(ProtocolServiceLive(mockConvexClient as any, mockApi)))
+          }).pipe(Effect.provide(ProtocolLive(mockConvexClient as any, mockApi)))
         );
       });
     });

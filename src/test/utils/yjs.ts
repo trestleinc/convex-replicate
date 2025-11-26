@@ -1,6 +1,6 @@
 /**
  * Yjs Testing Helpers
- * Utilities for creating and synchronizing Yjs documents in tests
+ * Utilities for creating and replicating Yjs documents in tests
  */
 
 import * as Y from 'yjs';
@@ -38,9 +38,9 @@ export function createTestYjsClient(collection: string): TestYjsClient {
 }
 
 /**
- * Synchronize two Yjs clients by applying all pending updates
+ * Replicate two Yjs clients by applying all pending updates
  */
-export function syncYjsClients(clientA: TestYjsClient, clientB: TestYjsClient): void {
+export function replicateYjsClients(clientA: TestYjsClient, clientB: TestYjsClient): void {
   // Apply A's updates to B
   for (const update of clientA.updates) {
     Y.applyUpdate(clientB.doc, update);
@@ -57,9 +57,12 @@ export function syncYjsClients(clientA: TestYjsClient, clientB: TestYjsClient): 
 }
 
 /**
- * Setup bidirectional sync between two Yjs clients
+ * Setup bidirectional replicate between two Yjs clients
  */
-export function setupBidirectionalSync(clientA: TestYjsClient, clientB: TestYjsClient): () => void {
+export function setupBidirectionalReplicate(
+  clientA: TestYjsClient,
+  clientB: TestYjsClient
+): () => void {
   const handlerA = (update: Uint8Array) => {
     Y.applyUpdate(clientB.doc, update);
   };
@@ -78,16 +81,9 @@ export function setupBidirectionalSync(clientA: TestYjsClient, clientB: TestYjsC
 }
 
 /**
- * Encode full document state as update
+ * Replicate clients using state vectors (efficient)
  */
-export function encodeDocumentState(doc: Y.Doc): Uint8Array {
-  return Y.encodeStateAsUpdate(doc);
-}
-
-/**
- * Sync clients using state vectors (efficient)
- */
-export function syncWithStateVectors(clientA: TestYjsClient, clientB: TestYjsClient): void {
+export function replicateWithStateVectors(clientA: TestYjsClient, clientB: TestYjsClient): void {
   const stateVectorA = Y.encodeStateVector(clientA.doc);
   const stateVectorB = Y.encodeStateVector(clientB.doc);
 

@@ -1,5 +1,5 @@
-export { defineReplicate } from './builder.js';
-export { replicatedTable, type ReplicationFields } from './schema.js';
+export { defineReplicate } from '$/server/builder.js';
+export { replicatedTable, type ReplicationFields } from '$/server/schema.js';
 
 export {
   ComponentWriteError,
@@ -7,4 +7,4 @@ export {
   VersionConflictError,
   DualStorageError,
   CRDTEncodingError,
-} from './errors.js';
+} from '$/server/errors.js';

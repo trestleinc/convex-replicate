@@ -1,15 +1,15 @@
 import { Effect, Context, Layer, Data } from 'effect';
 import { get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval';
 import type { ConvexClient } from 'convex/browser';
-import { IDBError, IDBWriteError, NetworkError } from '../errors';
+import { IDBError, IDBWriteError, NetworkError } from '$/client/errors.js';
 
 export class ProtocolMismatchError extends Data.TaggedError('ProtocolMismatchError')<{
   storedVersion: number;
   serverVersion: number;
 }> {}
 
-export class ProtocolService extends Context.Tag('ProtocolService')<
-  ProtocolService,
+export class Protocol extends Context.Tag('Protocol')<
+  Protocol,
   {
     readonly getStoredVersion: () => Effect.Effect<number, IDBError>;
     readonly setStoredVersion: (version: number) => Effect.Effect<void, IDBWriteError>;
@@ -22,10 +22,10 @@ export class ProtocolService extends Context.Tag('ProtocolService')<
   }
 >() {}
 
-export const ProtocolServiceLive = (convexClient: ConvexClient, api: any) =>
+export const ProtocolLive = (convexClient: ConvexClient, api: any) =>
   Layer.succeed(
-    ProtocolService,
-    ProtocolService.of({
+    Protocol,
+    Protocol.of({
       getStoredVersion: () =>
         Effect.gen(function* (_) {
           const stored = yield* _(
@@ -159,7 +159,7 @@ export const ensureProtocolVersion = (
   api: { protocol: any }
 ): Effect.Effect<number, NetworkError | IDBError | IDBWriteError | ProtocolMismatchError, never> =>
   Effect.gen(function* () {
-    const protocol = yield* ProtocolService;
+    const protocol = yield* Protocol;
 
     // Check and run migration if needed
     yield* protocol.runMigration();
@@ -171,6 +171,6 @@ export const ensureProtocolVersion = (
 
     return version;
   }).pipe(
-    Effect.provide(ProtocolServiceLive(convexClient, api)),
+    Effect.provide(ProtocolLive(convexClient, api)),
     Effect.withSpan('protocol.ensure')
   );

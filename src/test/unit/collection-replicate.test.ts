@@ -1,25 +1,15 @@
 /**
- * End-to-End Collection Sync Tests
+ * End-to-End Collection Replicate Tests
  *
- * These tests simulate the full sync flow including SSR, subscriptions,
- * and reconnection to catch bugs like the "sync breaks after refresh" issue.
+ * These tests simulate the full replicate flow including SSR, subscriptions,
+ * and reconnection to catch bugs like the "replicate breaks after refresh" issue.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { Effect } from 'effect';
 import * as Y from 'yjs';
-import {
-  CheckpointService,
-  CheckpointServiceLive,
-} from '../../client/services/CheckpointService.js';
-import { createMockConvexClientWithSubscription } from '../mocks/convexClient.js';
-import {
-  createTestSSRData,
-  createTestDelta,
-  createDeltaResponse,
-  simulateClientServerSync,
-} from '../utils/collection-helpers.js';
-import { flushEffectPromises } from '../utils/effect-test-helpers.js';
+import { Checkpoint, CheckpointLive } from '$/client/services/checkpoint.js';
+import { createTestSSRData, simulateClientServerReplicate } from '$/test/utils/collection.js';
 
 interface TestTask {
   id: string;
@@ -27,7 +17,7 @@ interface TestTask {
   done: boolean;
 }
 
-describe('Collection Sync Flow', () => {
+describe('Collection Replicate Flow', () => {
   // ============================================
   // V1/V2 FORMAT CONSISTENCY
   // ============================================
@@ -140,15 +130,15 @@ describe('Collection Sync Flow', () => {
   // ============================================
   // MULTI-CLIENT SYNC (Yjs level)
   // ============================================
-  describe('Multi-Client Sync via Server', () => {
+  describe('Multi-Client Replicate via Server', () => {
     it('client A mutation reaches client B via server', () => {
-      const sync = simulateClientServerSync<TestTask>('tasks');
+      const sync = simulateClientServerReplicate<TestTask>('tasks');
 
       // Client A makes a mutation
       sync.clientAMutates({ id: 'task1', title: 'From A', done: false });
 
-      // Sync client B from server
-      sync.syncClientB();
+      // Replicate to client B from server
+      sync.replicateToClientB();
 
       // Client B should have the task
       const bItems = sync.clientB.getItems();
@@ -159,13 +149,13 @@ describe('Collection Sync Flow', () => {
     });
 
     it('client B mutation reaches client A via server', () => {
-      const sync = simulateClientServerSync<TestTask>('tasks');
+      const sync = simulateClientServerReplicate<TestTask>('tasks');
 
       // Client B makes a mutation
       sync.clientBMutates({ id: 'task1', title: 'From B', done: true });
 
-      // Sync client A from server
-      sync.syncClientA();
+      // Replicate to client A from server
+      sync.replicateToClientA();
 
       // Client A should have the task
       const aItems = sync.clientA.getItems();
@@ -175,8 +165,8 @@ describe('Collection Sync Flow', () => {
       sync.destroy();
     });
 
-    it('bidirectional sync works correctly', () => {
-      const sync = simulateClientServerSync<TestTask>('tasks');
+    it('bidirectional replication works correctly', () => {
+      const sync = simulateClientServerReplicate<TestTask>('tasks');
 
       // Client A makes mutations
       sync.clientAMutates({ id: 'task1', title: 'From A', done: false });
@@ -185,9 +175,9 @@ describe('Collection Sync Flow', () => {
       // Client B makes mutations
       sync.clientBMutates({ id: 'task3', title: 'From B', done: true });
 
-      // Sync both clients
-      sync.syncClientA();
-      sync.syncClientB();
+      // Replicate to both clients
+      sync.replicateToClientA();
+      sync.replicateToClientB();
 
       // Both clients should have all tasks
       const aItems = sync.clientA.getItems();
@@ -206,12 +196,12 @@ describe('Collection Sync Flow', () => {
       sync.destroy();
     });
 
-    it('sync after "refresh" (client restarts from SSR) works', () => {
-      const sync = simulateClientServerSync<TestTask>('tasks');
+    it('replicate after "refresh" (client restarts from SSR) works', () => {
+      const sync = simulateClientServerReplicate<TestTask>('tasks');
 
       // Initial state: both clients have some tasks
       sync.clientAMutates({ id: 'task1', title: 'Task 1', done: false });
-      sync.syncClientB();
+      sync.replicateToClientB();
 
       // Verify B has the task
       expect(sync.clientB.getItems()).toHaveLength(1);
@@ -259,12 +249,12 @@ describe('Collection Sync Flow', () => {
   // CHECKPOINT SERVICE BEHAVIOR
   // ============================================
   describe('CheckpointService Behavior', () => {
-    const testLayer = CheckpointServiceLive;
+    const testLayer = CheckpointLive;
 
     it('loadCheckpoint always returns stored checkpoint (used by onOnline)', async () => {
       const result = await Effect.runPromise(
         Effect.gen(function* () {
-          const svc = yield* CheckpointService;
+          const svc = yield* Checkpoint;
 
           // Save a checkpoint
           yield* svc.saveCheckpoint('test-collection', { lastModified: 99999 });
@@ -282,7 +272,7 @@ describe('Collection Sync Flow', () => {
 
       await Effect.runPromise(
         Effect.gen(function* () {
-          const svc = yield* CheckpointService;
+          const svc = yield* Checkpoint;
 
           // Simulate processing deltas
           yield* svc.saveCheckpoint('test-collection', { lastModified: 1000 });
@@ -310,13 +300,13 @@ describe('Collection Sync Flow', () => {
        * so that reconnection uses the latest saved checkpoint.
        */
 
-      const testLayer = CheckpointServiceLive;
+      const testLayer = CheckpointLive;
 
       const checkpoints: number[] = [];
 
       await Effect.runPromise(
         Effect.gen(function* () {
-          const checkpointSvc = yield* CheckpointService;
+          const checkpointSvc = yield* Checkpoint;
 
           // SSR checkpoint
           const ssrCheckpoint = { lastModified: 1000000 };
@@ -346,7 +336,7 @@ describe('Collection Sync Flow', () => {
 
       await Effect.runPromise(
         Effect.gen(function* () {
-          const checkpointSvc = yield* CheckpointService;
+          const checkpointSvc = yield* Checkpoint;
 
           // Simulate subscription handler processing deltas
           const deltas = [
@@ -360,7 +350,7 @@ describe('Collection Sync Flow', () => {
             const saved = yield* checkpointSvc.loadCheckpoint('tasks');
             savedCheckpoints.push(saved.lastModified);
           }
-        }).pipe(Effect.provide(CheckpointServiceLive))
+        }).pipe(Effect.provide(CheckpointLive))
       );
 
       // Each checkpoint should be saved correctly
@@ -372,7 +362,7 @@ describe('Collection Sync Flow', () => {
   // STALE CHECKPOINT FROM PREVIOUS SESSION (THE ACTUAL BUG)
   // ============================================
   describe('Stale Checkpoint From Previous Session', () => {
-    const testLayer = CheckpointServiceLive;
+    const testLayer = CheckpointLive;
 
     it('CRITICAL: onOnline before any deltas processed uses 0 if checkpoint was cleared', async () => {
       /**
@@ -386,7 +376,7 @@ describe('Collection Sync Flow', () => {
 
       const result = await Effect.runPromise(
         Effect.gen(function* () {
-          const checkpointSvc = yield* CheckpointService;
+          const checkpointSvc = yield* Checkpoint;
 
           // Step 1: Simulate previous session saving a high checkpoint
           yield* checkpointSvc.saveCheckpoint('tasks', { lastModified: 9999 });
@@ -417,7 +407,7 @@ describe('Collection Sync Flow', () => {
 
       const result = await Effect.runPromise(
         Effect.gen(function* () {
-          const checkpointSvc = yield* CheckpointService;
+          const checkpointSvc = yield* Checkpoint;
 
           // Previous session saved checkpoint
           yield* checkpointSvc.saveCheckpoint('tasks-no-clear', { lastModified: 9999 });
@@ -445,7 +435,7 @@ describe('Collection Sync Flow', () => {
 
       await Effect.runPromise(
         Effect.gen(function* () {
-          const checkpointSvc = yield* CheckpointService;
+          const checkpointSvc = yield* Checkpoint;
 
           // Step 1: Old checkpoint from previous session (cleared by SSR load)
           yield* checkpointSvc.saveCheckpoint('tasks', { lastModified: 9999 });
@@ -476,7 +466,7 @@ describe('Collection Sync Flow', () => {
   // ============================================
   describe('Delta Application', () => {
     it('delta from client A can be applied to client B', () => {
-      const sync = simulateClientServerSync<TestTask>('tasks');
+      const sync = simulateClientServerReplicate<TestTask>('tasks');
 
       // Client A makes a mutation and gets delta
       const mutation = sync.clientA.makeMutation({

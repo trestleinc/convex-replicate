@@ -16,12 +16,7 @@ beforeEach(() => {
     // We don't await because fake-indexeddb handles it synchronously
     try {
       // Try to delete known database names used in tests
-      const knownDbNames = [
-        'replicate-test',
-        'replicate',
-        'test-collection',
-        'tasks',
-      ];
+      const knownDbNames = ['replicate-test', 'replicate', 'test-collection', 'tasks'];
       for (const name of knownDbNames) {
         indexedDB.deleteDatabase(name);
       }

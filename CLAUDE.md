@@ -35,7 +35,7 @@ pnpm run test:run       # Run tests once
 pnpm run test:coverage  # Run with coverage report
 
 # Run specific test file
-pnpm run test src/test/unit/YjsService.test.ts
+pnpm run test src/test/unit/merge.test.ts
 
 # Run tests matching pattern
 pnpm run test -t "should merge"
@@ -64,34 +64,26 @@ src/
 ├── client/              # Client-side (browser)
 │   ├── index.ts         # Public exports
 │   ├── collection.ts    # TanStack DB + Yjs integration
-│   ├── protocol.ts      # Protocol version management
 │   ├── set.ts           # setReplicate() setup
-│   ├── streaming/       # Delta processing
-│   │   └── DeltaProcessor.ts
+│   ├── replicate.ts     # Replicate helpers for TanStack DB
+│   ├── merge.ts         # Yjs CRDT merge operations
+│   ├── logger.ts        # LogTape logger
+│   ├── errors.ts        # Error definitions
 │   └── services/        # Core services (Effect-based)
-│       ├── YjsService.ts         # Yjs document management
-│       ├── OptimisticService.ts  # Optimistic updates
-│       ├── IDBService.ts         # IndexedDB persistence
 │       ├── CheckpointService.ts  # Sync checkpoints
-│       ├── SnapshotService.ts    # Snapshot management
-│       ├── SubscriptionService.ts # Convex subscriptions
-│       ├── ConnectionService.ts  # Connection state
-│       └── ReconciliationService.ts # State reconciliation
+│       ├── ProtocolService.ts    # Protocol version management
+│       ├── SnapshotService.ts    # Snapshot recovery
+│       └── ReconciliationService.ts # Phantom document cleanup
 ├── server/              # Server-side (Convex functions)
 │   ├── index.ts         # Public exports
 │   ├── builder.ts       # defineReplicate() builder
 │   ├── schema.ts        # replicatedTable() helper
 │   ├── storage.ts       # ReplicateStorage class
-│   └── mutations/       # Mutation handlers
-│       ├── insert.ts
-│       └── update.ts
+│   └── errors.ts        # Server error definitions
 ├── component/           # Internal Convex component
 │   ├── convex.config.ts # Component config
 │   ├── schema.ts        # Event log schema
 │   └── public.ts        # Component API
-├── schemas/             # Shared type schemas
-│   ├── Delta.ts
-│   └── Document.ts
 └── test/                # Test files
     ├── setup.ts         # Vitest setup (fake-indexeddb)
     ├── mocks/           # Test mocks
@@ -107,13 +99,14 @@ src/
 
 **Client Services (Effect-based):**
 - Services in `src/client/services/` use Effect for dependency injection
-- `YjsService` manages Yjs documents and encoding
-- `OptimisticService` handles local-first updates
-- `IDBService` persists to IndexedDB
+- `CheckpointService` manages sync checkpoints in IndexedDB
+- `ProtocolService` handles protocol version negotiation
+- `SnapshotService` recovers from server snapshots
+- `ReconciliationService` removes phantom documents
 
 **Data Flow:**
 ```
-Client edit → YjsService (encode delta) → OptimisticService → Offline queue
+Client edit → merge.ts (encode delta) → collection.ts → Offline queue
     → Convex mutation → Component (append delta) + Main table (upsert)
     → Subscription → Other clients
 ```

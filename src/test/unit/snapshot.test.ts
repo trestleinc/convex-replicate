@@ -2,23 +2,23 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Effect, Layer } from 'effect';
 import * as Y from 'yjs';
 import {
-  SnapshotService,
-  SnapshotServiceLive,
+  Snapshot,
+  SnapshotLive,
   SnapshotMissingError,
   SnapshotRecoveryError,
   type SnapshotResponse,
-} from '../../client/services/SnapshotService.js';
-import { CheckpointService, type Checkpoint } from '../../client/services/CheckpointService.js';
+} from '$/client/services/snapshot.js';
+import { Checkpoint, type CheckpointData } from '$/client/services/checkpoint.js';
 
-// Mock CheckpointService
-function createMockCheckpointService() {
-  const savedCheckpoints: Map<string, Checkpoint> = new Map();
+// Mock Checkpoint service
+function createMockCheckpoint() {
+  const savedCheckpoints: Map<string, CheckpointData> = new Map();
 
   return {
-    service: CheckpointService.of({
+    service: Checkpoint.of({
       loadCheckpoint: (collection: string) =>
         Effect.succeed(savedCheckpoints.get(collection) ?? { lastModified: 0 }),
-      saveCheckpoint: (collection: string, checkpoint: Checkpoint) =>
+      saveCheckpoint: (collection: string, checkpoint: CheckpointData) =>
         Effect.sync(() => {
           savedCheckpoints.set(collection, checkpoint);
         }),
@@ -56,17 +56,17 @@ function createTestYjsContext() {
   return { ydoc, ymap };
 }
 
-describe('SnapshotService', () => {
-  let mockCheckpointResult: ReturnType<typeof createMockCheckpointService>;
+describe('Snapshot', () => {
+  let mockCheckpointResult: ReturnType<typeof createMockCheckpoint>;
 
   beforeEach(() => {
-    mockCheckpointResult = createMockCheckpointService();
+    mockCheckpointResult = createMockCheckpoint();
   });
 
   function createTestLayer() {
-    // SnapshotServiceLive now uses plain yjs-helpers functions - only needs CheckpointService
-    return SnapshotServiceLive.pipe(
-      Layer.provide(Layer.succeed(CheckpointService, mockCheckpointResult.service))
+    // SnapshotLive now uses plain yjs-helpers functions - only needs Checkpoint
+    return SnapshotLive.pipe(
+      Layer.provide(Layer.succeed(Checkpoint, mockCheckpointResult.service))
     );
   }
 
@@ -80,7 +80,7 @@ describe('SnapshotService', () => {
 
       await Effect.runPromise(
         Effect.gen(function* () {
-          const svc = yield* SnapshotService;
+          const svc = yield* Snapshot;
           yield* svc.recoverFromSnapshot(ydoc, ymap, 'test-collection', fetchSnapshot);
         }).pipe(Effect.provide(createTestLayer()))
       );
@@ -95,7 +95,7 @@ describe('SnapshotService', () => {
 
       await Effect.runPromise(
         Effect.gen(function* () {
-          const svc = yield* SnapshotService;
+          const svc = yield* Snapshot;
           yield* svc.recoverFromSnapshot(ydoc, ymap, 'test-collection', fetchSnapshot);
         }).pipe(Effect.provide(createTestLayer()))
       );
@@ -106,13 +106,13 @@ describe('SnapshotService', () => {
 
     it('saves checkpoint after recovery', async () => {
       const { ydoc, ymap } = createTestYjsContext();
-      const checkpoint: Checkpoint = { lastModified: 123456789 };
+      const checkpoint: CheckpointData = { lastModified: 123456789 };
       const snapshot = createTestSnapshotResponse({ checkpoint });
       const fetchSnapshot = vi.fn().mockReturnValue(Effect.succeed(snapshot));
 
       await Effect.runPromise(
         Effect.gen(function* () {
-          const svc = yield* SnapshotService;
+          const svc = yield* Snapshot;
           yield* svc.recoverFromSnapshot(ydoc, ymap, 'test-collection', fetchSnapshot);
         }).pipe(Effect.provide(createTestLayer()))
       );
@@ -127,7 +127,7 @@ describe('SnapshotService', () => {
 
       const items = await Effect.runPromise(
         Effect.gen(function* () {
-          const svc = yield* SnapshotService;
+          const svc = yield* Snapshot;
           return yield* svc.recoverFromSnapshot(ydoc, ymap, 'test-collection', fetchSnapshot);
         }).pipe(Effect.provide(createTestLayer()))
       );
@@ -150,7 +150,7 @@ describe('SnapshotService', () => {
 
       await Effect.runPromise(
         Effect.gen(function* () {
-          const svc = yield* SnapshotService;
+          const svc = yield* Snapshot;
           yield* svc.recoverFromSnapshot(ydoc, ymap, 'test-collection', fetchSnapshot);
         }).pipe(Effect.provide(createTestLayer()))
       );
@@ -171,7 +171,7 @@ describe('SnapshotService', () => {
 
         const result = await Effect.runPromise(
           Effect.gen(function* () {
-            const svc = yield* SnapshotService;
+            const svc = yield* Snapshot;
             return yield* svc.recoverFromSnapshot(ydoc, ymap, 'test-collection', fetchSnapshot);
           }).pipe(Effect.provide(createTestLayer()), Effect.either)
         );
@@ -193,7 +193,7 @@ describe('SnapshotService', () => {
 
         const result = await Effect.runPromise(
           Effect.gen(function* () {
-            const svc = yield* SnapshotService;
+            const svc = yield* Snapshot;
             return yield* svc.recoverFromSnapshot(ydoc, ymap, 'test-collection', fetchSnapshot);
           }).pipe(Effect.provide(createTestLayer()), Effect.either)
         );

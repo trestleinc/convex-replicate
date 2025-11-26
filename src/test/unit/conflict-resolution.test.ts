@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as Y from 'yjs';
-import { createTestYjsClient, syncYjsClients } from '../utils/yjs-helpers.js';
+import { createTestYjsClient, replicateYjsClients } from '$/test/utils/yjs.js';
 
 describe('CRDT Conflict Resolution', () => {
   it('resolves concurrent inserts to different keys', () => {
@@ -12,7 +12,7 @@ describe('CRDT Conflict Resolution', () => {
     clientB.map.set('task2', { title: 'Task from B' });
 
     // Reconnect - sync updates
-    syncYjsClients(clientA, clientB);
+    replicateYjsClients(clientA, clientB);
 
     // Both clients have both tasks
     expect(clientA.map.size).toBe(2);
@@ -39,7 +39,7 @@ describe('CRDT Conflict Resolution', () => {
     clientA.map.set('task1', task);
 
     // Sync to B
-    syncYjsClients(clientA, clientB);
+    replicateYjsClients(clientA, clientB);
 
     // Get references to the same task on both clients
     const taskA = clientA.map.get('task1') as Y.Map<any>;
@@ -53,7 +53,7 @@ describe('CRDT Conflict Resolution', () => {
     taskB.set('done', true);
 
     // Reconnect
-    syncYjsClients(clientA, clientB);
+    replicateYjsClients(clientA, clientB);
 
     // Both clients have MERGED state
     expect(taskA.get('title')).toBe('New Title from A');
@@ -77,7 +77,7 @@ describe('CRDT Conflict Resolution', () => {
     clientB.map.set('task1', { title: 'Title from B', timestamp: 2 });
 
     // Reconnect - Yjs uses Lamport timestamps for conflict resolution
-    syncYjsClients(clientA, clientB);
+    replicateYjsClients(clientA, clientB);
 
     // Both clients converge to same value
     const valueA = clientA.map.get('task1');
@@ -97,7 +97,7 @@ describe('CRDT Conflict Resolution', () => {
 
     // Start synced
     clientA.map.set('task1', { title: 'Task 1' });
-    syncYjsClients(clientA, clientB);
+    replicateYjsClients(clientA, clientB);
 
     // Disconnect
     // Client A deletes
@@ -107,7 +107,7 @@ describe('CRDT Conflict Resolution', () => {
     clientB.map.set('task1', { title: 'Updated Task 1', done: true });
 
     // Reconnect
-    syncYjsClients(clientA, clientB);
+    replicateYjsClients(clientA, clientB);
 
     // Yjs CRDTs: operations are timestamped, convergence guaranteed
     // Verify both clients have same state
@@ -128,14 +128,14 @@ describe('CRDT Conflict Resolution', () => {
     // Start synced
     clientA.map.set('task1', { title: 'Task 1' });
     clientA.map.set('task2', { title: 'Task 2' });
-    syncYjsClients(clientA, clientB);
+    replicateYjsClients(clientA, clientB);
 
     // Both delete same item
     clientA.map.delete('task1');
     clientB.map.delete('task1');
 
     // Reconnect
-    syncYjsClients(clientA, clientB);
+    replicateYjsClients(clientA, clientB);
 
     // Both should agree task1 is deleted
     expect(clientA.map.has('task1')).toBe(false);
@@ -162,7 +162,7 @@ describe('CRDT Conflict Resolution', () => {
     task.set('assignee', 'Alice');
 
     clientA.map.set('task1', task);
-    syncYjsClients(clientA, clientB);
+    replicateYjsClients(clientA, clientB);
 
     const taskA = clientA.map.get('task1') as Y.Map<any>;
     const taskB = clientB.map.get('task1') as Y.Map<any>;
@@ -178,7 +178,7 @@ describe('CRDT Conflict Resolution', () => {
     taskB.set('tags', ['work', 'urgent']);
 
     // Reconnect
-    syncYjsClients(clientA, clientB);
+    replicateYjsClients(clientA, clientB);
 
     // Verify convergence - both should have same state
     expect(taskA.get('title')).toBe(taskB.get('title'));
@@ -206,7 +206,7 @@ describe('CRDT Conflict Resolution', () => {
     }
 
     // Sync
-    syncYjsClients(clientA, clientB);
+    replicateYjsClients(clientA, clientB);
 
     // Both should have all 100 tasks
     expect(clientA.map.size).toBe(100);

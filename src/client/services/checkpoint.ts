@@ -1,32 +1,32 @@
 import { Effect, Context, Layer } from 'effect';
 import { get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval';
-import { IDBError, IDBWriteError } from '../errors';
+import { IDBError, IDBWriteError } from '$/client/errors.js';
 
-export interface Checkpoint {
+export interface CheckpointData {
   lastModified: number;
 }
 
-export class CheckpointService extends Context.Tag('CheckpointService')<
-  CheckpointService,
+export class Checkpoint extends Context.Tag('Checkpoint')<
+  Checkpoint,
   {
-    readonly loadCheckpoint: (collection: string) => Effect.Effect<Checkpoint, IDBError>;
+    readonly loadCheckpoint: (collection: string) => Effect.Effect<CheckpointData, IDBError>;
     readonly saveCheckpoint: (
       collection: string,
-      checkpoint: Checkpoint
+      checkpoint: CheckpointData
     ) => Effect.Effect<void, IDBWriteError>;
     readonly clearCheckpoint: (collection: string) => Effect.Effect<void, IDBError>;
   }
 >() {}
 
-export const CheckpointServiceLive = Layer.succeed(
-  CheckpointService,
-  CheckpointService.of({
+export const CheckpointLive = Layer.succeed(
+  Checkpoint,
+  Checkpoint.of({
     loadCheckpoint: (collection) =>
       Effect.gen(function* (_) {
         const key = `checkpoint:${collection}`;
         const stored = yield* _(
           Effect.tryPromise({
-            try: () => idbGet<Checkpoint>(key),
+            try: () => idbGet<CheckpointData>(key),
             catch: (cause) => new IDBError({ operation: 'get', key, cause }),
           })
         );

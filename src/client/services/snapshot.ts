@@ -1,12 +1,12 @@
 import { Effect, Context, Layer, Data } from 'effect';
 import * as Y from 'yjs';
-import { yjsTransact, applyUpdate } from '../merge.js';
-import { CheckpointService, type Checkpoint } from './CheckpointService';
-import type { NetworkError } from '../errors';
+import { yjsTransact, applyUpdate } from '$/client/merge.js';
+import { Checkpoint, type CheckpointData } from '$/client/services/checkpoint.js';
+import type { NetworkError } from '$/client/errors.js';
 
 export interface SnapshotResponse {
   crdtBytes: Uint8Array;
-  checkpoint: Checkpoint;
+  checkpoint: CheckpointData;
   documentCount: number;
 }
 
@@ -21,11 +21,11 @@ export class SnapshotRecoveryError extends Data.TaggedError('SnapshotRecoveryErr
 }> {}
 
 /**
- * SnapshotService handles crash recovery by replacing local state
+ * Snapshot handles crash recovery by replacing local state
  * with a server snapshot when difference/divergence is detected.
  */
-export class SnapshotService extends Context.Tag('SnapshotService')<
-  SnapshotService,
+export class Snapshot extends Context.Tag('Snapshot')<
+  Snapshot,
   {
     /**
      * Recovers from a server snapshot by clearing local state and applying snapshot.
@@ -45,12 +45,12 @@ export class SnapshotService extends Context.Tag('SnapshotService')<
   }
 >() {}
 
-export const SnapshotServiceLive = Layer.effect(
-  SnapshotService,
+export const SnapshotLive = Layer.effect(
+  Snapshot,
   Effect.gen(function* (_) {
-    const checkpointSvc = yield* _(CheckpointService);
+    const checkpointSvc = yield* _(Checkpoint);
 
-    return SnapshotService.of({
+    return Snapshot.of({
       recoverFromSnapshot: (ydoc, ymap, collection, fetchSnapshot) =>
         Effect.gen(function* () {
           yield* Effect.logWarning('Difference detected, recovering from snapshot', {

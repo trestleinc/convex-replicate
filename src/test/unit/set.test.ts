@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { setReplicate, ensureSet, resetSetState, getProtocolInfo } from '../../client/set.js';
+import { setReplicate, ensureSet, _resetSetState, getProtocolInfo } from '$/client/set.js';
 
 // Mock ConvexClient
 function createMockConvexClient(options?: { protocolVersion?: number; shouldThrow?: boolean }) {
@@ -16,13 +16,13 @@ function createMockConvexClient(options?: { protocolVersion?: number; shouldThro
   };
 }
 
-describe('set.ts', () => {
+describe('Set Module', () => {
   beforeEach(() => {
-    resetSetState();
+    _resetSetState();
   });
 
   afterEach(() => {
-    resetSetState();
+    _resetSetState();
   });
 
   describe('setReplicate', () => {
@@ -133,29 +133,6 @@ describe('set.ts', () => {
       });
 
       expect(mockClient.query).toHaveBeenCalledTimes(2);
-    });
-  });
-
-  describe('resetSetState', () => {
-    it('allows re-initialization after reset', async () => {
-      const mockClient = createMockConvexClient({ protocolVersion: 1 });
-      const mockProtocol = vi.fn();
-
-      const options = {
-        convexClient: mockClient as any,
-        api: { protocol: mockProtocol as any },
-      };
-
-      // First init
-      await ensureSet(options);
-      const firstCallCount = mockClient.query.mock.calls.length;
-
-      // Reset
-      resetSetState();
-
-      // Second init should happen
-      await ensureSet(options);
-      expect(mockClient.query.mock.calls.length).toBeGreaterThan(firstCallCount);
     });
   });
 

@@ -1,17 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import { Effect } from 'effect';
-import { CheckpointService, CheckpointServiceLive } from '../../client/services/index.js';
+import { Checkpoint, CheckpointLive } from '$/client/services/checkpoint.js';
 
-describe('CheckpointService', () => {
-  // CheckpointServiceLive now uses idb-keyval directly - no IDBService dependency
-  const testLayer = CheckpointServiceLive;
+describe('Checkpoint', () => {
+  // CheckpointLive now uses idb-keyval directly - no IDBService dependency
+  const testLayer = CheckpointLive;
 
   it('saves checkpoint to IndexedDB', async () => {
     const checkpoint = { lastModified: Date.now() };
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const checkpointSvc = yield* CheckpointService;
+        const checkpointSvc = yield* Checkpoint;
 
         yield* checkpointSvc.saveCheckpoint('test-collection', checkpoint);
 
@@ -28,7 +28,7 @@ describe('CheckpointService', () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const checkpointSvc = yield* CheckpointService;
+        const checkpointSvc = yield* Checkpoint;
 
         // Save checkpoint
         yield* checkpointSvc.saveCheckpoint('test-collection', checkpoint);
@@ -44,7 +44,7 @@ describe('CheckpointService', () => {
   it('returns default checkpoint when none exists', async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const checkpointSvc = yield* CheckpointService;
+        const checkpointSvc = yield* Checkpoint;
 
         // Try to load from non-existent collection
         const loaded = yield* checkpointSvc.loadCheckpoint('non-existent-collection');
@@ -60,7 +60,7 @@ describe('CheckpointService', () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const checkpointSvc = yield* CheckpointService;
+        const checkpointSvc = yield* Checkpoint;
 
         // Save first checkpoint
         yield* checkpointSvc.saveCheckpoint('test-collection', checkpoint1);
@@ -82,7 +82,7 @@ describe('CheckpointService', () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const checkpointSvc = yield* CheckpointService;
+        const checkpointSvc = yield* Checkpoint;
 
         // Save to different collections
         yield* checkpointSvc.saveCheckpoint('collection-1', checkpoint1);

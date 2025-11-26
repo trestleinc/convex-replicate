@@ -20,10 +20,16 @@ export default defineConfig({
         'src/test/', // Exclude test files from coverage
       ],
     },
+    // Test projects for better organization
+    // Run specific project: pnpm test --project=unit
+    // Run all: pnpm test
+    typecheck: {
+      enabled: false, // Disable type checking in tests for speed
+    },
   },
   resolve: {
     alias: {
-      '@': resolve(__dirname, './src'),
+      $: resolve(__dirname, './src'),
     },
   },
 });

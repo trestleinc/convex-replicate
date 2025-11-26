@@ -2,11 +2,11 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   initializeReplicateParams,
   replicateInsert,
-  replicateUpdate,
+  replicateUpsert,
   replicateDelete,
   _resetReplicateParams,
   type ReplicateParams,
-} from '../../client/replicate.js';
+} from '$/client/replicate.js';
 
 describe('Race Condition Regression Tests', () => {
   // Reset module-level state before each test
@@ -75,7 +75,7 @@ describe('Race Condition Regression Tests', () => {
 
     // Rapid operations
     replicateInsert([{ id: '1', title: 'Task 1' }]);
-    replicateUpdate([{ id: '1', title: 'Updated Task 1' }]);
+    replicateUpsert([{ id: '1', title: 'Updated Task 1' }]);
     replicateDelete([{ id: '1', title: 'Task 1' }]);
 
     // All operations completed successfully

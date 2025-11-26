@@ -18,7 +18,7 @@ export function initializeReplicateParams(params: ReplicateParams): void {
   replicateParams = params;
 }
 
-// Export for test cleanup
+// Internal - for test cleanup only
 export function _resetReplicateParams(): void {
   replicateParams = null;
 }
@@ -35,15 +35,6 @@ export function replicateInsert<T>(items: T[]): void {
   params.begin();
   for (const item of items) {
     params.write({ type: 'insert', value: item });
-  }
-  params.commit();
-}
-
-export function replicateUpdate<T>(items: T[]): void {
-  const params = ensureInitialized();
-  params.begin();
-  for (const item of items) {
-    params.write({ type: 'update', value: item });
   }
   params.commit();
 }
@@ -65,11 +56,6 @@ export function replicateUpsert<T>(items: T[]): void {
     params.write({ type: 'update', value: item });
   }
   params.commit();
-}
-
-export function replicateTruncate(): void {
-  const params = ensureInitialized();
-  params.truncate();
 }
 
 export function replicateReplace<T>(items: T[]): void {

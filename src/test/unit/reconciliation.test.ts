@@ -2,20 +2,12 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { Effect } from 'effect';
 import { del as idbDel } from 'idb-keyval';
 import * as Y from 'yjs';
-import {
-  ReconciliationService,
-  ReconciliationServiceLive,
-} from '../../client/services/index.js';
-import {
-  createYjsDocument,
-  getYMap,
-  yjsTransact,
-  destroyYjsDocument,
-} from '../../client/merge.js';
+import { Reconciliation, ReconciliationLive } from '$/client/services/reconciliation.js';
+import { createYjsDocument, getYMap, yjsTransact } from '$/client/merge.js';
 
-describe('ReconciliationService', () => {
-  // ReconciliationServiceLive now uses plain merge helpers - no YjsService dependency
-  const testLayer = ReconciliationServiceLive;
+describe('Reconciliation', () => {
+  // ReconciliationLive now uses plain merge helpers - no YjsService dependency
+  const testLayer = ReconciliationLive;
 
   interface TestDoc {
     id: string;
@@ -48,13 +40,13 @@ describe('ReconciliationService', () => {
 
     const removed = await Effect.runPromise(
       Effect.gen(function* () {
-        const reconciliation = yield* ReconciliationService;
+        const reconciliation = yield* Reconciliation;
         return yield* reconciliation.reconcile(ydoc, ymap, 'test-collection', serverDocs, getKey);
       }).pipe(Effect.provide(testLayer))
     );
 
     expect(removed).toEqual([]);
-    destroyYjsDocument(ydoc);
+    ydoc.destroy();
   });
 
   it('removes phantom documents not on server', async () => {
@@ -80,7 +72,7 @@ describe('ReconciliationService', () => {
 
     const removed = await Effect.runPromise(
       Effect.gen(function* () {
-        const reconciliation = yield* ReconciliationService;
+        const reconciliation = yield* Reconciliation;
         return yield* reconciliation.reconcile(ydoc, ymap, 'test-collection', serverDocs, getKey);
       }).pipe(Effect.provide(testLayer))
     );
@@ -94,7 +86,7 @@ describe('ReconciliationService', () => {
     expect(ymap.get('doc2')).toBeUndefined();
     expect(ymap.get('doc3')).toBeUndefined();
 
-    destroyYjsDocument(ydoc);
+    ydoc.destroy();
   });
 
   it('handles empty local state', async () => {
@@ -109,13 +101,13 @@ describe('ReconciliationService', () => {
 
     const removed = await Effect.runPromise(
       Effect.gen(function* () {
-        const reconciliation = yield* ReconciliationService;
+        const reconciliation = yield* Reconciliation;
         return yield* reconciliation.reconcile(ydoc, ymap, 'test-collection', serverDocs, getKey);
       }).pipe(Effect.provide(testLayer))
     );
 
     expect(removed).toEqual([]);
-    destroyYjsDocument(ydoc);
+    ydoc.destroy();
   });
 
   it('handles empty server state', async () => {
@@ -139,7 +131,7 @@ describe('ReconciliationService', () => {
 
     const removed = await Effect.runPromise(
       Effect.gen(function* () {
-        const reconciliation = yield* ReconciliationService;
+        const reconciliation = yield* Reconciliation;
         return yield* reconciliation.reconcile(ydoc, ymap, 'test-collection', serverDocs, getKey);
       }).pipe(Effect.provide(testLayer))
     );
@@ -148,7 +140,7 @@ describe('ReconciliationService', () => {
     expect(removed[0].id).toBe('doc1');
     expect(ymap.get('doc1')).toBeUndefined();
 
-    destroyYjsDocument(ydoc);
+    ydoc.destroy();
   });
 
   it('preserves server documents during reconciliation', async () => {
@@ -176,7 +168,7 @@ describe('ReconciliationService', () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const reconciliation = yield* ReconciliationService;
+        const reconciliation = yield* Reconciliation;
         yield* reconciliation.reconcile(ydoc, ymap, 'test-collection', serverDocs, getKey);
       }).pipe(Effect.provide(testLayer))
     );
@@ -189,7 +181,7 @@ describe('ReconciliationService', () => {
     expect(ymap.get('phantom1')).toBeUndefined();
     expect(ymap.get('phantom2')).toBeUndefined();
 
-    destroyYjsDocument(ydoc);
+    ydoc.destroy();
   });
 
   it('returns removed items with correct shape', async () => {
@@ -213,7 +205,7 @@ describe('ReconciliationService', () => {
 
     const removed = await Effect.runPromise(
       Effect.gen(function* () {
-        const reconciliation = yield* ReconciliationService;
+        const reconciliation = yield* Reconciliation;
         return yield* reconciliation.reconcile(ydoc, ymap, 'test-collection', serverDocs, getKey);
       }).pipe(Effect.provide(testLayer))
     );
@@ -225,7 +217,7 @@ describe('ReconciliationService', () => {
       extra: 'extra-value',
     });
 
-    destroyYjsDocument(ydoc);
+    ydoc.destroy();
   });
 
   it('handles large number of phantom documents', async () => {
@@ -254,7 +246,7 @@ describe('ReconciliationService', () => {
 
     const removed = await Effect.runPromise(
       Effect.gen(function* () {
-        const reconciliation = yield* ReconciliationService;
+        const reconciliation = yield* Reconciliation;
         return yield* reconciliation.reconcile(ydoc, ymap, 'test-collection', serverDocs, getKey);
       }).pipe(Effect.provide(testLayer))
     );
@@ -272,6 +264,6 @@ describe('ReconciliationService', () => {
       expect(ymap.get(`doc${i}`)).toBeUndefined();
     }
 
-    destroyYjsDocument(ydoc);
+    ydoc.destroy();
   });
 });
