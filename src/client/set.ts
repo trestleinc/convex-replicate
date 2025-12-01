@@ -9,13 +9,31 @@ const logger = getLogger(['replicate', 'set']);
 let setPromise: Promise<void> | null = null;
 let isSet = false;
 
+/** Configuration options for setReplicate */
 export interface SetOptions {
+  /** The Convex client instance */
   convexClient: ConvexClient;
+  /** API endpoints for the replicate component */
   api?: {
+    /** Protocol version query endpoint */
     protocol?: FunctionReference<'query'>;
   };
 }
 
+/**
+ * Initialize the Replicate client with protocol version verification.
+ *
+ * @param options - Configuration options including convexClient and api endpoints
+ * @throws Error if protocol endpoint is not provided or setup fails
+ *
+ * @example
+ * ```typescript
+ * await setReplicate({
+ *   convexClient,
+ *   api: { protocol: api.replicate.protocol }
+ * });
+ * ```
+ */
 export async function setReplicate(options: SetOptions): Promise<void> {
   const { convexClient, api } = options;
 
@@ -45,6 +63,13 @@ export async function setReplicate(options: SetOptions): Promise<void> {
   }
 }
 
+/**
+ * Ensure Replicate is initialized, running setup lazily if needed.
+ * Safe to call multiple times - only initializes once.
+ *
+ * @param options - Configuration options
+ * @returns Promise that resolves when setup is complete
+ */
 export function ensureSet(options: SetOptions): Promise<void> {
   if (isSet) {
     return Promise.resolve();
@@ -81,6 +106,21 @@ export function _resetSetState(): void {
   isSet = false;
 }
 
+/**
+ * Get protocol version information for debugging and diagnostics.
+ *
+ * @param convexClient - The Convex client instance
+ * @param api - API endpoints (protocol query required)
+ * @returns Protocol version info including server, local, and migration status
+ *
+ * @example
+ * ```typescript
+ * const info = await getProtocolInfo(convexClient, { protocol: api.replicate.protocol });
+ * if (info.needsMigration) {
+ *   console.log(`Migration needed: v${info.localVersion} → v${info.serverVersion}`);
+ * }
+ * ```
+ */
 export async function getProtocolInfo(
   convexClient: ConvexClient,
   api?: SetOptions['api']

@@ -1,11 +1,26 @@
 import { defineTable } from 'convex/server';
 import { v } from 'convex/values';
 
+/** Fields automatically added to replicated tables */
 export type ReplicationFields = {
   version: number;
   timestamp: number;
 };
 
+/**
+ * Define a table with automatic version and timestamp fields for replication.
+ *
+ * @example
+ * ```typescript
+ * // convex/schema.ts
+ * export default defineSchema({
+ *   tasks: replicatedTable(
+ *     { id: v.string(), text: v.string(), isCompleted: v.boolean() },
+ *     (t) => t.index('by_id', ['id'])
+ *   ),
+ * });
+ * ```
+ */
 export function replicatedTable(
   userFields: Record<string, any>,
   applyIndexes?: (table: any) => any
