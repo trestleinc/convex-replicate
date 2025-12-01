@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**ConvexReplicate** (`@trestleinc/replicate`) - Offline-first data replication using Yjs CRDTs and Convex for automatic conflict resolution and real-time synchronization.
+**Replicate** (`@trestleinc/replicate`) - Offline-first data replication using Yjs CRDTs and Convex for automatic conflict resolution and real-time synchronization.
 
 Single package with exports:
 - `@trestleinc/replicate/client` → Client utilities (browser/React/Svelte)
@@ -129,9 +129,17 @@ export const { stream, material, insert, update, remove, protocol, compact, prun
 
 ### Client: Collection Setup
 ```typescript
-// Use convexCollectionOptions + createConvexCollection pattern
-const rawCollection = createCollection(convexCollectionOptions<Task>({ ... }));
-const collection = createConvexCollection(rawCollection);
+// Use convexCollectionOptions + handleReconnect pattern
+const collection = handleReconnect(
+  createCollection(
+    convexCollectionOptions<Task>({
+      convexClient,
+      api: api.tasks,
+      collection: 'tasks',
+      getKey: (task) => task.id,
+    })
+  )
+);
 ```
 
 ### Schema: replicatedTable Helper

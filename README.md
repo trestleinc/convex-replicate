@@ -1,8 +1,8 @@
-# Convex Replicate
+# Replicate
 
 **Offline-first sync library using Yjs CRDTs and Convex for real-time data synchronization.**
 
-Convex Replicate provides a dual-storage architecture for building offline-capable applications with automatic conflict resolution. It combines Yjs CRDTs (96% smaller than Automerge, no WASM) with TanStack's offline transaction system and Convex's reactive backend for real-time synchronization and efficient querying.
+Replicate provides a dual-storage architecture for building offline-capable applications with automatic conflict resolution. It combines Yjs CRDTs (96% smaller than Automerge, no WASM) with TanStack's offline transaction system and Convex's reactive backend for real-time synchronization and efficient querying.
 
 ## Features
 
@@ -42,7 +42,7 @@ sequenceDiagram
 
     Note over Offline: Automatic retry with backoff
     Offline->>Yjs: Get CRDT delta
-    Offline->>Convex: insertDocument/updateDocument mutation
+    Offline->>Convex: insert/update mutation
     Convex->>Component: Append delta to event log
     Convex->>Table: Insert/Update materialized doc
 
@@ -59,7 +59,7 @@ graph LR
     Component[Component Storage<br/>Event Log<br/>CRDT Deltas]
     MainTable[Main Application Table<br/>Materialized Docs<br/>Efficient Queries]
 
-    Client -->|insertDocument/updateDocument| Component
+    Client -->|insert/update/remove| Component
     Component -->|also writes to| MainTable
     MainTable -->|subscription| Client
 ```
@@ -71,31 +71,7 @@ graph LR
 
 ## Understanding Consistency Guarantees
 
-Convex Replicate combines two different consistency models to give you the best of both worlds: **strict ordering on the server** and **optimistic updates on the client**.
-
-### Two-Tier Consistency Model
-
-```mermaid
-graph TB
-    subgraph Server["Server: Strictly Serializable (Convex)"]
-        S1[Mutations execute in order]
-        S2[OCC prevents conflicts]
-        S3[Automatic retry on version mismatch]
-        S4[Deterministic outcomes]
-    end
-
-    subgraph Client["Client: Eventual Consistency (Yjs CRDTs)"]
-        C1[Optimistic updates - instant UI]
-        C2[Automatic field-level merge]
-        C3[Last-write-wins per field]
-        C4[Eventually converges]
-    end
-
-    Server <-->|Sync Protocol| Client
-
-    style Server fill:#e1f5e1
-    style Client fill:#e1e8f5
-```
+Replicate combines two different consistency models to give you the best of both worlds: **strict ordering on the server** and **optimistic updates on the client**.
 
 ### Server-Side: Strictly Serializable (Convex)
 
@@ -218,7 +194,7 @@ Not all operations are suitable for client-side optimistic updates. Use this gui
 
 ### Understanding Conflicts
 
-Convex Replicate handles two types of conflicts with different mechanisms:
+Replicate handles two types of conflicts with different mechanisms:
 
 #### Server Conflicts (OCC)
 **Cause**: Two mutations modify the same document simultaneously
@@ -384,32 +360,32 @@ import { defineReplicate } from '@trestleinc/replicate/server';
 import { components } from './_generated/api';
 import type { Task } from '../src/useTasks';
 
-// One function call generates all 8 operations
+// One function call generates all operations
 export const {
   stream,
-  getTasks,
-  insertDocument,
-  updateDocument,
-  deleteDocument,
-  getProtocolVersion,
+  material,
+  insert,
+  update,
+  remove,
+  protocol,
   compact,
   prune
 } = defineReplicate<Task>({
   component: components.replicate,
   collection: 'tasks',
-  compaction: { retentionDays: 90 },    // Optional: customize compaction
-  pruning: { retentionDays: 180 }       // Optional: customize pruning
+  compaction: { retention: 90 },    // Optional: customize compaction (days)
+  pruning: { retention: 180 }       // Optional: customize pruning (days)
 });
 ```
 
 **What `defineReplicate` generates:**
 
 - `stream` - Real-time CRDT stream query (for client subscriptions)
-- `getTasks` - SSR-friendly query (for server-side rendering)
-- `insertDocument` - Dual-storage insert mutation
-- `updateDocument` - Dual-storage update mutation
-- `deleteDocument` - Dual-storage delete mutation
-- `getProtocolVersion` - Protocol version query (for client setup)
+- `material` - SSR-friendly query (for server-side rendering)
+- `insert` - Dual-storage insert mutation
+- `update` - Dual-storage update mutation
+- `remove` - Dual-storage delete mutation
+- `protocol` - Protocol version query (for client setup)
 - `compact` - Compaction function (for cron jobs)
 - `prune` - Snapshot cleanup function (for cron jobs)
 
@@ -422,7 +398,7 @@ Create a hook that wraps TanStack DB with Convex collection options:
 import { createCollection } from '@tanstack/react-db';
 import {
   convexCollectionOptions,
-  createConvexCollection,
+  handleReconnect,
   type ConvexCollection,
 } from '@trestleinc/replicate/client';
 import { api } from '../convex/_generated/api';
@@ -444,26 +420,17 @@ export function useTasks(
 ) {
   return useMemo(() => {
     if (!tasksCollection) {
-      // Step 1: Create raw TanStack DB collection with ALL config
-      const rawCollection = createCollection(
-        convexCollectionOptions<Task>({
-          convexClient,
-          api: {
-            stream: api.tasks.stream,
-            insertDocument: api.tasks.insertDocument,
-            updateDocument: api.tasks.updateDocument,
-            deleteDocument: api.tasks.deleteDocument,
-            getProtocolVersion: api.tasks.getProtocolVersion,
-          },
-          collection: 'tasks',
-          getKey: (task) => task.id,
-          initialData,
-        })
+      tasksCollection = handleReconnect(
+        createCollection(
+          convexCollectionOptions<Task>({
+            convexClient,
+            api: api.tasks,
+            collection: 'tasks',
+            getKey: (task) => task.id,
+            material: initialData,
+          })
+        )
       );
-
-      // Step 2: Wrap with Convex offline support (Yjs + TanStack)
-      // Config is automatically extracted from rawCollection
-      tasksCollection = createConvexCollection(rawCollection);
     }
     return tasksCollection;
   }, [initialData]);
@@ -528,9 +495,9 @@ export function TaskList() {
 }
 ```
 
-## Delete Pattern: Hard Delete with Event History (v0.3.0+)
+## Delete Pattern: Hard Delete with Event History
 
-Convex Replicate uses **hard deletes** where items are physically removed from the main table, while the internal component preserves complete event history.
+Replicate uses **hard deletes** where items are physically removed from the main table, while the internal component preserves complete event history.
 
 **Why hard delete?**
 - Clean main table (no filtering required)
@@ -553,7 +520,7 @@ const { data: tasks } = useLiveQuery(collection);
 // SSR loader - no filtering needed!
 export const Route = createFileRoute('/')({
   loader: async () => {
-    const tasks = await httpClient.query(api.tasks.getTasks);
+    const tasks = await httpClient.query(api.tasks.material);
     return { tasks };
   },
 });
@@ -561,7 +528,7 @@ export const Route = createFileRoute('/')({
 
 **How it works:**
 1. Client calls `collection.delete(id)`
-2. `onDelete` handler captures Yjs deletion delta
+2. `onRemove` handler captures Yjs deletion delta
 3. Delta appended to component event log (history preserved)
 4. Main table: document physically removed
 5. Other clients notified and item removed locally
@@ -570,7 +537,7 @@ export const Route = createFileRoute('/')({
 
 ```typescript
 // convex/tasks.ts (using defineReplicate)
-export const { stream, getTasks, deleteDocument } = defineReplicate<Task>({
+export const { stream, material, remove } = defineReplicate<Task>({
   component: components.replicate,
   collection: 'tasks'
 });
@@ -582,7 +549,7 @@ export const { stream, getTasks, deleteDocument } = defineReplicate<Task>({
 
 ## Protocol Evolution & Migration
 
-ConvexReplicate includes automatic protocol migration to handle package updates and breaking changes. When you update the NPM package and the protocol version changes, the system automatically migrates local IndexedDB structures.
+Replicate includes automatic protocol migration to handle package updates and breaking changes. When you update the NPM package and the protocol version changes, the system automatically migrates local IndexedDB structures.
 
 ### How It Works
 
@@ -618,16 +585,9 @@ console.log('Needs migration:', info.needsMigration);
 
 Preload data on the server for instant page loads:
 
-**Step 1: Create an SSR-friendly query**
+**Step 1: Use the `material` query from defineReplicate**
 
-```typescript
-// convex/tasks.ts
-export const getTasks = query({
-  handler: async (ctx) => {
-    return await ctx.db.query('tasks').collect();
-  },
-});
-```
+The `material` query is automatically generated by `defineReplicate` and returns all documents for SSR hydration.
 
 **Step 2: Load data in your route loader**
 
@@ -642,7 +602,7 @@ const httpClient = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
 
 export const Route = createFileRoute('/')({
   loader: async () => {
-    const tasks = await httpClient.query(api.tasks.getTasks);
+    const tasks = await httpClient.query(api.tasks.material);
     return { tasks };
   },
 });
@@ -671,40 +631,40 @@ import type { Task } from '../src/useTasks';
 
 export const {
   stream,
-  getTasks,
-  insertDocument,
-  updateDocument,
-  deleteDocument,
-  getProtocolVersion
+  material,
+  insert,
+  update,
+  remove,
+  protocol
 } = defineReplicate<Task>({
   component: components.replicate,
   collection: 'tasks',
 
-  // Optional: Permission checks
+  // Optional: Permission checks (eval* hooks validate before execution)
   hooks: {
-    checkRead: async (ctx, collection) => {
+    evalRead: async (ctx, collection) => {
       const userId = await ctx.auth.getUserIdentity();
       if (!userId) throw new Error('Unauthorized');
     },
-    checkWrite: async (ctx, doc) => {
+    evalWrite: async (ctx, doc) => {
       const userId = await ctx.auth.getUserIdentity();
       if (!userId) throw new Error('Unauthorized');
       if (doc.ownerId !== userId.subject) throw new Error('Unauthorized');
     },
-    checkDelete: async (ctx, documentId) => {
+    evalRemove: async (ctx, documentId) => {
       const userId = await ctx.auth.getUserIdentity();
       if (!userId) throw new Error('Unauthorized');
     },
 
-    // Optional: Lifecycle callbacks
+    // Optional: Lifecycle callbacks (on* hooks run after execution)
     onInsert: async (ctx, doc) => {
       console.log('Inserted:', doc);
     },
     onUpdate: async (ctx, doc) => {
       console.log('Updated:', doc);
     },
-    onDelete: async (ctx, documentId) => {
-      console.log('Deleted:', documentId);
+    onRemove: async (ctx, documentId) => {
+      console.log('Removed:', documentId);
     }
   }
 });
@@ -755,20 +715,16 @@ Creates collection options for TanStack DB with Yjs CRDT integration.
 interface ConvexCollectionOptionsConfig<T> {
   convexClient: ConvexClient;
   api: {
-    stream: FunctionReference;          // Real-time subscription endpoint
-    insertDocument: FunctionReference;  // Insert mutation
-    updateDocument: FunctionReference;  // Update mutation
-    deleteDocument: FunctionReference;  // Delete mutation
-    getProtocolVersion: FunctionReference; // Protocol version query
+    stream: FunctionReference;    // Real-time subscription endpoint
+    insert: FunctionReference;    // Insert mutation
+    update: FunctionReference;    // Update mutation
+    remove: FunctionReference;    // Delete mutation
+    protocol?: FunctionReference; // Protocol version query (optional)
   };
   collection: string;
   getKey: (item: T) => string | number;
-  initialData?: {
-    documents: T[];
-    checkpoint?: any;
-    count?: number;
-    crdtBytes?: Uint8Array;
-  };
+  material?: Materialized<T>;     // SSR hydration data
+  undoCaptureTimeout?: number;    // Undo stack merge window (default: 500ms)
 }
 ```
 
@@ -776,37 +732,31 @@ interface ConvexCollectionOptionsConfig<T> {
 
 **Example:**
 ```typescript
-const rawCollection = createCollection(
-  convexCollectionOptions<Task>({
-    convexClient,
-    api: {
-      stream: api.tasks.stream,
-      insertDocument: api.tasks.insertDocument,
-      updateDocument: api.tasks.updateDocument,
-      deleteDocument: api.tasks.deleteDocument,
-      getProtocolVersion: api.tasks.getProtocolVersion,
-    },
-    collection: 'tasks',
-    getKey: (task) => task.id,
-    initialData,
-  })
+const collection = handleReconnect(
+  createCollection(
+    convexCollectionOptions<Task>({
+      convexClient,
+      api: api.tasks,
+      collection: 'tasks',
+      getKey: (task) => task.id,
+      material: initialData,
+    })
+  )
 );
-
-const collection = createConvexCollection(rawCollection);
 ```
 
-#### `createConvexCollection<T>(rawCollection)`
+#### `handleReconnect<T>(rawCollection)`
 
-Wraps a TanStack DB collection with offline support (Yjs + TanStack offline-transactions).
+Wraps a TanStack DB collection with offline transaction handling (Yjs + TanStack offline-transactions).
 
 **Parameters:**
 - `rawCollection` - Collection created with `createCollection(convexCollectionOptions(...))`
 
-**Returns:** `ConvexCollection<T>` (just a type alias for `Collection<T>`)
+**Returns:** `ConvexCollection<T>` (type alias for `Collection<T>`)
 
 **Example:**
 ```typescript
-const collection = createConvexCollection(rawCollection);
+const collection = handleReconnect(rawCollection);
 
 // Use standard TanStack DB operations
 collection.insert({ id: '1', text: 'Task 1', isCompleted: false });
@@ -911,33 +861,36 @@ interface DefineReplicateConfig<T> {
 
   // Optional: Compaction settings
   compaction?: {
-    retentionDays: number;     // Default: 90
+    retention: number;         // Days to retain deltas (default: 90)
   };
 
   // Optional: Pruning settings
   pruning?: {
-    retentionDays: number;     // Default: 180
+    retention: number;         // Days to retain snapshots (default: 180)
   };
 
   // Optional: Hooks for permissions and lifecycle
   hooks?: {
-    checkRead?: (ctx, collection) => Promise<void>;
-    checkWrite?: (ctx, doc) => Promise<void>;
-    checkDelete?: (ctx, documentId) => Promise<void>;
+    // Permission checks (throw to reject)
+    evalRead?: (ctx, collection) => Promise<void>;
+    evalWrite?: (ctx, doc) => Promise<void>;
+    evalRemove?: (ctx, documentId) => Promise<void>;
+
+    // Lifecycle callbacks (run after operation)
     onInsert?: (ctx, doc) => Promise<void>;
     onUpdate?: (ctx, doc) => Promise<void>;
-    onDelete?: (ctx, documentId) => Promise<void>;
+    onRemove?: (ctx, documentId) => Promise<void>;
   };
 }
 ```
 
-**Returns:** Object with 8 generated functions:
+**Returns:** Object with generated functions:
 - `stream` - Real-time CRDT stream query
-- `getTasks` - SSR-friendly query (naming convention: `get{CollectionName}`)
-- `insertDocument` - Dual-storage insert mutation
-- `updateDocument` - Dual-storage update mutation
-- `deleteDocument` - Dual-storage delete mutation
-- `getProtocolVersion` - Protocol version query
+- `material` - SSR-friendly query for hydration
+- `insert` - Dual-storage insert mutation
+- `update` - Dual-storage update mutation
+- `remove` - Dual-storage delete mutation
+- `protocol` - Protocol version query
 - `compact` - Compaction function for cron jobs
 - `prune` - Snapshot cleanup function for cron jobs
 
@@ -946,11 +899,11 @@ interface DefineReplicateConfig<T> {
 // Basic usage
 export const {
   stream,
-  getTasks,
-  insertDocument,
-  updateDocument,
-  deleteDocument,
-  getProtocolVersion,
+  material,
+  insert,
+  update,
+  remove,
+  protocol,
   compact,
   prune
 } = defineReplicate<Task>({
@@ -961,20 +914,20 @@ export const {
 // With custom settings
 export const {
   stream,
-  getUsers,
-  insertDocument,
-  updateDocument,
-  deleteDocument,
-  getProtocolVersion,
+  material,
+  insert,
+  update,
+  remove,
+  protocol,
   compact,
   prune
 } = defineReplicate<User>({
   component: components.replicate,
   collection: 'users',
-  compaction: { retentionDays: 30 },
-  pruning: { retentionDays: 90 },
+  compaction: { retention: 30 },
+  pruning: { retention: 90 },
   hooks: {
-    checkWrite: async (ctx, doc) => {
+    evalWrite: async (ctx, doc) => {
       const userId = await ctx.auth.getUserIdentity();
       if (!userId) throw new Error('Unauthorized');
     }
@@ -1102,17 +1055,17 @@ pnpm run format:check  # Check formatting
 pnpm run dev:example   # Start example app + Convex dev environment
 ```
 
-## Jamie's Seven Questions: Production Readiness Deep-Dive
+## Production Readiness Deep-Dive
 
-> A comprehensive technical analysis of ConvexReplicate's sync engine capabilities, answering the critical questions from Convex's "Object Sync" paper.
+> A comprehensive technical analysis of Replicate's sync engine capabilities, answering the critical questions from Convex's "Object Sync" paper.
 
-**Current Status: 7/7 Fully Implemented** ✅
+**Current Status: 7/7 Fully Implemented** 
 
-ConvexReplicate has been architected from the ground up to handle production requirements for local-first sync systems. Below we address each of Jamie Turner's critical questions with our actual implementation patterns.
+Replicate has been architected from the ground up to handle production requirements for local-first sync systems. Below we address each of Jamie Turner's critical questions with our actual implementation patterns.
 
 ---
 
-### 1. ✅ Consistency Model: Server-side Serializable vs. Client-side CRDTs
+### 1. Consistency Model: Server-side Serializable vs. Client-side CRDTs
 
 **Status: FULLY IMPLEMENTED**
 
@@ -1121,7 +1074,7 @@ How do you reconcile server-side strictly serializable transactions with client-
 
 **Our Solution: Server Reconciliation with CRDT-ish Mutations**
 
-ConvexReplicate uses a hybrid approach aligned with Convex's recommended "Server Reconciliation" pattern:
+Replicate uses a hybrid approach aligned with Convex's recommended "Server Reconciliation" pattern:
 
 - **Server-side:** Convex's serializable transaction system guarantees strict serializability
 - **Client-side:** Yjs CRDTs provide field-level conflict resolution
@@ -1141,7 +1094,7 @@ ydoc.transact(() => {
 
 ---
 
-### 2. ✅ Type Sharing: One Schema, Many Consumers
+### 2. Type Sharing: One Schema, Many Consumers
 
 **Status: FULLY IMPLEMENTED**
 
@@ -1150,7 +1103,7 @@ How do you keep client and server schemas in sync without manual duplication?
 
 **Our Solution: Schema-Based Type Generation**
 
-ConvexReplicate uses the `replicatedTable()` helper for automatic type sharing:
+Replicate uses the `replicatedTable()` helper for automatic type sharing:
 
 ```typescript
 // convex/schema.ts - Define once
@@ -1178,7 +1131,7 @@ export default defineSchema({
 
 ---
 
-### 3. ✅ Long Histories: Compaction and Storage Management
+### 3. Long Histories: Compaction and Storage Management
 
 **Status: FULLY IMPLEMENTED**
 
@@ -1187,7 +1140,7 @@ How do you prevent unbounded growth of CRDT deltas while preserving history?
 
 **Our Solution: Cron-Based Compaction with State Vector Sync**
 
-ConvexReplicate uses an event-sourced architecture with automatic compaction:
+Replicate uses an event-sourced architecture with automatic compaction:
 
 ```typescript
 // convex/crons.ts - Automatic compaction schedule
@@ -1226,65 +1179,84 @@ crons.weekly('prune tasks snapshots',
 
 ---
 
-### 4. ✅ Schema Migrations: Evolving Your Data Model
+### 4. Schema Flexibility: Evolving Your Data Model
 
-**Status: FULLY IMPLEMENTED**
+**Status: BUILT-IN (No Migration Code Needed!)**
 
 **The Challenge:**
-How do you migrate client data when server schema changes?
+How do you evolve your data model without complex migration scripts?
 
-**Our Solution: Configuration-Based Migrations with Sequential Chain**
+**Our Solution: Yjs Field-Level CRDTs Eliminate Migrations**
 
-ConvexReplicate supports schema migrations through the `Replicate` class constructor:
+Traditional sync systems require migration code when schemas change. Replicate doesn't - Yjs Maps handle schema evolution naturally at the field level:
 
 ```typescript
-// Define migration functions
-const tasksV1toV2 = (doc: any) => ({ ...doc, priority: 'medium' });
-const tasksV2toV3 = (doc: any) => {
-  const { completed, ...rest } = doc;
-  return { ...rest, isCompleted: completed };
-};
+// Version 1: Original schema
+interface TaskV1 {
+  id: string;
+  text: string;
+}
 
-// Create storage with migrations config
-const tasksStorage = new Replicate<Task>(
-  components.replicate,
-  'tasks',
-  {
-    migrations: {
-      schemaVersion: 3,
-      functions: {
-        2: tasksV1toV2,  // v1 → v2
-        3: tasksV2toV3,  // v2 → v3
-      },
-    },
-  }
-);
+// Version 2: Added priority field
+interface TaskV2 {
+  id: string;
+  text: string;
+  priority: 'low' | 'medium' | 'high';  // New field!
+}
+
+// No migration code needed! Just update your TypeScript types.
+// Old clients: Continue working, just don't see/set priority
+// New clients: See priority as undefined for old docs, can set it
 ```
 
-**How It Works:**
+**Why This Works:**
 
-1. **Client sends schema version** - Passed as `_schemaVersion` metadata
-2. **Server detects mismatch** - Compares with `migrations.schemaVersion`
-3. **Sequential migration** - Applies v1→v2→v3 transformations automatically
-4. **Type-safe** - Migration functions validated at construction time
-5. **Zero duplication** - Same code path for migrating and non-migrating cases
+| Schema Change | Traditional Approach | Replicate with Yjs |
+|---------------|---------------------|-------------------|
+| **Add field** | Write migration, track versions | Just add it - Yjs Maps handle sparse data |
+| **Remove field** | Write migration, handle old data | Just remove it - old data ignored |
+| **Rename field** | Write migration, transform data | Treat as add new + ignore old |
+| **Change type** | Complex migration logic | Handle at application level |
 
-**Version Skipping:** Client on v1 can jump to v5 automatically - server applies v1→v2, v2→v3, v3→v4, v4→v5 sequentially!
+**How Yjs Handles It:**
 
-**Pattern:** Configuration-based approach inspired by R2 and Workpool components - no inheritance complexity.
+1. **Sparse Maps**: Yjs Maps don't require all fields - missing fields return `undefined`
+2. **Field-Level Sync**: Each field syncs independently, not the whole document
+3. **No Version Tracking**: No `_schemaVersion` metadata to manage
+4. **Backward Compatible**: Old clients ignore fields they don't know about
+
+**Example: Adding a Priority Field**
+
+```typescript
+// Old client code (still works!)
+collection.update(taskId, (draft) => {
+  draft.text = 'Updated text';  // Works fine
+  // Doesn't know about priority - that's OK!
+});
+
+// New client code
+collection.update(taskId, (draft) => {
+  draft.text = 'Updated text';
+  draft.priority = 'high';  // Sets new field
+});
+
+// Both clients sync correctly - no conflicts, no migrations!
+```
+
+**Key Insight:** By using field-level CRDTs instead of document-level versioning, schema evolution becomes a non-issue. This is one of the major advantages of Yjs over traditional sync approaches!
 
 ---
 
-### 5. ✅ Protocol Evolution: Updating the Sync Protocol
+### 5. Protocol Evolution: Updating the Sync Protocol
 
 **Status: FULLY IMPLEMENTED**
 
 **The Challenge:**
-How do you evolve the ConvexReplicate API without breaking existing clients?
+How do you evolve the Replicate API without breaking existing clients?
 
 **Our Solution: Protocol Version with Local Storage Migration**
 
-ConvexReplicate uses simple protocol versioning:
+Replicate uses simple protocol versioning:
 
 ```typescript
 // src/component/public.ts
@@ -1316,15 +1288,11 @@ if (localVersion < serverVersion.protocolVersion) {
 - Add required field: ❌ Requires NPM package update + local storage migration
 - Remove/change field: ❌ Blocks syncing, clear error message to update
 
-**Key Difference:**
-- **Protocol Version** = ConvexReplicate's API signatures (insertDocument args shape)
-- **Schema Version** = Your app's document structure (tasks: { id, text, priority })
-
-Protocol changes require NPM package update; schema changes use migrations!
+**Note:** Protocol version only applies to the Replicate library's internal API - your application schema changes are handled automatically by Yjs (see Schema Flexibility above).
 
 ---
 
-### 6. ✅ Reset Handling: Difference Detection and Transparent Recovery
+### 6. Reset Handling: Difference Detection and Transparent Recovery
 
 **Status: FULLY IMPLEMENTED** (via difference detection!)
 
@@ -1333,7 +1301,7 @@ What happens when a client is so far behind that deltas were compacted?
 
 **Our Solution: Automatic Difference Detection with State Vector Sync**
 
-This is where ConvexReplicate really shines - **reset handling is already built into our stream query!** Let's look at the actual code:
+This is where Replicate really shines - **reset handling is already built into our stream query!** Let's look at the actual code:
 
 ```typescript
 // src/component/public.ts (lines 123-258)
@@ -1431,7 +1399,7 @@ export const stream = query({
 
 ---
 
-### 7. ✅ Authorization: Standard Convex Patterns + Optional Hooks
+### 7. Authorization: Standard Convex Patterns + Optional Hooks
 
 **Status: FULLY IMPLEMENTED**
 
@@ -1440,7 +1408,7 @@ How do you handle authorization in local-first systems with optimistic updates?
 
 **Our Answer: Use Standard Convex Patterns**
 
-Authorization in ConvexReplicate is straightforward - use Convex's built-in `ctx.auth`:
+Authorization in Replicate is straightforward - use Convex's built-in `ctx.auth`:
 
 ```typescript
 // Standard Convex auth - check in mutations
@@ -1481,14 +1449,14 @@ Follow [Convex Authorization Guide](https://stack.convex.dev/authorization):
 
 ## Summary: Production-Ready Local-First Sync
 
-ConvexReplicate has been built from the ground up to handle real-world production requirements:
+Replicate has been built from the ground up to handle real-world production requirements:
 
 | Question | Status | Implementation |
 |----------|--------|----------------|
 | **1. Consistency Model** | ✅ Complete | Server Reconciliation with CRDT-ish mutations |
 | **2. Type Sharing** | ✅ Complete | Schema-based generation via `replicatedTable()` |
 | **3. Long Histories** | ✅ Complete | Cron-based compaction with state vector sync |
-| **4. Schema Migrations** | ✅ Complete | Configuration-based with sequential chain |
+| **4. Schema Flexibility** | ✅ Built-in | Yjs field-level CRDTs eliminate migrations |
 | **5. Protocol Evolution** | ✅ Complete | Version negotiation with local storage migration |
 | **6. Reset Handling** | ✅ Complete | Automatic difference detection (transparent to client!) |
 | **7. Authorization** | ✅ Complete | Optional hooks + standard Convex patterns |
@@ -1501,23 +1469,6 @@ ConvexReplicate has been built from the ground up to handle real-world productio
 - **State vectors prevent data loss** - Clients sync from snapshots without reset
 - **Difference detection = reset handling** - Much simpler than originally planned!
 
-**Jamie Happiness Score: 7/7 (100%)** - All production requirements met! 🎉
-
----
-
-## Roadmap
-
-- [ ] Partial sync (sync subset of collection)
-- [ ] Delta sync (only sync changed fields)
-- [ ] Encryption at rest
-- [ ] Attachment support (files, images)
-- [x] React Native support (works with Yjs v0.3.0+)
-- [ ] Advanced Yjs features (rich text editing, shared cursors)
-- [ ] Recovery features (restore deleted items from event log)
-
-## Contributing
-
-Contributions welcome! Please see `CLAUDE.md` for coding standards.
 
 ## License
 

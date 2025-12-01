@@ -1,6 +1,6 @@
 {
   "name": "@trestleinc/replicate",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Offline-first data replication with Yjs CRDTs and Convex",
   "repository": "github:trestleinc/replicate",
   "homepage": "https://github.com/trestleinc/replicate#readme",
@@ -37,7 +37,6 @@
     "format:check": "biome format .",
     "check": "biome check .",
     "check:fix": "biome check --write .",
-    "version-packages": "node scripts/version-packages.js",
     "test:convex": "cd src/test && npx convex dev",
     "test": "vitest run && vitest run --config vitest.browser.config.ts",
     "test:watch": "vitest",
@@ -103,7 +102,6 @@
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^27.1.0",
     "playwright": "^1.52.0",
-    "semantic-release": "25.0.1",
     "typescript": "5.9.3",
     "vitest": "4.0.8",
     "zod": "4.1.12"
