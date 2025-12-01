@@ -20,9 +20,15 @@ export default defineSchema({
     createdAt: v.number(),
   }).index('by_collection', ['collection']),
 
-  migrations: defineTable({
+  versions: defineTable({
     collection: v.string(),
-    version: v.number(),
-    updatedAt: v.number(),
-  }).index('by_collection', ['collection']),
+    documentId: v.string(),
+    versionId: v.string(),
+    stateBytes: v.bytes(),
+    label: v.optional(v.string()),
+    createdAt: v.number(),
+    createdBy: v.optional(v.string()),
+  })
+    .index('by_document', ['collection', 'documentId', 'createdAt'])
+    .index('by_version_id', ['versionId']),
 });

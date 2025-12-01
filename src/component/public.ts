@@ -212,7 +212,10 @@ export const getInitialState = query({
       .first();
 
     if (snapshot) {
-      logger.info('Serving initial state from snapshot', {
+      // Note: Despite the table name "snapshots", snapshotBytes contains a merged Yjs UPDATE
+      // (created via Y.mergeUpdatesV2), not a Yjs snapshot (Y.encodeSnapshotV2).
+      // This can be applied directly with Y.applyUpdateV2() on the client.
+      logger.info('Serving initial state from compacted snapshot', {
         collection: args.collection,
         snapshotSize: snapshot.snapshotBytes.byteLength,
         checkpoint: snapshot.latestCompactionTimestamp,
@@ -307,38 +310,41 @@ async function _compactCollectionInternal(ctx: any, collection: string, retentio
   });
 
   const updates = sorted.map((d: any) => new Uint8Array(d.crdtBytes));
-  const merged = Y.mergeUpdatesV2(updates);
 
-  const ydoc = new Y.Doc({ guid: collection });
-  Y.applyUpdateV2(ydoc, merged);
+  // Merge all deltas into a single compacted state
+  // NOTE: We store the merged UPDATE, not a Yjs snapshot.
+  // Y.snapshot() creates a "delete set" for version comparison, not document state.
+  // Y.mergeUpdatesV2() creates actual document state that can be applied with applyUpdateV2().
+  const compactedState = Y.mergeUpdatesV2(updates);
 
-  const snapshot = Y.snapshot(ydoc);
-  const snapshotBytes = Y.encodeSnapshotV2(snapshot);
-
-  logger.info('Created snapshot', {
+  logger.info('Created compacted state', {
     collection,
-    snapshotSize: snapshotBytes.length,
+    compactedSize: compactedState.length,
     compressionRatio: (
-      sorted.reduce((sum: any, d: any) => sum + d.crdtBytes.byteLength, 0) / snapshotBytes.length
+      sorted.reduce((sum: any, d: any) => sum + d.crdtBytes.byteLength, 0) / compactedState.length
     ).toFixed(2),
   });
 
-  const isValid = updates.every((update: any) => Y.snapshotContainsUpdate(snapshot, update));
-
-  if (!isValid) {
-    logger.error('Snapshot validation failed', {
+  // Validate: verify compacted state can be applied to a fresh document
+  const testDoc = new Y.Doc({ guid: collection });
+  try {
+    Y.applyUpdateV2(testDoc, compactedState);
+  } catch (error) {
+    logger.error('Compacted state validation failed - cannot apply to document', {
       collection,
+      error: String(error),
     });
-    ydoc.destroy();
+    testDoc.destroy();
     return {
       success: false,
       error: 'validation_failed',
     };
   }
+  testDoc.destroy();
 
   await ctx.db.insert('snapshots', {
     collection,
-    snapshotBytes: snapshotBytes.buffer as ArrayBuffer,
+    snapshotBytes: compactedState.buffer as ArrayBuffer,
     latestCompactionTimestamp: sorted[sorted.length - 1].timestamp,
     createdAt: Date.now(),
   });
@@ -347,12 +353,10 @@ async function _compactCollectionInternal(ctx: any, collection: string, retentio
     await ctx.db.delete(delta._id);
   }
 
-  ydoc.destroy();
-
   const result = {
     success: true,
     deltasCompacted: sorted.length,
-    snapshotSize: snapshotBytes.length,
+    snapshotSize: compactedState.length,
     oldestDelta: sorted[0].timestamp,
     newestDelta: sorted[sorted.length - 1].timestamp,
   };
@@ -425,5 +429,350 @@ export const pruneCollectionByName = mutation({
     logger.info('Snapshot cleanup completed for collection', result);
 
     return result;
+  },
+});
+
+// ============================================================================
+// Version History APIs
+// ============================================================================
+
+/**
+ * Reconstructs a document's current state from all deltas.
+ * Returns the merged state bytes that can be applied to a fresh Y.Doc.
+ */
+async function _reconstructDocumentState(
+  ctx: any,
+  collection: string,
+  documentId: string
+): Promise<{ stateBytes: Uint8Array; latestTimestamp: number } | null> {
+  // First check for a compacted snapshot
+  const snapshot = await ctx.db
+    .query('snapshots')
+    .withIndex('by_collection', (q: any) => q.eq('collection', collection))
+    .order('desc')
+    .first();
+
+  // Get all deltas for this specific document
+  const deltas = await ctx.db
+    .query('documents')
+    .withIndex('by_collection_document_version', (q: any) =>
+      q.eq('collection', collection).eq('documentId', documentId)
+    )
+    .collect();
+
+  if (deltas.length === 0 && !snapshot) {
+    return null;
+  }
+
+  const updates: Uint8Array[] = [];
+  let latestTimestamp = 0;
+
+  // Start with snapshot if available and relevant
+  if (snapshot) {
+    updates.push(new Uint8Array(snapshot.snapshotBytes));
+    latestTimestamp = snapshot.latestCompactionTimestamp;
+  }
+
+  // Add all deltas for this document
+  const sorted = deltas.sort((a: any, b: any) => a.timestamp - b.timestamp);
+  for (const delta of sorted) {
+    updates.push(new Uint8Array(delta.crdtBytes));
+    latestTimestamp = Math.max(latestTimestamp, delta.timestamp);
+  }
+
+  if (updates.length === 0) {
+    return null;
+  }
+
+  const merged = Y.mergeUpdatesV2(updates);
+  return { stateBytes: merged, latestTimestamp };
+}
+
+export const createVersion = mutation({
+  args: {
+    collection: v.string(),
+    documentId: v.string(),
+    label: v.optional(v.string()),
+    createdBy: v.optional(v.string()),
+  },
+  returns: v.object({
+    versionId: v.string(),
+    createdAt: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    const logger = getLogger(['versions']);
+
+    logger.info('Creating version', {
+      collection: args.collection,
+      documentId: args.documentId,
+      label: args.label,
+    });
+
+    const result = await _reconstructDocumentState(ctx, args.collection, args.documentId);
+
+    if (!result) {
+      throw new Error(`Document not found: ${args.documentId} in collection ${args.collection}`);
+    }
+
+    // Generate a unique version ID
+    const versionId = `v_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const createdAt = Date.now();
+
+    await ctx.db.insert('versions', {
+      collection: args.collection,
+      documentId: args.documentId,
+      versionId,
+      stateBytes: result.stateBytes.buffer as ArrayBuffer,
+      label: args.label,
+      createdAt,
+      createdBy: args.createdBy,
+    });
+
+    logger.info('Version created', {
+      collection: args.collection,
+      documentId: args.documentId,
+      versionId,
+      stateSize: result.stateBytes.byteLength,
+    });
+
+    return { versionId, createdAt };
+  },
+});
+
+export const listVersions = query({
+  args: {
+    collection: v.string(),
+    documentId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  returns: v.array(
+    v.object({
+      versionId: v.string(),
+      label: v.union(v.string(), v.null()),
+      createdAt: v.number(),
+      createdBy: v.union(v.string(), v.null()),
+    })
+  ),
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 50;
+
+    const versions = await ctx.db
+      .query('versions')
+      .withIndex('by_document', (q) =>
+        q.eq('collection', args.collection).eq('documentId', args.documentId)
+      )
+      .order('desc')
+      .take(limit);
+
+    return versions.map((v) => ({
+      versionId: v.versionId,
+      label: v.label ?? null,
+      createdAt: v.createdAt,
+      createdBy: v.createdBy ?? null,
+    }));
+  },
+});
+
+export const getVersion = query({
+  args: {
+    versionId: v.string(),
+  },
+  returns: v.union(
+    v.object({
+      versionId: v.string(),
+      collection: v.string(),
+      documentId: v.string(),
+      stateBytes: v.bytes(),
+      label: v.union(v.string(), v.null()),
+      createdAt: v.number(),
+      createdBy: v.union(v.string(), v.null()),
+    }),
+    v.null()
+  ),
+  handler: async (ctx, args) => {
+    const version = await ctx.db
+      .query('versions')
+      .withIndex('by_version_id', (q) => q.eq('versionId', args.versionId))
+      .first();
+
+    if (!version) {
+      return null;
+    }
+
+    return {
+      versionId: version.versionId,
+      collection: version.collection,
+      documentId: version.documentId,
+      stateBytes: version.stateBytes,
+      label: version.label ?? null,
+      createdAt: version.createdAt,
+      createdBy: version.createdBy ?? null,
+    };
+  },
+});
+
+export const restoreVersion = mutation({
+  args: {
+    collection: v.string(),
+    documentId: v.string(),
+    versionId: v.string(),
+    createBackup: v.optional(v.boolean()),
+  },
+  returns: v.object({
+    success: v.boolean(),
+    backupVersionId: v.union(v.string(), v.null()),
+  }),
+  handler: async (ctx, args) => {
+    const logger = getLogger(['versions']);
+
+    logger.info('Restoring version', {
+      collection: args.collection,
+      documentId: args.documentId,
+      versionId: args.versionId,
+      createBackup: args.createBackup,
+    });
+
+    // Get the version to restore
+    const version = await ctx.db
+      .query('versions')
+      .withIndex('by_version_id', (q) => q.eq('versionId', args.versionId))
+      .first();
+
+    if (!version) {
+      throw new Error(`Version not found: ${args.versionId}`);
+    }
+
+    if (version.collection !== args.collection || version.documentId !== args.documentId) {
+      throw new Error(
+        `Version ${args.versionId} does not belong to document ${args.documentId} in collection ${args.collection}`
+      );
+    }
+
+    let backupVersionId: string | null = null;
+
+    // Optionally create a backup of current state before restore
+    if (args.createBackup !== false) {
+      const currentState = await _reconstructDocumentState(ctx, args.collection, args.documentId);
+
+      if (currentState) {
+        backupVersionId = `v_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+        await ctx.db.insert('versions', {
+          collection: args.collection,
+          documentId: args.documentId,
+          versionId: backupVersionId,
+          stateBytes: currentState.stateBytes.buffer as ArrayBuffer,
+          label: `Backup before restore to ${args.versionId}`,
+          createdAt: Date.now(),
+          createdBy: undefined,
+        });
+
+        logger.info('Created backup version', {
+          backupVersionId,
+          collection: args.collection,
+          documentId: args.documentId,
+        });
+      }
+    }
+
+    // To restore, we need to create a delta that brings the document to the version's state.
+    // We insert the version's stateBytes as a new delta - Yjs will merge it correctly.
+    await ctx.db.insert('documents', {
+      collection: args.collection,
+      documentId: args.documentId,
+      crdtBytes: version.stateBytes,
+      version: Date.now(), // Use timestamp as version to ensure uniqueness
+      timestamp: Date.now(),
+    });
+
+    logger.info('Version restored', {
+      collection: args.collection,
+      documentId: args.documentId,
+      versionId: args.versionId,
+      backupVersionId,
+    });
+
+    return { success: true, backupVersionId };
+  },
+});
+
+export const deleteVersion = mutation({
+  args: {
+    versionId: v.string(),
+  },
+  returns: v.object({
+    success: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const logger = getLogger(['versions']);
+
+    const version = await ctx.db
+      .query('versions')
+      .withIndex('by_version_id', (q) => q.eq('versionId', args.versionId))
+      .first();
+
+    if (!version) {
+      throw new Error(`Version not found: ${args.versionId}`);
+    }
+
+    await ctx.db.delete(version._id);
+
+    logger.info('Version deleted', {
+      versionId: args.versionId,
+      collection: version.collection,
+      documentId: version.documentId,
+    });
+
+    return { success: true };
+  },
+});
+
+export const pruneVersions = mutation({
+  args: {
+    collection: v.string(),
+    documentId: v.string(),
+    keepCount: v.optional(v.number()),
+    retentionDays: v.optional(v.number()),
+  },
+  returns: v.object({
+    deletedCount: v.number(),
+    remainingCount: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    const logger = getLogger(['versions']);
+    const keepCount = args.keepCount ?? 10;
+    const retentionMs = (args.retentionDays ?? 90) * 24 * 60 * 60 * 1000;
+    const cutoffTime = Date.now() - retentionMs;
+
+    const versions = await ctx.db
+      .query('versions')
+      .withIndex('by_document', (q) =>
+        q.eq('collection', args.collection).eq('documentId', args.documentId)
+      )
+      .order('desc')
+      .collect();
+
+    let deletedCount = 0;
+
+    // Keep the most recent `keepCount` versions, delete older ones past retention
+    for (let i = keepCount; i < versions.length; i++) {
+      const version = versions[i];
+      if (version.createdAt < cutoffTime) {
+        await ctx.db.delete(version._id);
+        deletedCount++;
+      }
+    }
+
+    logger.info('Pruned versions', {
+      collection: args.collection,
+      documentId: args.documentId,
+      deletedCount,
+      remainingCount: versions.length - deletedCount,
+    });
+
+    return {
+      deletedCount,
+      remainingCount: versions.length - deletedCount,
+    };
   },
 });

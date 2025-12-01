@@ -1,15 +1,26 @@
 import type { GenericMutationCtx, GenericQueryCtx, GenericDataModel } from 'convex/server';
 import { Replicate } from '$/server/storage.js';
 
+/**
+ * Define replicate handlers for a collection. Returns all the queries/mutations
+ * needed to sync a collection between client and server.
+ *
+ * @example
+ * ```typescript
+ * // convex/tasks.ts
+ * export const { stream, material, insert, update, remove, protocol } =
+ *   defineReplicate<Task>({
+ *     component: components.replicate,
+ *     collection: 'tasks',
+ *   });
+ * ```
+ */
 export function defineReplicate<T extends object>(config: {
   component: any;
   collection: string;
   compaction?: { retention: number };
   pruning?: { retention: number };
-  migrations?: {
-    schemaVersion: number;
-    functions: Record<number, (doc: any) => any>;
-  };
+  versioning?: { keepCount?: number; retentionDays?: number };
   hooks?: {
     evalRead?: (ctx: GenericQueryCtx<GenericDataModel>, collection: string) => void | Promise<void>;
     evalWrite?: (ctx: GenericMutationCtx<GenericDataModel>, doc: T) => void | Promise<void>;
@@ -29,11 +40,23 @@ export function defineReplicate<T extends object>(config: {
     ) => void | Promise<void>;
     onCompact?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
     onPrune?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
+    // Version hooks
+    evalVersion?: (
+      ctx: GenericMutationCtx<GenericDataModel>,
+      collection: string,
+      documentId: string
+    ) => void | Promise<void>;
+    onVersion?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
+    evalRestore?: (
+      ctx: GenericMutationCtx<GenericDataModel>,
+      collection: string,
+      documentId: string,
+      versionId: string
+    ) => void | Promise<void>;
+    onRestore?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
   };
 }) {
-  const storage = new Replicate<T>(config.component, config.collection, {
-    migrations: config.migrations,
-  });
+  const storage = new Replicate<T>(config.component, config.collection);
 
   return {
     stream: storage.createStreamQuery({
@@ -73,6 +96,32 @@ export function defineReplicate<T extends object>(config: {
       retention: config.pruning?.retention,
       evalPrune: config.hooks?.evalPrune,
       onPrune: config.hooks?.onPrune,
+    }),
+
+    // Version History APIs
+    createVersion: storage.createVersionMutation({
+      evalVersion: config.hooks?.evalVersion,
+      onVersion: config.hooks?.onVersion,
+    }),
+
+    listVersions: storage.createListVersionsQuery({
+      evalRead: config.hooks?.evalRead,
+    }),
+
+    getVersion: storage.createGetVersionQuery({
+      evalRead: config.hooks?.evalRead,
+    }),
+
+    restoreVersion: storage.createRestoreVersionMutation({
+      evalRestore: config.hooks?.evalRestore,
+      onRestore: config.hooks?.onRestore,
+    }),
+
+    deleteVersion: storage.createDeleteVersionMutation(),
+
+    pruneVersions: storage.createPruneVersionsMutation({
+      keepCount: config.versioning?.keepCount,
+      retentionDays: config.versioning?.retentionDays,
     }),
   };
 }

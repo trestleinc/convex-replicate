@@ -5,13 +5,7 @@ import { queryGeneric, mutationGeneric, internalMutationGeneric } from 'convex/s
 export class Replicate<T extends object> {
   constructor(
     public component: any,
-    public collectionName: string,
-    public options?: {
-      migrations?: {
-        schemaVersion: number;
-        functions: Record<number, (doc: any) => any>;
-      };
-    }
+    public collectionName: string
   ) {}
 
   createStreamQuery(opts?: {
@@ -120,45 +114,23 @@ export class Replicate<T extends object> {
   }) {
     const component = this.component;
     const collection = this.collectionName;
-    const hasMigrations = !!this.options?.migrations;
 
     return mutationGeneric({
-      args: hasMigrations
-        ? {
-            documentId: v.string(),
-            crdtBytes: v.bytes(),
-            materializedDoc: v.any(),
-            version: v.number(),
-            _schemaVersion: v.optional(v.number()),
-          }
-        : {
-            documentId: v.string(),
-            crdtBytes: v.bytes(),
-            materializedDoc: v.any(),
-            version: v.number(),
-          },
+      args: {
+        documentId: v.string(),
+        crdtBytes: v.bytes(),
+        materializedDoc: v.any(),
+        version: v.number(),
+      },
       returns: v.object({
         success: v.boolean(),
         metadata: v.any(),
       }),
       handler: async (ctx, args) => {
-        let doc = args.materializedDoc as T;
+        const doc = args.materializedDoc as T;
 
         if (opts?.evalWrite) {
           await opts.evalWrite(ctx, doc);
-        }
-
-        if (
-          hasMigrations &&
-          args._schemaVersion !== undefined &&
-          args._schemaVersion !== null &&
-          typeof args._schemaVersion === 'number'
-        ) {
-          const targetVersion = this.options?.migrations?.schemaVersion;
-          if (targetVersion && args._schemaVersion < targetVersion) {
-            doc = this.migrate(doc, args._schemaVersion) as T;
-            args.materializedDoc = doc;
-          }
         }
 
         await ctx.runMutation(component.public.insertDocument, {
@@ -198,51 +170,26 @@ export class Replicate<T extends object> {
   }) {
     const component = this.component;
     const collection = this.collectionName;
-    const hasMigrations = !!this.options?.migrations;
 
     return mutationGeneric({
-      args: hasMigrations
-        ? {
-            documentId: v.string(),
-            crdtBytes: v.bytes(),
-            materializedDoc: v.any(),
-            version: v.number(),
-            _schemaVersion: v.optional(v.number()),
-          }
-        : {
-            documentId: v.string(),
-            crdtBytes: v.bytes(),
-            materializedDoc: v.any(),
-            version: v.number(),
-          },
+      args: {
+        documentId: v.string(),
+        crdtBytes: v.bytes(),
+        materializedDoc: v.any(),
+        version: v.number(),
+      },
       returns: v.object({
         success: v.boolean(),
         skipped: v.optional(v.boolean()),
         metadata: v.any(),
       }),
       handler: async (ctx, args) => {
-        let doc = args.materializedDoc as T;
+        const doc = args.materializedDoc as T;
 
-        // Permission check hook
         if (opts?.evalWrite) {
           await opts.evalWrite(ctx, doc);
         }
 
-        // Migration step (if configured and client provided version)
-        if (
-          hasMigrations &&
-          args._schemaVersion !== undefined &&
-          args._schemaVersion !== null &&
-          typeof args._schemaVersion === 'number'
-        ) {
-          const targetVersion = this.options?.migrations?.schemaVersion;
-          if (targetVersion && args._schemaVersion < targetVersion) {
-            doc = this.migrate(doc, args._schemaVersion) as T;
-            args.materializedDoc = doc;
-          }
-        }
-
-        // 1. Append CRDT delta to component (event sourcing)
         await ctx.runMutation(component.public.updateDocument, {
           collection,
           documentId: args.documentId,
@@ -250,15 +197,12 @@ export class Replicate<T extends object> {
           version: args.version,
         });
 
-        // 2. Update materialized doc in main table with version conflict detection
         const existing = await ctx.db
           .query(collection)
           .filter((q) => q.eq(q.field('id'), args.documentId))
           .first();
 
         if (existing) {
-          // Version conflict detection: skip if server has newer or equal version
-          // This prevents lost updates from concurrent modifications
           const clientVersion = args.version as number;
           const serverVersion = (existing as any).version as number;
           if (serverVersion >= clientVersion) {
@@ -281,7 +225,6 @@ export class Replicate<T extends object> {
           });
         }
 
-        // Lifecycle hook
         if (opts?.onUpdate) {
           await opts.onUpdate(ctx, doc);
         }
@@ -305,21 +248,13 @@ export class Replicate<T extends object> {
   }) {
     const component = this.component;
     const collection = this.collectionName;
-    const hasMigrations = !!this.options?.migrations;
 
     return mutationGeneric({
-      args: hasMigrations
-        ? {
-            documentId: v.string(),
-            crdtBytes: v.bytes(),
-            version: v.number(),
-            _schemaVersion: v.optional(v.number()),
-          }
-        : {
-            documentId: v.string(),
-            crdtBytes: v.bytes(),
-            version: v.number(),
-          },
+      args: {
+        documentId: v.string(),
+        crdtBytes: v.bytes(),
+        version: v.number(),
+      },
       returns: v.object({
         success: v.boolean(),
         metadata: v.any(),
@@ -361,28 +296,6 @@ export class Replicate<T extends object> {
         };
       },
     });
-  }
-
-  private migrate(doc: any, fromVersion: number): any {
-    if (!this.options?.migrations) {
-      return doc;
-    }
-
-    let currentDoc = doc;
-    const targetVersion = this.options.migrations.schemaVersion;
-
-    for (let v = fromVersion + 1; v <= targetVersion; v++) {
-      const migrationFn = this.options.migrations.functions[v];
-      if (!migrationFn) {
-        throw new Error(
-          `No migration function defined for ${this.collectionName} version ${v}. ` +
-            `Required to migrate from v${fromVersion} to v${targetVersion}.`
-        );
-      }
-      currentDoc = migrationFn(currentDoc);
-    }
-
-    return currentDoc;
   }
 
   createProtocolVersionQuery() {
@@ -459,6 +372,242 @@ export class Replicate<T extends object> {
         const result = await ctx.runMutation(component.public.pruneCollectionByName, {
           collection,
           retentionDays: args.retention ?? defaultRetention,
+        });
+
+        if (opts?.onPrune) {
+          await opts.onPrune(ctx, result);
+        }
+
+        return result;
+      },
+    });
+  }
+
+  // ============================================================================
+  // Version History Methods
+  // ============================================================================
+
+  createVersionMutation(opts?: {
+    evalVersion?: (
+      ctx: GenericMutationCtx<GenericDataModel>,
+      collection: string,
+      documentId: string
+    ) => void | Promise<void>;
+    onVersion?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
+  }) {
+    const component = this.component;
+    const collection = this.collectionName;
+
+    return mutationGeneric({
+      args: {
+        documentId: v.string(),
+        label: v.optional(v.string()),
+        createdBy: v.optional(v.string()),
+      },
+      returns: v.object({
+        versionId: v.string(),
+        createdAt: v.number(),
+      }),
+      handler: async (ctx, args) => {
+        if (opts?.evalVersion) {
+          await opts.evalVersion(ctx, collection, args.documentId);
+        }
+
+        const result = await ctx.runMutation(component.public.createVersion, {
+          collection,
+          documentId: args.documentId,
+          label: args.label,
+          createdBy: args.createdBy,
+        });
+
+        if (opts?.onVersion) {
+          await opts.onVersion(ctx, result);
+        }
+
+        return result;
+      },
+    });
+  }
+
+  createListVersionsQuery(opts?: {
+    evalRead?: (ctx: GenericQueryCtx<GenericDataModel>, collection: string) => void | Promise<void>;
+  }) {
+    const component = this.component;
+    const collection = this.collectionName;
+
+    return queryGeneric({
+      args: {
+        documentId: v.string(),
+        limit: v.optional(v.number()),
+      },
+      returns: v.array(
+        v.object({
+          versionId: v.string(),
+          label: v.union(v.string(), v.null()),
+          createdAt: v.number(),
+          createdBy: v.union(v.string(), v.null()),
+        })
+      ),
+      handler: async (ctx, args) => {
+        if (opts?.evalRead) {
+          await opts.evalRead(ctx, collection);
+        }
+
+        return await ctx.runQuery(component.public.listVersions, {
+          collection,
+          documentId: args.documentId,
+          limit: args.limit,
+        });
+      },
+    });
+  }
+
+  createGetVersionQuery(opts?: {
+    evalRead?: (ctx: GenericQueryCtx<GenericDataModel>, collection: string) => void | Promise<void>;
+  }) {
+    const component = this.component;
+    const collection = this.collectionName;
+
+    return queryGeneric({
+      args: {
+        versionId: v.string(),
+      },
+      returns: v.union(
+        v.object({
+          versionId: v.string(),
+          collection: v.string(),
+          documentId: v.string(),
+          stateBytes: v.bytes(),
+          label: v.union(v.string(), v.null()),
+          createdAt: v.number(),
+          createdBy: v.union(v.string(), v.null()),
+        }),
+        v.null()
+      ),
+      handler: async (ctx, args) => {
+        if (opts?.evalRead) {
+          await opts.evalRead(ctx, collection);
+        }
+
+        return await ctx.runQuery(component.public.getVersion, {
+          versionId: args.versionId,
+        });
+      },
+    });
+  }
+
+  createRestoreVersionMutation(opts?: {
+    evalRestore?: (
+      ctx: GenericMutationCtx<GenericDataModel>,
+      collection: string,
+      documentId: string,
+      versionId: string
+    ) => void | Promise<void>;
+    onRestore?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
+  }) {
+    const component = this.component;
+    const collection = this.collectionName;
+
+    return mutationGeneric({
+      args: {
+        documentId: v.string(),
+        versionId: v.string(),
+        createBackup: v.optional(v.boolean()),
+      },
+      returns: v.object({
+        success: v.boolean(),
+        backupVersionId: v.union(v.string(), v.null()),
+      }),
+      handler: async (ctx, args) => {
+        if (opts?.evalRestore) {
+          await opts.evalRestore(ctx, collection, args.documentId, args.versionId);
+        }
+
+        const result = await ctx.runMutation(component.public.restoreVersion, {
+          collection,
+          documentId: args.documentId,
+          versionId: args.versionId,
+          createBackup: args.createBackup,
+        });
+
+        if (opts?.onRestore) {
+          await opts.onRestore(ctx, result);
+        }
+
+        return result;
+      },
+    });
+  }
+
+  createDeleteVersionMutation(opts?: {
+    evalDelete?: (
+      ctx: GenericMutationCtx<GenericDataModel>,
+      versionId: string
+    ) => void | Promise<void>;
+    onDelete?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
+  }) {
+    const component = this.component;
+
+    return mutationGeneric({
+      args: {
+        versionId: v.string(),
+      },
+      returns: v.object({
+        success: v.boolean(),
+      }),
+      handler: async (ctx, args) => {
+        if (opts?.evalDelete) {
+          await opts.evalDelete(ctx, args.versionId);
+        }
+
+        const result = await ctx.runMutation(component.public.deleteVersion, {
+          versionId: args.versionId,
+        });
+
+        if (opts?.onDelete) {
+          await opts.onDelete(ctx, result);
+        }
+
+        return result;
+      },
+    });
+  }
+
+  createPruneVersionsMutation(opts?: {
+    keepCount?: number;
+    retentionDays?: number;
+    evalPrune?: (
+      ctx: GenericMutationCtx<GenericDataModel>,
+      collection: string,
+      documentId: string
+    ) => void | Promise<void>;
+    onPrune?: (ctx: GenericMutationCtx<GenericDataModel>, result: any) => void | Promise<void>;
+  }) {
+    const component = this.component;
+    const collection = this.collectionName;
+    const defaultKeepCount = opts?.keepCount ?? 10;
+    const defaultRetentionDays = opts?.retentionDays ?? 90;
+
+    return mutationGeneric({
+      args: {
+        documentId: v.string(),
+        keepCount: v.optional(v.number()),
+        retentionDays: v.optional(v.number()),
+      },
+      returns: v.object({
+        deletedCount: v.number(),
+        remainingCount: v.number(),
+      }),
+      handler: async (ctx, args) => {
+        if (opts?.evalPrune) {
+          await opts.evalPrune(ctx, collection, args.documentId);
+        }
+
+        const result = await ctx.runMutation(component.public.pruneVersions, {
+          collection,
+          documentId: args.documentId,
+          keepCount: args.keepCount ?? defaultKeepCount,
+          retentionDays: args.retentionDays ?? defaultRetentionDays,
         });
 
         if (opts?.onPrune) {
