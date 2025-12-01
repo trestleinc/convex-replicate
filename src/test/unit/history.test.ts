@@ -239,9 +239,9 @@ describe('History Utilities', () => {
       const result = fields(stateA, stateB, collection, 'item-1');
 
       expect(result).not.toBeNull();
-      expect(result!.added).toEqual(['priority']);
-      expect(result!.removed).toEqual([]);
-      expect(result!.modified).toEqual([]);
+      expect(result?.added).toEqual(['priority']);
+      expect(result?.removed).toEqual([]);
+      expect(result?.modified).toEqual([]);
 
       docA.destroy();
       docB.destroy();
@@ -278,9 +278,9 @@ describe('History Utilities', () => {
       const result = fields(stateA, stateB, collection, 'item-1');
 
       expect(result).not.toBeNull();
-      expect(result!.added).toEqual([]);
-      expect(result!.removed).toEqual(['priority']);
-      expect(result!.modified).toEqual([]);
+      expect(result?.added).toEqual([]);
+      expect(result?.removed).toEqual(['priority']);
+      expect(result?.modified).toEqual([]);
 
       docA.destroy();
       docB.destroy();
@@ -316,12 +316,12 @@ describe('History Utilities', () => {
       const result = fields(stateA, stateB, collection, 'item-1');
 
       expect(result).not.toBeNull();
-      expect(result!.added).toEqual([]);
-      expect(result!.removed).toEqual([]);
-      expect(result!.modified).toHaveLength(1);
-      expect(result!.modified[0].field).toBe('text');
-      expect(result!.modified[0].oldValue).toBe('Hello');
-      expect(result!.modified[0].newValue).toBe('World');
+      expect(result?.added).toEqual([]);
+      expect(result?.removed).toEqual([]);
+      expect(result?.modified).toHaveLength(1);
+      expect(result?.modified[0].field).toBe('text');
+      expect(result?.modified[0].oldValue).toBe('Hello');
+      expect(result?.modified[0].newValue).toBe('World');
 
       docA.destroy();
       docB.destroy();
@@ -425,9 +425,9 @@ describe('History Utilities', () => {
       const document = extract<TestDoc>(state, collection, 'item-1');
 
       expect(document).not.toBeNull();
-      expect(document!.id).toBe('item-1');
-      expect(document!.text).toBe('Hello');
-      expect(document!.priority).toBe('high');
+      expect(document?.id).toBe('item-1');
+      expect(document?.text).toBe('Hello');
+      expect(document?.priority).toBe('high');
 
       doc.destroy();
     });
@@ -518,7 +518,7 @@ describe('History Utilities', () => {
       // 2. Get detailed diff for task-1
       const task1Fields = fields(version1, version2, collection, 'task-1');
       expect(task1Fields).not.toBeNull();
-      expect(task1Fields!.modified).toContainEqual({
+      expect(task1Fields?.modified).toContainEqual({
         field: 'done',
         oldValue: false,
         newValue: true,
@@ -527,7 +527,7 @@ describe('History Utilities', () => {
       // 3. Get detailed diff for task-2
       const task2Fields = fields(version1, version2, collection, 'task-2');
       expect(task2Fields).not.toBeNull();
-      expect(task2Fields!.modified).toContainEqual({
+      expect(task2Fields?.modified).toContainEqual({
         field: 'text',
         oldValue: 'Walk dog',
         newValue: 'Walk the dog',

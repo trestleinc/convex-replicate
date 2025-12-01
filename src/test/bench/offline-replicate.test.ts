@@ -56,7 +56,7 @@ describe('Offline Replicate Stress Tests', () => {
       itemMap.set('timestamp', Date.now());
       client.map.set(`offline-${i}`, itemMap);
     }
-    const offlineMutationTime = metrics.endTimer('offline-mutations');
+    metrics.endTimer('offline-mutations');
 
     expect(client.map.size).toBe(mutationCount);
     expect(server.map.size).toBe(0); // Server hasn't received anything

@@ -259,7 +259,7 @@ describe('Reconnection Stress Tests', () => {
     // Final sync after flaky period ends (all clients online)
     replicateWithStateVectors(client, server);
 
-    const elapsed = metrics.endTimer('flaky');
+    const _elapsed = metrics.endTimer('flaky');
 
     // Both should have all data after final sync
     expect(server.map.size).toBe(50 + changesMade);

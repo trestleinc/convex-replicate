@@ -309,7 +309,7 @@ describe('Collection Replicate Flow', () => {
           const checkpointSvc = yield* Checkpoint;
 
           // SSR checkpoint
-          const ssrCheckpoint = { lastModified: 1000000 };
+          const _ssrCheckpoint = { lastModified: 1000000 };
 
           // Simulate subscription handler saving checkpoints
           yield* checkpointSvc.saveCheckpoint('tasks', { lastModified: 1001000 });

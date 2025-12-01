@@ -35,7 +35,7 @@ describe('CRDT Convergence Stress Tests', () => {
   /**
    * Helper to verify all clients have identical Yjs state
    */
-  function verifyIdenticalState(clientList: TestYjsClient[]): boolean {
+  function _verifyIdenticalState(clientList: TestYjsClient[]): boolean {
     if (clientList.length < 2) return true;
 
     const referenceState = Y.encodeStateAsUpdate(clientList[0].doc);

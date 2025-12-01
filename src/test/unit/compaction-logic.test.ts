@@ -70,7 +70,7 @@ describe('Compaction Logic', () => {
       let recoveryFailed = false;
       try {
         Y.applyUpdateV2(recoveryDoc, new Uint8Array(storedSnapshotBytes));
-      } catch (e) {
+      } catch (_e) {
         recoveryFailed = true;
         // Expected: RangeError because snapshot bytes are not valid updates
       }

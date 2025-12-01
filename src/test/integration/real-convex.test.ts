@@ -20,7 +20,6 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { commands } from 'vitest/browser';
 import type { ConvexClient } from 'convex/browser';
 import {
   createTestClient,
@@ -28,7 +27,6 @@ import {
   waitForReady,
   waitForItem,
   waitForRemoval,
-  cleanup,
   type Task,
 } from '../utils/test-collection';
 

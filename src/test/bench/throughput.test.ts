@@ -201,7 +201,7 @@ describe('Delta Throughput Benchmarks', () => {
 
     // Update the large document
     const existingMap = ymap.get('large-doc') as Y.Map<unknown>;
-    existingMap.set('content', largeContent + ' updated');
+    existingMap.set('content', `${largeContent} updated`);
 
     const delta = Y.encodeStateAsUpdate(ydoc, beforeVector);
     const elapsed = metrics.endTimer('large-doc');

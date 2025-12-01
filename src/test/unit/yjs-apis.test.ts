@@ -68,7 +68,7 @@ describe('Yjs Snapshot vs Update APIs', () => {
 
       // Add item B
       map.set('b', new Y.Map([['id', 'b']]));
-      const snapshot2 = Y.snapshot(doc);
+      const _snapshot2 = Y.snapshot(doc);
 
       // Snapshots are for creating historical views
       const historicalDoc = Y.createDocFromSnapshot(doc, snapshot1);
@@ -229,7 +229,7 @@ describe('Yjs Snapshot vs Update APIs', () => {
       map.set('b', new Y.Map([['id', 'b']]));
 
       // Get full state including 'b'
-      const updateAB = Y.encodeStateAsUpdateV2(doc);
+      Y.encodeStateAsUpdateV2(doc);
 
       // This check is about whether the update is "known" to the snapshot,
       // NOT whether the snapshot contains the actual data
@@ -314,7 +314,7 @@ describe('Yjs Snapshot vs Update APIs', () => {
       try {
         Y.applyUpdateV2(recoveryDoc, snapshotBytes);
         recovered = true;
-      } catch (e) {
+      } catch (_e) {
         // Expected - snapshot bytes aren't valid updates
         recovered = false;
       }

@@ -136,7 +136,7 @@ function createTestReplicateClient<T extends { id: string }>(
  * Mock server that routes deltas between clients
  * Internal - used by simulateClientServerReplicate
  */
-interface MockReplicateServer<T extends { id: string }> {
+interface MockReplicateServer<_T extends { id: string }> {
   deltas: Array<{
     delta: Uint8Array;
     documentId: string;
@@ -164,9 +164,7 @@ interface MockReplicateServer<T extends { id: string }> {
  * Create a mock replicate server for testing multi-client scenarios
  * Internal - used by simulateClientServerReplicate
  */
-function createMockReplicateServer<T extends { id: string }>(
-  collection: string
-): MockReplicateServer<T> {
+function createMockReplicateServer<T extends { id: string }>(_: string): MockReplicateServer<T> {
   const deltas: MockReplicateServer<T>['deltas'] = [];
   let checkpoint: Checkpoint = { lastModified: 0 };
   let timestampCounter = 1000;
@@ -247,7 +245,7 @@ export function simulateClientServerReplicate<T extends { id: string }>(
     },
 
     replicateToClientA: () => {
-      const checkpoint = clientCheckpoints.get('A')!;
+      const checkpoint = clientCheckpoints.get('A') ?? { lastModified: 0 };
       const newDeltas = server.getDeltasSince(checkpoint);
 
       for (const delta of newDeltas) {
@@ -263,7 +261,7 @@ export function simulateClientServerReplicate<T extends { id: string }>(
     },
 
     replicateToClientB: () => {
-      const checkpoint = clientCheckpoints.get('B')!;
+      const checkpoint = clientCheckpoints.get('B') ?? { lastModified: 0 };
       const newDeltas = server.getDeltasSince(checkpoint);
 
       for (const delta of newDeltas) {
