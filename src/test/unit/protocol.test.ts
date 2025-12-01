@@ -113,10 +113,7 @@ describe('Protocol', () => {
           Effect.gen(function* () {
             const svc = yield* Protocol;
             return yield* svc.getServerVersion();
-          }).pipe(
-            Effect.provide(ProtocolLive(mockConvexClient as any, mockApi)),
-            Effect.either
-          )
+          }).pipe(Effect.provide(ProtocolLive(mockConvexClient as any, mockApi)), Effect.either)
         );
 
         expect(result._tag).toBe('Left');
@@ -212,10 +209,7 @@ describe('Protocol', () => {
           Effect.gen(function* () {
             const svc = yield* Protocol;
             return yield* svc.runMigration();
-          }).pipe(
-            Effect.provide(ProtocolLive(mockConvexClient as any, mockApi)),
-            Effect.either
-          )
+          }).pipe(Effect.provide(ProtocolLive(mockConvexClient as any, mockApi)), Effect.either)
         );
 
         expect(result._tag).toBe('Left');

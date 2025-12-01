@@ -1,0 +1,16 @@
+{
+  "name": "@trestleinc/replicate-test",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "convex": "convex dev",
+    "convex:deploy": "convex deploy"
+  },
+  "dependencies": {
+    "@trestleinc/replicate": "file:../..",
+    "@tanstack/db": "0.4.20",
+    "convex": "1.28.2",
+    "convex-helpers": "^0.1.77"
+  }
+}

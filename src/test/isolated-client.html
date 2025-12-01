@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Isolated Test Client</title>
+  </head>
+  <body>
+    <div id="app">Loading isolated client...</div>
+    <script type="module">
+      // This page is used by multiClient.ts browser commands to create
+      // isolated browser contexts with their own IndexedDB.
+      // Configuration is passed via URL parameters.
+
+      import { ConvexClient } from 'convex/browser';
+      import { createCollection } from '@tanstack/db';
+      import { convexCollectionOptions, handleReconnect } from '/src/client/index.ts';
+      import { api } from '/src/test/convex/_generated/api.js';
+
+      const params = new URLSearchParams(window.location.search);
+      const convexUrl = params.get('convexUrl');
+      const collectionName = params.get('collection');
+
+      console.log('[isolated-client] Starting with:', { convexUrl, collectionName });
+
+      if (convexUrl && collectionName) {
+        try {
+          console.log('[isolated-client] Creating ConvexClient...');
+          window.__client__ = new ConvexClient(convexUrl);
+          console.log('[isolated-client] ConvexClient created');
+
+          console.log('[isolated-client] Creating collection options...');
+          const options = convexCollectionOptions({
+            convexClient: window.__client__,
+            api: api.tasks,
+            collection: collectionName,
+            getKey: (task) => task.id,
+          });
+          console.log('[isolated-client] Collection options created');
+
+          console.log('[isolated-client] Creating TanStack collection...');
+          const rawCollection = createCollection(options);
+          console.log('[isolated-client] TanStack collection created');
+
+          console.log('[isolated-client] Wrapping with handleReconnect...');
+          window.__collection__ = handleReconnect(rawCollection);
+          console.log('[isolated-client] Collection wrapped');
+
+          // Add state observer for debugging with stack trace
+          window.__stateHistory__ = [];
+          const originalState = window.__collection__.state;
+          let lastSize = originalState.size;
+          setInterval(() => {
+            const currentSize = window.__collection__.state.size;
+            if (currentSize !== lastSize) {
+              const trace = new Error().stack;
+              console.log('[isolated-client] State changed:', lastSize, '->', currentSize);
+              window.__stateHistory__.push({
+                time: Date.now(),
+                from: lastSize,
+                to: currentSize,
+                trace: trace,
+              });
+              lastSize = currentSize;
+            }
+          }, 50);
+
+          console.log('[isolated-client] Waiting for ready...');
+          window.__ready__ = window.__collection__.stateWhenReady();
+          await window.__ready__;
+          window.__isReady__ = true;
+          console.log('[isolated-client] Client ready:', collectionName, 'initial size:', window.__collection__.state.size);
+        } catch (err) {
+          console.error('[isolated-client] Error:', err);
+          window.__initError__ = err;
+        }
+      } else {
+        // Mark page as loaded for manual setup
+        window.__pageLoaded__ = true;
+        console.log('[isolated-client] Page loaded, waiting for params');
+      }
+    </script>
+  </body>
+</html>

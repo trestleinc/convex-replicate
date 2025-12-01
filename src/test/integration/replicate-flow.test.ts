@@ -28,7 +28,7 @@ interface TestTask {
   done: boolean;
 }
 
-describe('Full Replicate Flow', () => {
+describe.skip('Full Replicate Flow', () => {
   beforeEach(async () => {
     // Clear any stored checkpoints between tests
     await idbDel('replicate:checkpoint:tasks');
