@@ -70,10 +70,10 @@ src/
 │   ├── logger.ts        # LogTape logger
 │   ├── errors.ts        # Error definitions
 │   └── services/        # Core services (Effect-based)
-│       ├── CheckpointService.ts  # Sync checkpoints
-│       ├── ProtocolService.ts    # Protocol version management
-│       ├── SnapshotService.ts    # Snapshot recovery
-│       └── ReconciliationService.ts # Phantom document cleanup
+│       ├── checkpoint.ts     # Sync checkpoints
+│       ├── protocol.ts       # Protocol version management
+│       ├── snapshot.ts       # Snapshot recovery
+│       └── reconciliation.ts # Phantom document cleanup
 ├── server/              # Server-side (Convex functions)
 │   ├── index.ts         # Public exports
 │   ├── builder.ts       # defineReplicate() builder
@@ -87,7 +87,9 @@ src/
 └── test/                # Test files
     ├── setup.ts         # Vitest setup (fake-indexeddb)
     ├── mocks/           # Test mocks
-    └── unit/            # Unit tests
+    ├── unit/            # Unit tests
+    ├── integration/     # Integration tests
+    └── utils/           # Test utilities (collection.ts, yjs.ts)
 ```
 
 ### Core Concepts
@@ -99,10 +101,10 @@ src/
 
 **Client Services (Effect-based):**
 - Services in `src/client/services/` use Effect for dependency injection
-- `CheckpointService` manages sync checkpoints in IndexedDB
-- `ProtocolService` handles protocol version negotiation
-- `SnapshotService` recovers from server snapshots
-- `ReconciliationService` removes phantom documents
+- `Checkpoint` manages sync checkpoints in IndexedDB
+- `Protocol` handles protocol version negotiation
+- `Snapshot` recovers from server snapshots
+- `Reconciliation` removes phantom documents
 
 **Data Flow:**
 ```
@@ -150,6 +152,14 @@ tasks: replicatedTable({ id: v.string(), text: v.string() }, (t) => t.index('by_
 - **Rslib** for building
 - **Biome** for linting/formatting
 - **LogTape** for logging (avoid console.*)
+
+## Naming Conventions
+
+- **Service files**: lowercase, no suffix (e.g., `checkpoint.ts`, not `CheckpointService.ts`)
+- **Service exports**: PascalCase, no "Service" suffix (e.g., `Checkpoint`, `CheckpointLive`)
+- **Test files**: kebab-case (e.g., `checkpoint.test.ts`, `two-client-replicate.test.ts`)
+- **Test utilities**: lowercase, no suffix (e.g., `collection.ts`, `yjs.ts`)
+- **Use "replicate"**: not "sync" throughout the codebase
 
 ## Important Notes
 

@@ -170,7 +170,4 @@ export const ensureProtocolVersion = (
     yield* Effect.logInfo('Protocol version ensured', { version });
 
     return version;
-  }).pipe(
-    Effect.provide(ProtocolLive(convexClient, api)),
-    Effect.withSpan('protocol.ensure')
-  );
+  }).pipe(Effect.provide(ProtocolLive(convexClient, api)), Effect.withSpan('protocol.ensure'));

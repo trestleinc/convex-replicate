@@ -24,3 +24,9 @@ examples/*/.env.local
 # Test coverage
 coverage/
 .nyc_output/
+
+# Test results (Vitest HTML/JSON reports)
+test-results/
+
+# Test Convex deployment
+src/test/convex/_generated/
