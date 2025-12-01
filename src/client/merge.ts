@@ -80,3 +80,24 @@ export function transactWithDelta<A>(
   const delta = Y.encodeStateAsUpdateV2(doc, beforeVector);
   return { result, delta };
 }
+
+/**
+ * Extract all items from a Y.Map as plain objects.
+ */
+export function extractItems<T>(ymap: Y.Map<unknown>): T[] {
+  const items: T[] = [];
+  ymap.forEach((value) => {
+    if (value instanceof Y.Map) {
+      items.push(value.toJSON() as T);
+    }
+  });
+  return items;
+}
+
+/**
+ * Extract a single item from a Y.Map by key.
+ */
+export function extractItem<T>(ymap: Y.Map<unknown>, key: string): T | null {
+  const value = ymap.get(key);
+  return value instanceof Y.Map ? (value.toJSON() as T) : null;
+}

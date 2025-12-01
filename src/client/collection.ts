@@ -21,12 +21,42 @@ import {
   replicateUpsert,
   replicateReplace,
 } from '$/client/replicate.js';
-import { createYjsDocument, getYMap, transactWithDelta, applyUpdate } from '$/client/merge.js';
+import {
+  createYjsDocument,
+  getYMap,
+  transactWithDelta,
+  applyUpdate,
+  extractItems,
+  extractItem,
+} from '$/client/merge.js';
 
 const logger = getLogger(['replicate', 'collection']);
 
-// Create unified services layer
-// Services now use plain functions directly - simplified dependency chain
+interface HttpError extends Error {
+  status?: number;
+}
+
+function handleMutationError(
+  error: unknown,
+  operation: 'Insert' | 'Update' | 'Delete',
+  collection: string
+): never {
+  const httpError = error as HttpError;
+  logger.error(`${operation} failed`, {
+    collection,
+    error: httpError?.message,
+    status: httpError?.status,
+  });
+
+  if (httpError?.status === 401 || httpError?.status === 403) {
+    throw new NonRetriableError('Authentication failed');
+  }
+  if (httpError?.status === 422) {
+    throw new NonRetriableError('Validation error');
+  }
+  throw error;
+}
+
 const servicesLayer = Layer.mergeAll(
   CheckpointLive,
   ReconciliationLive,
@@ -37,6 +67,7 @@ export { OperationType } from '$/component/shared.js';
 
 const cleanupFunctions = new Map<string, () => void>();
 
+/** Origin markers for Yjs transactions - used for undo tracking and debugging */
 export enum YjsOrigin {
   Insert = 'insert',
   Update = 'update',
@@ -47,6 +78,7 @@ export enum YjsOrigin {
   SSRInit = 'ssr-init',
 }
 
+/** Server-rendered material data for SSR hydration */
 export type Materialized<T> = {
   documents: ReadonlyArray<T>;
   checkpoint?: { lastModified: number };
@@ -54,12 +86,11 @@ export type Materialized<T> = {
   crdtBytes?: ArrayBuffer;
 };
 
+/** Configuration for creating a Convex-backed collection */
 export interface ConvexCollectionOptionsConfig<T extends object> {
   getKey: (item: T) => string | number;
-
   material?: Materialized<T>;
   convexClient: ConvexClient;
-
   api: {
     stream: FunctionReference<'query'>;
     insert: FunctionReference<'mutation'>;
@@ -69,23 +100,67 @@ export interface ConvexCollectionOptionsConfig<T extends object> {
     material?: FunctionReference<'query'>;
     [key: string]: any;
   };
-
   collection: string;
+  /** Undo capture timeout in ms. Changes within this window merge into one undo. Default: 500 */
+  undoCaptureTimeout?: number;
+  /** Origins to track for undo. Default: insert, update, remove */
+  undoTrackedOrigins?: Set<any>;
+}
 
-  metadata?: {
-    schemaVersion?: number;
-  };
+/** Undo/Redo manager for a collection */
+export interface UndoManager {
+  /** Undo the last change */
+  undo: () => void;
+  /** Redo the last undone change */
+  redo: () => void;
+  /** Check if undo is available */
+  canUndo: () => boolean;
+  /** Check if redo is available */
+  canRedo: () => boolean;
+  /** Clear undo/redo history */
+  clearHistory: () => void;
+  /** Stop capturing - force the next change to create a new undo stack item */
+  stopCapturing: () => void;
 }
 
 export type ConvexCollection<T extends object> = Collection<T>;
 
+// Module-level storage for undo managers (accessed by getUndoManager)
+const undoManagers = new Map<string, UndoManager>();
+
+/**
+ * Get the UndoManager for a collection.
+ * Must be called after the collection's sync function has initialized.
+ *
+ * @param collectionName - The collection name
+ * @returns UndoManager or null if not yet initialized
+ */
+export function getUndoManager(collectionName: string): UndoManager | null {
+  return undoManagers.get(collectionName) ?? null;
+}
+
+/**
+ * Create TanStack DB collection options with Convex + Yjs replication.
+ *
+ * @example
+ * ```typescript
+ * const options = convexCollectionOptions<Task>({
+ *   getKey: (t) => t.id,
+ *   convexClient,
+ *   api: { stream: api.tasks.stream, insert: api.tasks.insert, ... },
+ *   collection: 'tasks',
+ * });
+ * const collection = createCollection(options);
+ * ```
+ */
 export function convexCollectionOptions<T extends object>({
   getKey,
   material,
   convexClient,
   api,
   collection,
-  metadata,
+  undoCaptureTimeout = 500,
+  undoTrackedOrigins,
 }: ConvexCollectionOptionsConfig<T>): CollectionConfig<T> & {
   _convexClient: ConvexClient;
   _collection: string;
@@ -95,13 +170,10 @@ export function convexCollectionOptions<T extends object>({
     api: api.protocol ? { protocol: api.protocol } : undefined,
   });
 
-  // Declare Yjs variables - will be initialized in sync function using YjsService
-  let ydoc: Y.Doc = null as any; // Initialized before mutation handlers can be called
+  let ydoc: Y.Doc = null as any;
   let ymap: Y.Map<unknown> = null as any;
   let persistence: IndexeddbPersistence = null as any;
 
-  // Create deferred promises immediately - never null to avoid race conditions
-  // These are resolved by the sync function after initialization completes
   let resolvePersistenceReady: (() => void) | undefined;
   const persistenceReadyPromise = new Promise<void>((resolve) => {
     resolvePersistenceReady = resolve;
@@ -112,17 +184,13 @@ export function convexCollectionOptions<T extends object>({
     resolveOptimisticReady = resolve;
   });
 
-  // Reconciliation function that uses ReconciliationService
   const reconcile = () =>
     Effect.gen(function* () {
-      if (!api.material) {
-        return;
-      }
+      if (!api.material) return;
 
       const materialApi = api.material;
       const reconciliation = yield* Reconciliation;
 
-      // Wrap Convex query in Effect
       const serverResponse = yield* Effect.tryPromise({
         try: () => convexClient.query(materialApi, {}),
         catch: (error) => new Error(`Reconciliation query failed: ${error}`),
@@ -132,7 +200,6 @@ export function convexCollectionOptions<T extends object>({
         ? serverResponse
         : ((serverResponse as any).documents as T[] | undefined) || [];
 
-      // Use ReconciliationService to handle phantom document removal
       const removedItems = yield* reconciliation.reconcile(
         ydoc,
         ymap,
@@ -141,22 +208,17 @@ export function convexCollectionOptions<T extends object>({
         (doc: T) => String(getKey(doc))
       );
 
-      // Sync deletions to TanStack DB via plain function
       if (removedItems.length > 0) {
         replicateDelete(removedItems);
       }
     }).pipe(
       Effect.catchAll((error) =>
         Effect.gen(function* () {
-          yield* Effect.logError('Reconciliation failed', {
-            collection,
-            error,
-          });
+          yield* Effect.logError('Reconciliation failed', { collection, error });
         })
       )
     );
 
-  // Helper: Apply Yjs transaction for insert operations and return delta
   const applyYjsInsert = (mutations: any[]): Uint8Array => {
     const { delta } = transactWithDelta(
       ydoc,
@@ -174,7 +236,6 @@ export function convexCollectionOptions<T extends object>({
     return delta;
   };
 
-  // Helper: Apply Yjs transaction for update operations and return delta
   const applyYjsUpdate = (mutations: any[]): Uint8Array => {
     const { delta } = transactWithDelta(
       ydoc,
@@ -184,17 +245,14 @@ export function convexCollectionOptions<T extends object>({
           if (itemYMap) {
             const modifiedFields = mut.modified as Record<string, unknown>;
             if (!modifiedFields) {
-              logger.warn('mut.modified is null/undefined', {
-                collection,
-                key: String(mut.key),
-              });
+              logger.warn('mut.modified is null/undefined', { collection, key: String(mut.key) });
               return;
             }
             Object.entries(modifiedFields).forEach(([k, v]) => {
               itemYMap.set(k, v);
             });
           } else {
-            logger.error('Update attempted on non-existent item - skipping', {
+            logger.error('Update attempted on non-existent item', {
               collection,
               key: String(mut.key),
             });
@@ -206,7 +264,6 @@ export function convexCollectionOptions<T extends object>({
     return delta;
   };
 
-  // Helper: Apply Yjs transaction for delete operations and return delta
   const applyYjsDelete = (mutations: any[]): Uint8Array => {
     const { delta } = transactWithDelta(
       ydoc,
@@ -223,228 +280,126 @@ export function convexCollectionOptions<T extends object>({
   return {
     id: collection,
     getKey,
-
-    // Store for extraction by createConvexCollection
     _convexClient: convexClient,
     _collection: collection,
 
-    // REAL onInsert handler (called automatically by TanStack DB)
     onInsert: async ({ transaction }: any) => {
       try {
         await Promise.all([setPromise, persistenceReadyPromise, optimisticReadyPromise]);
-
-        // Update Yjs and get delta inline - plain function, no Effect needed
         const delta = applyYjsInsert(transaction.mutations);
-
-        // Send DELTA to Convex
         if (delta.length > 0) {
           const documentKey = String(transaction.mutations[0].key);
-          const mutationArgs: any = {
+          await convexClient.mutation(api.insert, {
             documentId: documentKey,
             crdtBytes: delta.slice().buffer,
             materializedDoc: transaction.mutations[0].modified,
             version: Date.now(),
-          };
-
-          if (metadata?.schemaVersion !== undefined) {
-            mutationArgs._schemaVersion = metadata.schemaVersion;
-          }
-
-          await convexClient.mutation(api.insert, mutationArgs);
+          });
         }
-      } catch (error: any) {
-        logger.error('Insert failed', {
-          collection,
-          error: error?.message,
-          status: error?.status,
-        });
-
-        // Classify errors for retry behavior
-        if (error?.status === 401 || error?.status === 403) {
-          throw new NonRetriableError('Authentication failed');
-        }
-        if (error?.status === 422) {
-          throw new NonRetriableError('Validation error');
-        }
-
-        // Network errors retry automatically
-        throw error;
+      } catch (error) {
+        handleMutationError(error, 'Insert', collection);
       }
     },
 
-    // REAL onUpdate handler (called automatically by TanStack DB)
     onUpdate: async ({ transaction }: any) => {
       try {
-        // Wait for BOTH initialization AND IndexedDB persistence
         await Promise.all([setPromise, persistenceReadyPromise, optimisticReadyPromise]);
-
-        // Update Yjs and get delta inline - plain function, no Effect needed
         const delta = applyYjsUpdate(transaction.mutations);
-
-        // Send delta to Convex
         if (delta.length > 0) {
           const documentKey = String(transaction.mutations[0].key);
           const itemYMap = ymap.get(documentKey) as Y.Map<any>;
           const fullDoc = itemYMap ? itemYMap.toJSON() : transaction.mutations[0].modified;
-
-          const mutationArgs: any = {
+          await convexClient.mutation(api.update, {
             documentId: documentKey,
             crdtBytes: delta.slice().buffer,
             materializedDoc: fullDoc,
             version: Date.now(),
-          };
-
-          if (metadata?.schemaVersion !== undefined) {
-            mutationArgs._schemaVersion = metadata.schemaVersion;
-          }
-
-          await convexClient.mutation(api.update, mutationArgs);
+          });
         }
-      } catch (error: any) {
-        logger.error('Update failed', {
-          collection,
-          error: error?.message,
-          status: error?.status,
-        });
-
-        // Classify errors
-        if (error?.status === 401 || error?.status === 403) {
-          throw new NonRetriableError('Authentication failed');
-        }
-        if (error?.status === 422) {
-          throw new NonRetriableError('Validation error');
-        }
-
-        throw error;
+      } catch (error) {
+        handleMutationError(error, 'Update', collection);
       }
     },
 
-    // onDelete handler (called when user does collection.delete())
     onDelete: async ({ transaction }: any) => {
       try {
         await Promise.all([setPromise, persistenceReadyPromise, optimisticReadyPromise]);
-
-        // Apply Yjs delete and get delta inline - plain function, no Effect needed
         const delta = applyYjsDelete(transaction.mutations);
-
-        // Sync to TanStack DB using plain function
         const itemsToDelete = transaction.mutations.map((mut: any) => mut.original);
         replicateDelete(itemsToDelete);
-
-        // Send deletion DELTA to Convex
         if (delta.length > 0) {
           const documentKey = String(transaction.mutations[0].key);
-          const mutationArgs: any = {
+          await convexClient.mutation(api.remove, {
             documentId: documentKey,
             crdtBytes: delta.slice().buffer,
             version: Date.now(),
-          };
-
-          if (metadata?.schemaVersion !== undefined) {
-            mutationArgs._schemaVersion = metadata.schemaVersion;
-          }
-
-          await convexClient.mutation(api.remove, mutationArgs);
+          });
         }
-      } catch (error: any) {
-        logger.error('Delete operation failed', {
-          collection,
-          error: error?.message,
-          status: error?.status,
-        });
-
-        if (error?.status === 401 || error?.status === 403) {
-          throw new NonRetriableError('Authentication failed');
-        }
-        if (error?.status === 422) {
-          throw new NonRetriableError('Validation error');
-        }
-
-        throw error;
+      } catch (error) {
+        handleMutationError(error, 'Delete', collection);
       }
     },
 
-    // Sync function for pulling data from server
     sync: {
-      rowUpdateMode: 'full', // We send complete documents from Yjs, not partial updates
+      rowUpdateMode: 'partial',
       sync: (params: any) => {
         const { markReady } = params;
 
-        // Clean up any existing collection instance for this collection
-        // This prevents subscription leaks when collections are recreated (e.g., during HMR)
         const existingCleanup = cleanupFunctions.get(collection);
         if (existingCleanup) {
           existingCleanup();
           cleanupFunctions.delete(collection);
         }
 
-        // TanStack DB sync methods stored in module-level syncParams
-
-        // Initialize subscription variable
         let subscription: (() => void) | null = null;
-
-        // Declare SSR variables
-        let ssrDocuments: ReadonlyArray<T> | undefined;
-        let ssrCheckpoint: { lastModified: number } | undefined;
-        let ssrCRDTBytes: ArrayBuffer | undefined;
-
-        // Parse SSR data if provided
-        if (material) {
-          ssrDocuments = material.documents;
-          ssrCheckpoint = material.checkpoint;
-          ssrCRDTBytes = material.crdtBytes;
-        }
-
-        // Collect initial docs for TanStack DB
+        const ssrDocuments = material?.documents;
+        const ssrCheckpoint = material?.checkpoint;
+        const ssrCRDTBytes = material?.crdtBytes;
         const docs: T[] = ssrDocuments ? [...ssrDocuments] : [];
 
-        // Start async initialization + data loading + subscription
         (async () => {
           try {
-            await setPromise; // Wait for protocol initialization
+            await setPromise;
 
-            // Create Yjs document using plain function
             ydoc = await createYjsDocument(collection);
             ymap = getYMap<unknown>(ydoc, collection);
 
-            // Setup persistence (imperative - y-indexeddb constraint)
-            // Resolve the deferred promise when persistence syncs
+            const trackedOrigins =
+              undoTrackedOrigins ?? new Set([YjsOrigin.Insert, YjsOrigin.Update, YjsOrigin.Remove]);
+            const yUndoManager = new Y.UndoManager(ymap, {
+              captureTimeout: undoCaptureTimeout,
+              trackedOrigins,
+            });
+
+            const undoManager: UndoManager = {
+              undo: () => yUndoManager.undo(),
+              redo: () => yUndoManager.redo(),
+              canUndo: () => yUndoManager.canUndo(),
+              canRedo: () => yUndoManager.canRedo(),
+              clearHistory: () => yUndoManager.clear(),
+              stopCapturing: () => yUndoManager.stopCapturing(),
+            };
+            undoManagers.set(collection, undoManager);
+
             persistence = new IndexeddbPersistence(collection, ydoc);
             persistence.on('synced', () => resolvePersistenceReady?.());
-
             await persistenceReadyPromise;
 
-            // Initialize replicate helpers (plain function)
             initializeReplicateParams(params);
-
-            // Signal that sync helpers are ready
             resolveOptimisticReady?.();
 
-            // Apply SSR CRDT bytes to Yjs if available
             if (ssrCRDTBytes) {
               applyUpdate(ydoc, new Uint8Array(ssrCRDTBytes), YjsOrigin.SSRInit);
             }
 
             if (ymap.size > 0) {
-              const items: T[] = [];
-              ymap.forEach((itemYMap, _key) => {
-                if (itemYMap instanceof Y.Map) {
-                  items.push(itemYMap.toJSON() as T);
-                }
-              });
-
-              // Use plain function for initial sync
+              const items = extractItems<T>(ymap);
               replicateInsert(items);
-
-              logger.info('Initial sync completed', {
-                collection,
-                itemCount: items.length,
-              });
+              logger.info('Initial sync completed', { collection, itemCount: items.length });
             }
 
             await Effect.runPromise(reconcile().pipe(Effect.provide(servicesLayer)));
 
-            // Use SSR checkpoint if available, otherwise load from IndexedDB
             const checkpoint =
               ssrCheckpoint ||
               (await Effect.runPromise(
@@ -454,66 +409,47 @@ export function convexCollectionOptions<T extends object>({
                 }).pipe(Effect.provide(CheckpointLive))
               ));
 
-            // Define subscription handler as Effect program (for checkpoint saving)
+            const handleSnapshotChange = (crdtBytes: ArrayBuffer) => {
+              applyUpdate(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Snapshot);
+              replicateReplace(extractItems<T>(ymap));
+            };
+
+            const handleDeltaChange = (crdtBytes: ArrayBuffer, documentId: string | undefined) => {
+              const itemBefore = documentId ? extractItem<T>(ymap, documentId) : null;
+              applyUpdate(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Subscription);
+
+              if (!documentId) return;
+
+              const itemAfter = extractItem<T>(ymap, documentId);
+              if (itemAfter) {
+                replicateUpsert([itemAfter]);
+              } else if (itemBefore) {
+                replicateDelete([itemBefore]);
+              }
+            };
+
             const subscriptionHandler = (response: any) =>
               Effect.gen(function* () {
                 const checkpointSvc = yield* Checkpoint;
-
                 const { changes, checkpoint: newCheckpoint } = response;
 
                 for (const change of changes) {
                   const { operationType, crdtBytes, documentId } = change;
-
                   if (operationType === 'snapshot') {
-                    // Apply snapshot to Yjs using plain function
-                    applyUpdate(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Snapshot);
-
-                    // Replace all data in TanStack DB
-                    const items: T[] = [];
-                    ymap.forEach((itemYMap) => {
-                      if (itemYMap instanceof Y.Map) {
-                        items.push(itemYMap.toJSON() as T);
-                      }
-                    });
-                    replicateReplace(items);
+                    handleSnapshotChange(crdtBytes);
                   } else {
-                    // Capture item data BEFORE applying delta
-                    let itemBeforeDelta: T | null = null;
-                    if (documentId) {
-                      const itemYMapBefore = ymap.get(documentId);
-                      if (itemYMapBefore instanceof Y.Map) {
-                        itemBeforeDelta = itemYMapBefore.toJSON() as T;
-                      }
-                    }
-
-                    // Apply delta to Yjs using plain function
-                    applyUpdate(ydoc, new Uint8Array(crdtBytes), YjsOrigin.Subscription);
-
-                    // Sync affected document to TanStack DB
-                    if (documentId) {
-                      const itemYMap = ymap.get(documentId);
-                      if (itemYMap instanceof Y.Map) {
-                        // Item EXISTS after delta - upsert
-                        const item = itemYMap.toJSON() as T;
-                        replicateUpsert([item]);
-                      } else if (itemBeforeDelta) {
-                        // Item DELETED by delta
-                        replicateDelete([itemBeforeDelta]);
-                      }
-                    }
+                    handleDeltaChange(crdtBytes, documentId);
                   }
                 }
 
-                // Save checkpoint (still uses Effect for CheckpointService)
                 yield* checkpointSvc.saveCheckpoint(collection, newCheckpoint);
               }).pipe(Effect.provide(servicesLayer));
 
-            // Create subscription directly with convexClient.onUpdate()
+            // TODO: Implement proper pagination for hasMore
             subscription = convexClient.onUpdate(
               api.stream,
-              { checkpoint, limit: 100 },
+              { checkpoint, limit: 1000 },
               (response: any) => {
-                // Run Effect handler - fire and forget (Convex callback is sync)
                 Effect.runPromise(
                   subscriptionHandler(response).pipe(
                     Effect.catchAllCause((cause) =>
@@ -524,23 +460,18 @@ export function convexCollectionOptions<T extends object>({
               }
             );
 
-            // Mark collection as ready
             markReady();
           } catch (error) {
             logger.error('Failed to set up collection', { error, collection });
-            markReady(); // Mark ready anyway to avoid blocking
+            markReady();
           }
         })();
 
-        // Return initial data and cleanup function
         return {
           material: docs,
           cleanup: () => {
-            // Cleanup subscription
-            if (subscription) {
-              subscription();
-            }
-
+            subscription?.();
+            undoManagers.delete(collection);
             persistence?.destroy();
             cleanupFunctions.delete(collection);
           },
@@ -550,6 +481,16 @@ export function convexCollectionOptions<T extends object>({
   };
 }
 
+/**
+ * Wrap a collection with offline transaction handling and reconnection logic.
+ * Must be called after createCollection to enable offline-first behavior.
+ *
+ * @example
+ * ```typescript
+ * const rawCollection = createCollection(convexCollectionOptions<Task>({ ... }));
+ * const collection = handleReconnect(rawCollection);
+ * ```
+ */
 export function handleReconnect<T extends object>(
   rawCollection: Collection<T>
 ): ConvexCollection<T> {
