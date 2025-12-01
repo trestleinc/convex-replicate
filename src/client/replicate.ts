@@ -1,7 +1,7 @@
 /**
  * Replicate Helpers - Plain functions for TanStack DB optimistic updates
  *
- * Simple module-level state for sync operations.
+ * Simple module-level state for replicate operations.
  */
 
 export interface ReplicateParams {

@@ -36,6 +36,19 @@ interface HttpError extends Error {
   status?: number;
 }
 
+/** Mutation data passed by TanStack DB transaction handlers */
+interface CollectionMutation<T> {
+  key: string | number;
+  modified: T;
+  original?: T | Record<string, never>;
+  changes?: Partial<T>;
+}
+
+/** Transaction wrapper containing mutations array */
+interface CollectionTransaction<T> {
+  transaction: { mutations: CollectionMutation<T>[] };
+}
+
 function handleMutationError(
   error: unknown,
   operation: 'Insert' | 'Update' | 'Delete',
@@ -219,11 +232,11 @@ export function convexCollectionOptions<T extends object>({
       )
     );
 
-  const applyYjsInsert = (mutations: any[]): Uint8Array => {
+  const applyYjsInsert = (mutations: CollectionMutation<T>[]): Uint8Array => {
     const { delta } = transactWithDelta(
       ydoc,
       () => {
-        mutations.forEach((mut: any) => {
+        mutations.forEach((mut) => {
           const itemYMap = new Y.Map();
           Object.entries(mut.modified as Record<string, unknown>).forEach(([k, v]) => {
             itemYMap.set(k, v);
@@ -236,12 +249,12 @@ export function convexCollectionOptions<T extends object>({
     return delta;
   };
 
-  const applyYjsUpdate = (mutations: any[]): Uint8Array => {
+  const applyYjsUpdate = (mutations: CollectionMutation<T>[]): Uint8Array => {
     const { delta } = transactWithDelta(
       ydoc,
       () => {
-        mutations.forEach((mut: any) => {
-          const itemYMap = ymap.get(String(mut.key)) as Y.Map<any> | undefined;
+        mutations.forEach((mut) => {
+          const itemYMap = ymap.get(String(mut.key)) as Y.Map<unknown> | undefined;
           if (itemYMap) {
             const modifiedFields = mut.modified as Record<string, unknown>;
             if (!modifiedFields) {
@@ -264,11 +277,11 @@ export function convexCollectionOptions<T extends object>({
     return delta;
   };
 
-  const applyYjsDelete = (mutations: any[]): Uint8Array => {
+  const applyYjsDelete = (mutations: CollectionMutation<T>[]): Uint8Array => {
     const { delta } = transactWithDelta(
       ydoc,
       () => {
-        mutations.forEach((mut: any) => {
+        mutations.forEach((mut) => {
           ymap.delete(String(mut.key));
         });
       },
@@ -283,7 +296,7 @@ export function convexCollectionOptions<T extends object>({
     _convexClient: convexClient,
     _collection: collection,
 
-    onInsert: async ({ transaction }: any) => {
+    onInsert: async ({ transaction }: CollectionTransaction<T>) => {
       try {
         await Promise.all([setPromise, persistenceReadyPromise, optimisticReadyPromise]);
         const delta = applyYjsInsert(transaction.mutations);
@@ -301,13 +314,13 @@ export function convexCollectionOptions<T extends object>({
       }
     },
 
-    onUpdate: async ({ transaction }: any) => {
+    onUpdate: async ({ transaction }: CollectionTransaction<T>) => {
       try {
         await Promise.all([setPromise, persistenceReadyPromise, optimisticReadyPromise]);
         const delta = applyYjsUpdate(transaction.mutations);
         if (delta.length > 0) {
           const documentKey = String(transaction.mutations[0].key);
-          const itemYMap = ymap.get(documentKey) as Y.Map<any>;
+          const itemYMap = ymap.get(documentKey) as Y.Map<unknown>;
           const fullDoc = itemYMap ? itemYMap.toJSON() : transaction.mutations[0].modified;
           await convexClient.mutation(api.update, {
             documentId: documentKey,
@@ -321,11 +334,13 @@ export function convexCollectionOptions<T extends object>({
       }
     },
 
-    onDelete: async ({ transaction }: any) => {
+    onDelete: async ({ transaction }: CollectionTransaction<T>) => {
       try {
         await Promise.all([setPromise, persistenceReadyPromise, optimisticReadyPromise]);
         const delta = applyYjsDelete(transaction.mutations);
-        const itemsToDelete = transaction.mutations.map((mut: any) => mut.original);
+        const itemsToDelete = transaction.mutations
+          .map((mut) => mut.original)
+          .filter((item): item is T => item !== undefined && Object.keys(item).length > 0);
         replicateDelete(itemsToDelete);
         if (delta.length > 0) {
           const documentKey = String(transaction.mutations[0].key);
@@ -445,7 +460,6 @@ export function convexCollectionOptions<T extends object>({
                 yield* checkpointSvc.saveCheckpoint(collection, newCheckpoint);
               }).pipe(Effect.provide(servicesLayer));
 
-            // TODO: Implement proper pagination for hasMore
             subscription = convexClient.onUpdate(
               api.stream,
               { checkpoint, limit: 1000 },
@@ -473,6 +487,7 @@ export function convexCollectionOptions<T extends object>({
             subscription?.();
             undoManagers.delete(collection);
             persistence?.destroy();
+            ydoc?.destroy();
             cleanupFunctions.delete(collection);
           },
         };

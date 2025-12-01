@@ -33,7 +33,13 @@ export class Reconciliation extends Context.Tag('Reconciliation')<
 export const ReconciliationLive = Layer.succeed(
   Reconciliation,
   Reconciliation.of({
-    reconcile: (ydoc, ymap, collection, serverDocs, getKey) =>
+    reconcile: <T>(
+      ydoc: Y.Doc,
+      ymap: Y.Map<unknown>,
+      collection: string,
+      serverDocs: readonly T[],
+      getKey: (doc: T) => string
+    ) =>
       Effect.gen(function* (_) {
         const serverDocIds = new Set(serverDocs.map(getKey));
         const toDelete: string[] = [];
@@ -58,11 +64,11 @@ export const ReconciliationLive = Layer.succeed(
         );
 
         // Extract items before deletion for TanStack DB sync
-        const removedItems: any[] = [];
+        const removedItems: T[] = [];
         for (const key of toDelete) {
           const itemYMap = ymap.get(key);
           if (itemYMap instanceof Y.Map) {
-            removedItems.push(itemYMap.toJSON());
+            removedItems.push(itemYMap.toJSON() as T);
           }
         }
 

@@ -35,21 +35,10 @@ export async function createYjsDocument(collection: string): Promise<Y.Doc> {
 
 /**
  * Apply a binary update to a Yjs document.
- * @param transact - Whether to wrap in a transaction (default: true)
+ * Y.applyUpdateV2 is already atomic, no need for transaction wrapper.
  */
-export function applyUpdate(
-  doc: Y.Doc,
-  update: Uint8Array,
-  origin?: string,
-  transact = true
-): void {
-  if (transact) {
-    doc.transact(() => {
-      Y.applyUpdateV2(doc, update, origin);
-    }, origin);
-  } else {
-    Y.applyUpdateV2(doc, update, origin);
-  }
+export function applyUpdate(doc: Y.Doc, update: Uint8Array, origin?: string): void {
+  Y.applyUpdateV2(doc, update, origin);
 }
 
 /**
