@@ -1,39 +1,36 @@
 # Changelog
 
-All notable changes to ConvexReplicate will be documented in this file.
+All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] - 2025-12-01
+
+First stable release of Convex Replicate.
 
 ### Added
-- CI/CD pipeline for automated publishing
-- Apache-2.0 license for entire monorepo
+
+- Effect.js service architecture for dependency injection and composable services
+- Comprehensive test suite with 180+ tests (unit, integration, benchmarks)
+- JSDoc documentation for all exported functions
+- Undo/redo and client-side history utilities
+- Version history and maintenance features
+- Improved type safety across client code with proper TypeScript interfaces
+- Checkpoint service for managing sync checkpoints in IndexedDB
+- Protocol version negotiation for handling package updates
+- Snapshot recovery service for handling compaction scenarios
+- Reconciliation service for phantom document cleanup
 
 ### Changed
-- Consolidated licensing to Apache-2.0 for patent protection
-- Updated copyright holder to Trestle Inc
 
-## [0.1.0] - 2025-11-01
+- Refactored terminology: "sync" renamed to "replicate" throughout codebase
+- Simplified architecture with cleaner Effect-based service layer
+- Improved type definitions (removed `any` types in favor of proper generics)
+- Streamlined Yjs update application (removed unnecessary transaction wrapper)
 
-### Fixed
-- Server-side WASM bundling error (import from /replication)
-- Client-side CRDT bytes handling for proper conflict resolution
+### Removed
 
-### Changed
-- Updated API to use explicit `crdtBytes` instead of materialized documents
-- Split submitDocument into insertDocument/updateDocument/deleteDocument
-
-### Added
-- Initial release of @convex-replicate/component
-- Initial release of @convex-replicate/core
-- Dual-storage pattern with CRDT layer
-- TanStack DB integration
-- SSR support
-- Automerge CRDT conflict resolution
-- Framework-agnostic replication helpers
-- IndexedDB persistence for offline-first functionality
-
-[Unreleased]: https://github.com/trestleinc/convex-replicate/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/trestleinc/convex-replicate/releases/tag/v0.1.0
+- SvelteKit example (TanStack Start example remains as reference)
+- Dead code and unused imports
+- Outdated monorepo-style release configuration
