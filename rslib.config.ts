@@ -1,6 +1,8 @@
 import { defineConfig } from '@rslib/core';
+import { pluginTypeCheck } from '@rsbuild/plugin-type-check';
 
 export default defineConfig({
+  plugins: [pluginTypeCheck()],
   lib: [
     {
       // Client code - BUNDLED (default mode)
