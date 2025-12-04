@@ -25,23 +25,7 @@ Single package with exports:
 ```bash
 pnpm run build       # Build with Rslib (outputs to dist/)
 pnpm run clean       # Remove dist/
-pnpm run typecheck   # Type check entire package
 ```
-
-### Testing
-```bash
-pnpm run test           # Run tests in watch mode (vitest)
-pnpm run test:run       # Run tests once
-pnpm run test:coverage  # Run with coverage report
-
-# Run specific test file
-pnpm run test src/test/unit/merge.test.ts
-
-# Run tests matching pattern
-pnpm run test -t "should merge"
-```
-
-Tests use `fake-indexeddb` for IndexedDB mocking and `jsdom` environment. Test files are in `src/test/`.
 
 ### Code Quality (Biome v2)
 ```bash
@@ -49,11 +33,9 @@ pnpm run check       # Lint + format check (dry run)
 pnpm run check:fix   # Auto-fix all issues (ALWAYS run before committing)
 ```
 
-### Examples
+### Publishing
 ```bash
-cd examples/tanstack-start  # or examples/sveltekit
-pnpm install
-pnpm run dev          # App + Convex dev server
+bun run prepublish   # Build + check:fix (runs before npm publish)
 ```
 
 ## Architecture
@@ -67,6 +49,7 @@ src/
 │   ├── set.ts           # setReplicate() setup
 │   ├── replicate.ts     # Replicate helpers for TanStack DB
 │   ├── merge.ts         # Yjs CRDT merge operations
+│   ├── history.ts       # Undo/redo history management
 │   ├── logger.ts        # LogTape logger
 │   ├── errors.ts        # Error definitions
 │   └── services/        # Core services (Effect-based)
@@ -78,18 +61,13 @@ src/
 │   ├── index.ts         # Public exports
 │   ├── builder.ts       # defineReplicate() builder
 │   ├── schema.ts        # replicatedTable() helper
-│   ├── storage.ts       # ReplicateStorage class
-│   └── errors.ts        # Server error definitions
+│   └── storage.ts       # ReplicateStorage class
 ├── component/           # Internal Convex component
 │   ├── convex.config.ts # Component config
 │   ├── schema.ts        # Event log schema
-│   └── public.ts        # Component API
-└── test/                # Test files
-    ├── setup.ts         # Vitest setup (fake-indexeddb)
-    ├── mocks/           # Test mocks
-    ├── unit/            # Unit tests
-    ├── integration/     # Integration tests
-    └── utils/           # Test utilities (collection.ts, yjs.ts)
+│   ├── public.ts        # Component API
+│   └── logger.ts        # Component logging
+└── env.d.ts             # Environment type declarations
 ```
 
 ### Core Concepts
@@ -156,7 +134,6 @@ tasks: replicatedTable({ id: v.string(), text: v.string() }, (t) => t.index('by_
 - **Convex** for backend (cloud database + functions)
 - **TanStack DB** for reactive state
 - **TanStack offline-transactions** for outbox pattern
-- **Vitest** for testing
 - **Rslib** for building
 - **Biome** for linting/formatting
 - **LogTape** for logging (avoid console.*)
@@ -165,14 +142,12 @@ tasks: replicatedTable({ id: v.string(), text: v.string() }, (t) => t.index('by_
 
 - **Service files**: lowercase, no suffix (e.g., `checkpoint.ts`, not `CheckpointService.ts`)
 - **Service exports**: PascalCase, no "Service" suffix (e.g., `Checkpoint`, `CheckpointLive`)
-- **Test files**: kebab-case (e.g., `checkpoint.test.ts`, `two-client-replicate.test.ts`)
-- **Test utilities**: lowercase, no suffix (e.g., `collection.ts`, `yjs.ts`)
 - **Use "replicate"**: not "sync" throughout the codebase
 
 ## Important Notes
 
 - **Effect-based services** - Client services use Effect for DI; understand Effect basics
 - **Hard deletes** - Documents physically removed from main table, history kept in component
-- **pnpm for examples** - Examples use `file:` protocol which requires pnpm
-- **Biome config** - `noExplicitAny` OFF, `noConsole` warns except in tests
+- **Biome config** - `noExplicitAny` OFF, `noConsole` warns (except in test files and component logger)
 - **LogTape logging** - Use LogTape, not console.* (Biome warns on console)
+- **Import types** - Use `import type` for type-only imports (Biome enforces this)
