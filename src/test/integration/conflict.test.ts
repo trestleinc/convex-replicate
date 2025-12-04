@@ -238,3 +238,310 @@ import * as Y from 'yjs';
 function getState(collection: { doc: Y.Doc }): Uint8Array {
   return Y.encodeStateAsUpdateV2(collection.doc);
 }
+
+// Rich text conflict resolution tests
+import {
+  fragmentFromJSON,
+  isFragment,
+  fragment,
+  serializeYMapValue,
+  type XmlFragmentJSON,
+} from '$/client/merge.js';
+import { createTestDoc, createTestMap } from '../utils/yjs.js';
+
+interface Note {
+  id: string;
+  title: string;
+  content: XmlFragmentJSON;
+}
+
+interface RichTextCollection<T extends { id: string }> {
+  doc: Y.Doc;
+  ymap: Y.Map<unknown>;
+  insert(item: T): void;
+  update(id: string, changes: Partial<T>): void;
+  delete(id: string): void;
+  get(id: string): T | null;
+  getAll(): T[];
+  getFragment(id: string, field: string): Y.XmlFragment | null;
+}
+
+function createRichTextCollection<T extends { id: string }>(
+  name: string,
+  clientId?: number
+): RichTextCollection<T> {
+  const doc = createTestDoc(clientId);
+  const ymap = createTestMap(doc, name);
+
+  return {
+    doc,
+    ymap,
+
+    insert(item: T): void {
+      doc.transact(() => {
+        const itemMap = new Y.Map();
+        for (const [key, value] of Object.entries(item)) {
+          if (isFragment(value)) {
+            const fragment = new Y.XmlFragment();
+            if (value.content) {
+              fragmentFromJSON(fragment, value.content);
+            }
+            itemMap.set(key, fragment);
+          } else {
+            itemMap.set(key, value);
+          }
+        }
+        ymap.set(item.id, itemMap);
+      });
+    },
+
+    update(id: string, changes: Partial<T>): void {
+      doc.transact(() => {
+        const itemMap = ymap.get(id);
+        if (itemMap instanceof Y.Map) {
+          for (const [key, value] of Object.entries(changes)) {
+            if (isFragment(value)) {
+              const existingFragment = itemMap.get(key);
+              if (existingFragment instanceof Y.XmlFragment) {
+                while (existingFragment.length > 0) {
+                  existingFragment.delete(0);
+                }
+                if (value.content) {
+                  fragmentFromJSON(existingFragment, value.content);
+                }
+              } else {
+                const fragment = new Y.XmlFragment();
+                if (value.content) {
+                  fragmentFromJSON(fragment, value.content);
+                }
+                itemMap.set(key, fragment);
+              }
+            } else {
+              itemMap.set(key, value);
+            }
+          }
+        }
+      });
+    },
+
+    delete(id: string): void {
+      doc.transact(() => {
+        ymap.delete(id);
+      });
+    },
+
+    get(id: string): T | null {
+      const value = ymap.get(id);
+      return value instanceof Y.Map ? (serializeYMapValue(value) as T) : null;
+    },
+
+    getAll(): T[] {
+      const items: T[] = [];
+      ymap.forEach((value) => {
+        if (value instanceof Y.Map) {
+          items.push(serializeYMapValue(value) as T);
+        }
+      });
+      return items;
+    },
+
+    getFragment(id: string, field: string): Y.XmlFragment | null {
+      const itemMap = ymap.get(id);
+      if (!(itemMap instanceof Y.Map)) return null;
+      const fieldValue = itemMap.get(field);
+      return fieldValue instanceof Y.XmlFragment ? fieldValue : null;
+    },
+  };
+}
+
+function syncRichTextCollections<T extends { id: string }>(
+  c1: RichTextCollection<T>,
+  c2: RichTextCollection<T>
+): void {
+  const state1 = Y.encodeStateAsUpdateV2(c1.doc);
+  const state2 = Y.encodeStateAsUpdateV2(c2.doc);
+  Y.applyUpdateV2(c1.doc, state2);
+  Y.applyUpdateV2(c2.doc, state1);
+}
+
+describe('rich text conflict resolution', () => {
+  it('merges concurrent text edits to same XmlFragment (character-level)', () => {
+    const client1 = createRichTextCollection<Note>('notes', 1);
+    const client2 = createRichTextCollection<Note>('notes', 2);
+
+    // Start with same document
+    client1.insert({
+      id: 'note-1',
+      title: 'Test',
+      content: fragment({
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Hello world' }] }],
+      }) as unknown as XmlFragmentJSON,
+    });
+    syncRichTextCollections(client1, client2);
+
+    // Get fragments for direct editing (simulating editor bindings)
+    const fragment1 = client1.getFragment('note-1', 'content');
+    const fragment2 = client2.getFragment('note-1', 'content');
+    expect(fragment1).not.toBeNull();
+    expect(fragment2).not.toBeNull();
+    if (!fragment1 || !fragment2) return;
+
+    // Client 1: Insert at beginning
+    client1.doc.transact(() => {
+      const firstPara = fragment1.get(0) as Y.XmlElement;
+      const textNode = firstPara.get(0) as Y.XmlText;
+      textNode.insert(0, 'Yo! ');
+    });
+
+    // Client 2: Insert at end (concurrent)
+    client2.doc.transact(() => {
+      const firstPara = fragment2.get(0) as Y.XmlElement;
+      const textNode = firstPara.get(0) as Y.XmlText;
+      textNode.insert(textNode.length, '!');
+    });
+
+    // Sync
+    syncRichTextCollections(client1, client2);
+
+    // Both edits should be preserved
+    const note1 = client1.get('note-1');
+    const note2 = client2.get('note-1');
+
+    expect(note1?.content).toEqual(note2?.content);
+    // Yjs text merges both insertions
+    expect(note1?.content.content?.[0].content?.[0].text).toBe('Yo! Hello world!');
+  });
+
+  it('merges concurrent XmlFragment edit + primitive field edit', () => {
+    const client1 = createRichTextCollection<Note>('notes', 1);
+    const client2 = createRichTextCollection<Note>('notes', 2);
+
+    client1.insert({
+      id: 'note-1',
+      title: 'Original Title',
+      content: fragment({
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Content' }] }],
+      }) as unknown as XmlFragmentJSON,
+    });
+    syncRichTextCollections(client1, client2);
+
+    // Client 1: Update primitive field
+    client1.update('note-1', { title: 'New Title' });
+
+    // Client 2: Edit XmlFragment directly
+    const fragment2 = client2.getFragment('note-1', 'content');
+    expect(fragment2).not.toBeNull();
+    if (!fragment2) return;
+
+    client2.doc.transact(() => {
+      const firstPara = fragment2.get(0) as Y.XmlElement;
+      const textNode = firstPara.get(0) as Y.XmlText;
+      textNode.insert(textNode.length, ' updated');
+    });
+
+    // Sync
+    syncRichTextCollections(client1, client2);
+
+    // Both changes preserved
+    const note1 = client1.get('note-1');
+    const note2 = client2.get('note-1');
+
+    expect(note1).toEqual(note2);
+    expect(note1?.title).toBe('New Title');
+    expect(note1?.content.content?.[0].content?.[0].text).toBe('Content updated');
+  });
+
+  it('concurrent edits to different XmlFragment fields merge independently', () => {
+    interface RichNote {
+      id: string;
+      body: XmlFragmentJSON;
+      summary: XmlFragmentJSON;
+    }
+
+    const client1 = createRichTextCollection<RichNote>('notes', 1);
+    const client2 = createRichTextCollection<RichNote>('notes', 2);
+
+    client1.insert({
+      id: 'note-1',
+      body: fragment({
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Body' }] }],
+      }) as unknown as XmlFragmentJSON,
+      summary: fragment({
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Summary' }] }],
+      }) as unknown as XmlFragmentJSON,
+    });
+    syncRichTextCollections(client1, client2);
+
+    // Client 1: Edit body
+    const body1 = client1.getFragment('note-1', 'body');
+    expect(body1).not.toBeNull();
+    if (!body1) return;
+
+    client1.doc.transact(() => {
+      const para = body1.get(0) as Y.XmlElement;
+      const text = para.get(0) as Y.XmlText;
+      text.insert(text.length, ' edited by c1');
+    });
+
+    // Client 2: Edit summary (different field)
+    const summary2 = client2.getFragment('note-1', 'summary');
+    expect(summary2).not.toBeNull();
+    if (!summary2) return;
+
+    client2.doc.transact(() => {
+      const para = summary2.get(0) as Y.XmlElement;
+      const text = para.get(0) as Y.XmlText;
+      text.insert(text.length, ' edited by c2');
+    });
+
+    // Sync
+    syncRichTextCollections(client1, client2);
+
+    const note1 = client1.get('note-1');
+    const note2 = client2.get('note-1');
+
+    expect(note1).toEqual(note2);
+    expect(note1?.body.content?.[0].content?.[0].text).toBe('Body edited by c1');
+    expect(note1?.summary.content?.[0].content?.[0].text).toBe('Summary edited by c2');
+  });
+
+  it('delete wins over XmlFragment edit (same as primitive)', () => {
+    const client1 = createRichTextCollection<Note>('notes', 1);
+    const client2 = createRichTextCollection<Note>('notes', 2);
+
+    client1.insert({
+      id: 'note-1',
+      title: 'To Delete',
+      content: fragment({
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Content' }] }],
+      }) as unknown as XmlFragmentJSON,
+    });
+    syncRichTextCollections(client1, client2);
+
+    // Client 1: Delete
+    client1.delete('note-1');
+
+    // Client 2: Edit (concurrent)
+    const fragment2 = client2.getFragment('note-1', 'content');
+    expect(fragment2).not.toBeNull();
+    if (!fragment2) return;
+
+    client2.doc.transact(() => {
+      const para = fragment2.get(0) as Y.XmlElement;
+      const text = para.get(0) as Y.XmlText;
+      text.insert(text.length, ' edited');
+    });
+
+    // Sync
+    syncRichTextCollections(client1, client2);
+
+    // Delete wins
+    expect(client1.get('note-1')).toBeNull();
+    expect(client2.get('note-1')).toBeNull();
+  });
+});

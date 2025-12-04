@@ -28,6 +28,10 @@ import {
   applyUpdate,
   extractItems,
   extractItem,
+  isFragment,
+  fragmentFromJSON,
+  serializeYMapValue,
+  getFragmentFromYMap,
 } from '$/client/merge.js';
 
 const logger = getLogger(['replicate', 'collection']);
@@ -120,36 +124,95 @@ export interface ConvexCollectionOptionsConfig<T extends object> {
   undoTrackedOrigins?: Set<any>;
 }
 
-/** Undo/Redo manager for a collection */
-export interface UndoManager {
-  /** Undo the last change */
-  undo: () => void;
-  /** Redo the last undone change */
-  redo: () => void;
-  /** Check if undo is available */
-  canUndo: () => boolean;
-  /** Check if redo is available */
-  canRedo: () => boolean;
-  /** Clear undo/redo history */
-  clearHistory: () => void;
-  /** Stop capturing - force the next change to create a new undo stack item */
-  stopCapturing: () => void;
+/** Extended collection with fragment and per-document undo/redo support */
+export interface ConvexCollection<T extends object> extends Collection<T> {
+  /**
+   * Get a Y.XmlFragment from a document's field for editor binding.
+   * @param documentId - The document ID
+   * @param field - The field name containing the Y.XmlFragment
+   * @returns The Y.XmlFragment or null if not found/not initialized
+   */
+  fragment(documentId: string, field: string): Y.XmlFragment | null;
+
+  /**
+   * Undo the last change for a specific document.
+   * @param documentId - The document ID
+   */
+  undo(documentId: string): void;
+
+  /**
+   * Redo the last undone change for a specific document.
+   * @param documentId - The document ID
+   */
+  redo(documentId: string): void;
+
+  /**
+   * Check if undo is available for a specific document.
+   * @param documentId - The document ID
+   */
+  canUndo(documentId: string): boolean;
+
+  /**
+   * Check if redo is available for a specific document.
+   * @param documentId - The document ID
+   */
+  canRedo(documentId: string): boolean;
 }
 
-export type ConvexCollection<T extends object> = Collection<T>;
+// Module-level storage for Y.Doc and Y.Map instances
+const collectionDocs = new Map<string, { ydoc: Y.Doc; ymap: Y.Map<unknown> }>();
 
-// Module-level storage for undo managers (accessed by getUndoManager)
-const undoManagers = new Map<string, UndoManager>();
+// Module-level storage for per-document undo managers
+const documentUndoManagers = new Map<string, Map<string, Y.UndoManager>>();
+
+// Module-level storage for undo configuration per collection
+const collectionUndoConfig = new Map<
+  string,
+  { captureTimeout: number; trackedOrigins: Set<unknown> }
+>();
+
+// Default undo capture timeout
+const DEFAULT_UNDO_CAPTURE_TIMEOUT = 500;
 
 /**
- * Get the UndoManager for a collection.
- * Must be called after the collection's sync function has initialized.
- *
- * @param collectionName - The collection name
- * @returns UndoManager or null if not yet initialized
+ * Get or create an UndoManager for a specific document.
+ * Creates the undo manager lazily on first access.
  */
-export function getUndoManager(collectionName: string): UndoManager | null {
-  return undoManagers.get(collectionName) ?? null;
+function getOrCreateDocumentUndoManager(
+  collectionName: string,
+  documentId: string
+): Y.UndoManager | null {
+  const docs = collectionDocs.get(collectionName);
+  if (!docs) return null;
+
+  let docManagers = documentUndoManagers.get(collectionName);
+  if (!docManagers) {
+    docManagers = new Map();
+    documentUndoManagers.set(collectionName, docManagers);
+  }
+
+  let undoManager = docManagers.get(documentId);
+  if (!undoManager) {
+    const itemYMap = docs.ymap.get(documentId);
+    if (itemYMap instanceof Y.Map) {
+      const config = collectionUndoConfig.get(collectionName);
+      undoManager = new Y.UndoManager(itemYMap, {
+        captureTimeout: config?.captureTimeout ?? DEFAULT_UNDO_CAPTURE_TIMEOUT,
+        trackedOrigins:
+          config?.trackedOrigins ?? new Set([YjsOrigin.Insert, YjsOrigin.Update, YjsOrigin.Remove]),
+      });
+      docManagers.set(documentId, undoManager);
+    }
+  }
+
+  return undoManager ?? null;
+}
+
+/**
+ * Get existing UndoManager for a document (doesn't create if missing).
+ */
+function getDocumentUndoManager(collectionName: string, documentId: string): Y.UndoManager | null {
+  return documentUndoManagers.get(collectionName)?.get(documentId) ?? null;
 }
 
 /**
@@ -239,7 +302,15 @@ export function convexCollectionOptions<T extends object>({
         mutations.forEach((mut) => {
           const itemYMap = new Y.Map();
           Object.entries(mut.modified as Record<string, unknown>).forEach(([k, v]) => {
-            itemYMap.set(k, v);
+            if (isFragment(v)) {
+              const fragment = new Y.XmlFragment();
+              if (v.content) {
+                fragmentFromJSON(fragment, v.content);
+              }
+              itemYMap.set(k, fragment);
+            } else {
+              itemYMap.set(k, v);
+            }
           });
           ymap.set(String(mut.key), itemYMap);
         });
@@ -262,7 +333,28 @@ export function convexCollectionOptions<T extends object>({
               return;
             }
             Object.entries(modifiedFields).forEach(([k, v]) => {
-              itemYMap.set(k, v);
+              const existingValue = itemYMap.get(k);
+
+              if (isFragment(v)) {
+                if (existingValue instanceof Y.XmlFragment) {
+                  // Clear existing content and apply new content
+                  while (existingValue.length > 0) {
+                    existingValue.delete(0);
+                  }
+                  if (v.content) {
+                    fragmentFromJSON(existingValue, v.content);
+                  }
+                } else {
+                  // Create new XmlFragment
+                  const fragment = new Y.XmlFragment();
+                  if (v.content) {
+                    fragmentFromJSON(fragment, v.content);
+                  }
+                  itemYMap.set(k, fragment);
+                }
+              } else {
+                itemYMap.set(k, v);
+              }
             });
           } else {
             logger.error('Update attempted on non-existent item', {
@@ -321,7 +413,10 @@ export function convexCollectionOptions<T extends object>({
         if (delta.length > 0) {
           const documentKey = String(transaction.mutations[0].key);
           const itemYMap = ymap.get(documentKey) as Y.Map<unknown>;
-          const fullDoc = itemYMap ? itemYMap.toJSON() : transaction.mutations[0].modified;
+          // Use serializeYMapValue to properly handle XmlFragment fields
+          const fullDoc = itemYMap
+            ? serializeYMapValue(itemYMap)
+            : transaction.mutations[0].modified;
           await convexClient.mutation(api.update, {
             documentId: documentKey,
             crdtBytes: delta.slice().buffer,
@@ -379,22 +474,15 @@ export function convexCollectionOptions<T extends object>({
             ydoc = await createYjsDocument(collection);
             ymap = getYMap<unknown>(ydoc, collection);
 
+            collectionDocs.set(collection, { ydoc, ymap });
+
+            // Store undo config for per-document undo managers
             const trackedOrigins =
               undoTrackedOrigins ?? new Set([YjsOrigin.Insert, YjsOrigin.Update, YjsOrigin.Remove]);
-            const yUndoManager = new Y.UndoManager(ymap, {
+            collectionUndoConfig.set(collection, {
               captureTimeout: undoCaptureTimeout,
               trackedOrigins,
             });
-
-            const undoManager: UndoManager = {
-              undo: () => yUndoManager.undo(),
-              redo: () => yUndoManager.redo(),
-              canUndo: () => yUndoManager.canUndo(),
-              canRedo: () => yUndoManager.canRedo(),
-              clearHistory: () => yUndoManager.clear(),
-              stopCapturing: () => yUndoManager.stopCapturing(),
-            };
-            undoManagers.set(collection, undoManager);
 
             persistence = new IndexeddbPersistence(collection, ydoc);
             persistence.on('synced', () => resolvePersistenceReady?.());
@@ -485,7 +573,16 @@ export function convexCollectionOptions<T extends object>({
           material: docs,
           cleanup: () => {
             subscription?.();
-            undoManagers.delete(collection);
+            // Destroy per-document undo managers
+            const docManagers = documentUndoManagers.get(collection);
+            if (docManagers) {
+              docManagers.forEach((um) => {
+                um.destroy();
+              });
+              documentUndoManagers.delete(collection);
+            }
+            collectionUndoConfig.delete(collection);
+            collectionDocs.delete(collection);
             persistence?.destroy();
             ydoc?.destroy();
             cleanupFunctions.delete(collection);
@@ -562,5 +659,46 @@ export function handleReconnect<T extends object>(
       offline.notifyOnline();
     });
   }
-  return rawCollection as ConvexCollection<T>;
+
+  // Add collection methods for fragment and per-document undo/redo
+  const collectionWithMethods = rawCollection as ConvexCollection<T>;
+
+  collectionWithMethods.fragment = (documentId: string, field: string) => {
+    const docs = collectionDocs.get(collection);
+    if (!docs) return null;
+    return getFragmentFromYMap(docs.ymap, documentId, field);
+  };
+
+  collectionWithMethods.undo = (documentId: string) => {
+    const undoManager = getOrCreateDocumentUndoManager(collection, documentId);
+    undoManager?.undo();
+  };
+
+  collectionWithMethods.redo = (documentId: string) => {
+    const undoManager = getOrCreateDocumentUndoManager(collection, documentId);
+    undoManager?.redo();
+  };
+
+  collectionWithMethods.canUndo = (documentId: string) => {
+    const undoManager = getDocumentUndoManager(collection, documentId);
+    return undoManager?.canUndo() ?? false;
+  };
+
+  collectionWithMethods.canRedo = (documentId: string) => {
+    const undoManager = getDocumentUndoManager(collection, documentId);
+    return undoManager?.canRedo() ?? false;
+  };
+
+  return collectionWithMethods;
+}
+
+/**
+ * Get the Y.Doc for a collection.
+ * Useful for advanced Yjs operations like awareness or custom bindings.
+ *
+ * @param collectionName - The collection name
+ * @returns The Y.Doc or null if not initialized
+ */
+export function getYDoc(collectionName: string): Y.Doc | null {
+  return collectionDocs.get(collectionName)?.ydoc ?? null;
 }

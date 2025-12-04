@@ -3,12 +3,11 @@ export { setReplicate, getProtocolInfo, type SetOptions } from '$/client/set.js'
 export {
   convexCollectionOptions,
   handleReconnect,
-  getUndoManager,
+  getYDoc,
   YjsOrigin,
   type ConvexCollection,
   type ConvexCollectionOptionsConfig,
   type Materialized,
-  type UndoManager,
 } from '$/client/collection.js';
 
 export {
@@ -23,7 +22,13 @@ export { IndexeddbPersistence } from 'y-indexeddb';
 
 export { OperationType } from '$/component/shared.js';
 
-export { NonRetriableError } from '@tanstack/offline-transactions';
+export {
+  fragment,
+  extractItemWithFragments,
+  extractItemsWithFragments,
+  type FragmentValue,
+  type XmlFragmentJSON,
+  type XmlNodeJSON,
+} from '$/client/merge.js';
 
-export * as history from '$/client/history.js';
-export type { Diff, Fields } from '$/client/history.js';
+export { NonRetriableError } from '@tanstack/offline-transactions';
