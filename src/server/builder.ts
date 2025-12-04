@@ -8,11 +8,14 @@ import { Replicate } from '$/server/storage.js';
  * @example
  * ```typescript
  * // convex/tasks.ts
- * export const { stream, material, insert, update, remove, protocol } =
+ * export const { stream, material, insert, update, remove, protocol, snapshot } =
  *   defineReplicate<Task>({
  *     component: components.replicate,
  *     collection: 'tasks',
  *   });
+ *
+ * // Use snapshot APIs
+ * // snapshot.create, snapshot.list, snapshot.get, snapshot.restore, snapshot.remove, snapshot.prune
  * ```
  */
 export function defineReplicate<T extends object>(config: {
@@ -98,30 +101,32 @@ export function defineReplicate<T extends object>(config: {
       onPrune: config.hooks?.onPrune,
     }),
 
-    // Version History APIs
-    createVersion: storage.createVersionMutation({
-      evalVersion: config.hooks?.evalVersion,
-      onVersion: config.hooks?.onVersion,
-    }),
+    // Snapshot APIs (namespaced)
+    snapshot: {
+      create: storage.createVersionMutation({
+        evalVersion: config.hooks?.evalVersion,
+        onVersion: config.hooks?.onVersion,
+      }),
 
-    listVersions: storage.createListVersionsQuery({
-      evalRead: config.hooks?.evalRead,
-    }),
+      list: storage.createListVersionsQuery({
+        evalRead: config.hooks?.evalRead,
+      }),
 
-    getVersion: storage.createGetVersionQuery({
-      evalRead: config.hooks?.evalRead,
-    }),
+      get: storage.createGetVersionQuery({
+        evalRead: config.hooks?.evalRead,
+      }),
 
-    restoreVersion: storage.createRestoreVersionMutation({
-      evalRestore: config.hooks?.evalRestore,
-      onRestore: config.hooks?.onRestore,
-    }),
+      restore: storage.createRestoreVersionMutation({
+        evalRestore: config.hooks?.evalRestore,
+        onRestore: config.hooks?.onRestore,
+      }),
 
-    deleteVersion: storage.createDeleteVersionMutation(),
+      remove: storage.createDeleteVersionMutation(),
 
-    pruneVersions: storage.createPruneVersionsMutation({
-      keepCount: config.versioning?.keepCount,
-      retentionDays: config.versioning?.retentionDays,
-    }),
+      prune: storage.createPruneVersionsMutation({
+        keepCount: config.versioning?.keepCount,
+        retentionDays: config.versioning?.retentionDays,
+      }),
+    },
   };
 }
